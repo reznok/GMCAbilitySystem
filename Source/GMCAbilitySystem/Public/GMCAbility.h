@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
 
 USTRUCT(BlueprintType)
@@ -73,7 +74,7 @@ public:
 	void BeginAbility(FGMCAbilityData AbilityData);
 
 	UPROPERTY(EditAnywhere)
-	float StaminaCost = 0;
+	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
 	UFUNCTION(BlueprintCallable)
 	void CommitAbilityCost();

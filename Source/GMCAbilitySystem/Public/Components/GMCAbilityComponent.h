@@ -3,38 +3,12 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Attributes.h"
 #include "GMCAbility.h"
+#include "GMCAbilityEffect.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
-
-
-USTRUCT(BlueprintType)
-struct FGMCAbilityAttributes
-{
-	GENERATED_BODY()
-
-	FGMCAbilityAttributes()
-	{
-		Health = 0;
-		MaxHealth = 0;
-		Stamina = 0;
-		MaxStamina = 0;
-	}
-
-	// Attributes
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float Health = 100;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float MaxHealth = 100;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float Stamina = 100;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float MaxStamina = 100;
-};
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGMC_MovementUtilityCmp
@@ -51,14 +25,21 @@ public:
 	void QueueAbility(FGMCAbilityData AbilityData);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	FGMCAbilityAttributes Attributes;
+	FGMCAttributeSet Attributes;
 
 	UFUNCTION(BlueprintCallable)
 	void ApplyAbilityCost(UGMCAbility* Ability);
 
+	UFUNCTION(BlueprintCallable)
+	void ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect);
+
+	UPROPERTY(BlueprintReadWrite)
+	bool bJustTeleported;
+
 protected:
 	virtual void BindReplicationData_Implementation() override;
 	virtual void GenPredictionTick_Implementation(float DeltaTime) override;
+	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
 	virtual void PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove) override;
 
 	bool CanAffordAbilityCost(UGMCAbility* Ability);
@@ -72,5 +53,4 @@ private:
 	// Current Ability Data being processed
 	// Members of this struct are bound over GMC
 	FGMCAbilityData AbilityData{};
-	
 };

@@ -44,7 +44,7 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 	Super::BindReplicationData_Implementation();
 
 	// Attribute Binds
-	BindSinglePrecisionFloat(Attributes.Stamina,
+	BindSinglePrecisionFloat(Attributes.Stamina.Value,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
@@ -56,7 +56,7 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::Linear);
 
-	BindSinglePrecisionFloat(Attributes.Health,
+	BindSinglePrecisionFloat(Attributes.Health.Value,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
@@ -116,18 +116,41 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::NearestNeighbour);
+		
+	BindBool(bJustTeleported,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
 	}
 
 void UGMC_AbilityComponent::GenPredictionTick_Implementation(float DeltaTime)
 {
 	Super::GenPredictionTick_Implementation(DeltaTime);
-
+	
+	bJustTeleported = false;
+	
 	if (AbilityData.bProcessed == false)
 	{
 		TryActivateAbility(AbilityData);
 		UE_LOG(LogTemp, Warning, TEXT("%d: Processing Ability..."), GetOwner()->GetLocalRole());
 		AbilityData.bProcessed = true;
+	}
+}
+
+void UGMC_AbilityComponent::GenSimulationTick_Implementation(float DeltaTime)
+{
+	Super::GenSimulationTick_Implementation(DeltaTime);
+
+	if (GetSmoothingTargetIdx() == -1) return;	
+	
+	const FVector TargetLocation = MoveHistory[GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
+	if (bJustTeleported)
+	{
+		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
+		GetOwner()->SetActorLocation(TargetLocation);
+		bJustTeleported = false;
 	}
 }
 
@@ -141,14 +164,35 @@ void UGMC_AbilityComponent::PreLocalMoveExecution_Implementation(const FGMC_Move
 	}
 }
 
+
 bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
-	if (Attributes.Stamina >= Ability->StaminaCost) return true;
-	return false;
+	//if (Attributes.Stamina.Value >= Ability->StaminaCost) return true;
+	//return false;
+
+	return true;
 }
 
 void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
 {
-	Attributes.Stamina -= Ability->StaminaCost;
+	if (Ability->AbilityCost != nullptr)
+	{
+		ApplyAbilityEffect(Ability->AbilityCost);
+	}
 }
+
+void UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect)
+{
+	UGMCAbilityEffect* AbilityEffect = Effect->GetDefaultObject<UGMCAbilityEffect>();
+	if (const FAttribute* AffectedAttribute = Attributes.GetAttributeByName(AbilityEffect->AttributeName))
+	{
+		AffectedAttribute->Value += AbilityEffect->Modifier;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("BadPointer | Couldn't Find: %s"), *AbilityEffect->AttributeName.ToString());
+	}
+}
+
+
 
