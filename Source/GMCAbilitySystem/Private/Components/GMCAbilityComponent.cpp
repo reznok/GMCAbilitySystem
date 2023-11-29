@@ -10,7 +10,6 @@ UGMC_AbilityComponent::UGMC_AbilityComponent()
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
-
 	// ...
 }
 
@@ -39,35 +38,23 @@ void UGMC_AbilityComponent::QueueAbility(FGMCAbilityData InAbilityData)
 	QueuedAbilities.Push(InAbilityData);
 }
 
+
 void UGMC_AbilityComponent::BindReplicationData_Implementation()
 {
 	Super::BindReplicationData_Implementation();
 
 	// Attribute Binds
-	BindSinglePrecisionFloat(Attributes.Stamina.Value,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::Linear);
-
-	BindSinglePrecisionFloat(Attributes.MaxStamina,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::Linear);
-
-	BindSinglePrecisionFloat(Attributes.Health.Value,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::Linear);
-
-	BindSinglePrecisionFloat(Attributes.MaxHealth,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::Linear);
-
+	//
+	InstantiateAttributes();
+	for (const FAttribute* Attribute : Attributes->GetAllAttributes())
+	{
+		BindSinglePrecisionFloat(Attribute->Value,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::Linear);
+	}
+	//
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	BindInt(AbilityData.AbilityActivationID,
@@ -164,17 +151,48 @@ void UGMC_AbilityComponent::PreLocalMoveExecution_Implementation(const FGMC_Move
 	}
 }
 
+void UGMC_AbilityComponent::BeginPlay()
+{
+	Super::BeginPlay();
+}
+
 
 bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
-	//if (Attributes.Stamina.Value >= Ability->StaminaCost) return true;
-	//return false;
+	UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
+	for (FAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
+	{
+		if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
+		{
+			// If current - proposed is less than 0, cannot afford. Cost values are negative, so these are added.
+			if (AffectedAttribute->Value + AttributeModifier.Value < 0) return false;
+		}
+	}
 
 	return true;
 }
 
+void UGMC_AbilityComponent::InstantiateAttributes()
+{
+	// Use BP'd Attributes if provided. Else use default attributes (which is nothing by default)
+	if (StartingAttributes)
+	{
+		Attributes = NewObject<UGMCAttributeSet>(this, StartingAttributes);
+	}
+	else if (Attributes == nullptr)
+	{
+		Attributes = NewObject<UGMCAttributeSet>();
+	}
+}
+
+void UGMC_AbilityComponent::SetAttributes(UGMCAttributeSet* NewAttributes)
+{
+	this->Attributes = NewAttributes;
+}
+
 void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
 {
+
 	if (Ability->AbilityCost != nullptr)
 	{
 		ApplyAbilityEffect(Ability->AbilityCost);
@@ -187,13 +205,9 @@ void UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Ef
 
 	for (FAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
 	{
-		if (const FAttribute* AffectedAttribute = Attributes.GetAttributeByName(AttributeModifier.AttributeName))
+		if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
 		{
 			AffectedAttribute->Value += AttributeModifier.Value;
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("BadPointer | Couldn't Find: %s"), *AttributeModifier.AttributeName.ToString());
 		}
 	}
 }

@@ -11,6 +11,11 @@ USTRUCT(BlueprintType)
 struct FAttributeModifier
 {
 	GENERATED_BODY()
+
+	FAttributeModifier()
+	{
+		Value = 0;
+	}
 	
 	UPROPERTY(EditDefaultsOnly)
 	FName AttributeName;

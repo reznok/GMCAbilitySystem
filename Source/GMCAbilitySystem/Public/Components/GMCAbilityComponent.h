@@ -24,8 +24,11 @@ public:
 	// Queue an ability to be executed
 	void QueueAbility(FGMCAbilityData AbilityData);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	FGMCAttributeSet Attributes;
+	UPROPERTY(EditDefaultsOnly)
+	TSubclassOf<UGMCAttributeSet> StartingAttributes;
+	
+	UPROPERTY(BlueprintReadOnly)
+	TWeakObjectPtr<UGMCAttributeSet> Attributes;
 
 	UFUNCTION(BlueprintCallable)
 	void ApplyAbilityCost(UGMCAbility* Ability);
@@ -41,11 +44,16 @@ protected:
 	virtual void GenPredictionTick_Implementation(float DeltaTime) override;
 	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
 	virtual void PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove) override;
-
+	virtual void BeginPlay() override;
+	
 	bool CanAffordAbilityCost(UGMCAbility* Ability);
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Abilities")
 	TArray<TSubclassOf<UGMCAbility>> GrantedAbilities;
+
+	// Used to set the starting Attributes from code
+	// Must be called before GMCAbilityComponent runs its BindReplicationData step
+	void SetAttributes(UGMCAttributeSet* NewAttributes);
 
 private:
 	TArray<FGMCAbilityData> QueuedAbilities;
@@ -53,4 +61,9 @@ private:
 	// Current Ability Data being processed
 	// Members of this struct are bound over GMC
 	FGMCAbilityData AbilityData{};
+
+	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
+	// This must run before variable binding
+	void InstantiateAttributes();
+	
 };

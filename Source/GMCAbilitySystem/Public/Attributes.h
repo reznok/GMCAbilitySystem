@@ -1,5 +1,4 @@
 ﻿#pragma once
-#include "UObject/PropertyAccessUtil.h"
 
 #include "Attributes.generated.h"
 
@@ -22,39 +21,18 @@ struct FAttribute
 	mutable float Value;
 };
 
-USTRUCT(BlueprintType)
-struct FGMCAttributeSet
+UCLASS(Blueprintable, BlueprintType)
+class GMCABILITYSYSTEM_API UGMCAttributeSet : public UObject
 {
 	GENERATED_BODY()
+public:
+	UGMCAttributeSet();
 
-	FGMCAttributeSet()
-	{
-		Health = 0;
-		MaxHealth = 0;
-		Stamina = 0;
-		MaxStamina = 0;
-	}
-
-	// Attributes
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	FAttribute Health;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float MaxHealth = 100;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	FAttribute Stamina;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attributes")
-	float MaxStamina = 100;
+	// Get a specific attribute by name. Used mainly for Effects.
+	FAttribute* GetAttributeByName(FName PropName);
 	
-	FAttribute* GetAttributeByName(FName PropName)
-	{
-		FStructProperty* Prop = static_cast<FStructProperty*>(StaticStruct()->FindPropertyByName(PropName));
-		if (!Prop) return nullptr;
-		
-		return Prop->ContainerPtrToValuePtr<FAttribute>(this);
-	};
-};
+	// Used to get the variables to bind for Replication automatically
+	TArray<FAttribute*> GetAllAttributes();
 
+};
 
