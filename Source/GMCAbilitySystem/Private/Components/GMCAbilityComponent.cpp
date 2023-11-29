@@ -184,13 +184,17 @@ void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
 void UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect)
 {
 	UGMCAbilityEffect* AbilityEffect = Effect->GetDefaultObject<UGMCAbilityEffect>();
-	if (const FAttribute* AffectedAttribute = Attributes.GetAttributeByName(AbilityEffect->AttributeName))
+
+	for (FAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
 	{
-		AffectedAttribute->Value += AbilityEffect->Modifier;
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("BadPointer | Couldn't Find: %s"), *AbilityEffect->AttributeName.ToString());
+		if (const FAttribute* AffectedAttribute = Attributes.GetAttributeByName(AttributeModifier.AttributeName))
+		{
+			AffectedAttribute->Value += AttributeModifier.Value;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("BadPointer | Couldn't Find: %s"), *AttributeModifier.AttributeName.ToString());
+		}
 	}
 }
 

@@ -7,6 +7,19 @@
 #include "UObject/Object.h"
 #include "GMCAbilityEffect.generated.h"
 
+USTRUCT(BlueprintType)
+struct FAttributeModifier
+{
+	GENERATED_BODY()
+	
+	UPROPERTY(EditDefaultsOnly)
+	FName AttributeName;
+
+	UPROPERTY(EditDefaultsOnly)
+	float Value;
+};
+
+
 /**
  * 
  */
@@ -14,16 +27,10 @@ UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 {
 	GENERATED_BODY()
-	
 
 public:
-	/** Name of the attribute, usually the same as property name */
-	UPROPERTY(EditDefaultsOnly)
-	FName AttributeName;
 
-	UPROPERTY(EditDefaultsOnly)
-	float  Modifier;
-
-//	UPROPERTY()
-//	FProperty* Attribute;
+	UPROPERTY(EditDefaultsOnly);
+	TArray<FAttributeModifier> Modifiers;
 };
+
