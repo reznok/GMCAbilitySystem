@@ -5,7 +5,7 @@ UGMCAttributeSet::UGMCAttributeSet()
 }
 
 FAttribute* UGMCAttributeSet::GetAttributeByName(FName PropName)
-{
+{	
 	FProperty* Property = GetClass()->FindPropertyByName(PropName);
 	if (!Property) return nullptr;
 
@@ -13,10 +13,6 @@ FAttribute* UGMCAttributeSet::GetAttributeByName(FName PropName)
 	if (!StructProperty) return nullptr;
 
 	FAttribute* Attribute = StructProperty->ContainerPtrToValuePtr<FAttribute>(this);
-	if (Attribute == nullptr)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("BadPointer | Couldn't Find: %s"), *PropName.ToString());
-	}
 	return Attribute;
 }
 

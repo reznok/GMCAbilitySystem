@@ -28,7 +28,7 @@ public:
 	TSubclassOf<UGMCAttributeSet> StartingAttributes;
 	
 	UPROPERTY(BlueprintReadOnly)
-	TWeakObjectPtr<UGMCAttributeSet> Attributes;
+	UGMCAttributeSet* Attributes;
 
 	UFUNCTION(BlueprintCallable)
 	void ApplyAbilityCost(UGMCAbility* Ability);
