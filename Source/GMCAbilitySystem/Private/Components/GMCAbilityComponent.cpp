@@ -13,32 +13,6 @@ UGMC_AbilityComponent::UGMC_AbilityComponent()
 	// ...
 }
 
-bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
-{
-	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
-	if (AbilityData.GrantedAbilityIndex >= 0 && AbilityData.GrantedAbilityIndex <= GrantedAbilities.Num() - 1)
-	{
-		UGMCAbility* Ability = GrantedAbilities[AbilityData.GrantedAbilityIndex]->GetDefaultObject<UGMCAbility>();
-
-		// Check to make sure there's enough resource to use
-		if (!CanAffordAbilityCost(Ability)) return false;
-		
-		Ability->Execute(InAbilityData, this);
-
-		return true;
-		// UE_LOG(LogTemp, Warning, TEXT("Ability: %d Activated | %s"), AbilityData.GrantedAbilityIndex, *AbilityData.AbilityActivationID.ToString());
-	}
-
-	return false;
-}
-
-void UGMC_AbilityComponent::QueueAbility(FGMCAbilityData InAbilityData)
-{
-	// UE_LOG(LogTemp, Warning, TEXT("Queued Ability: %d"), AbilityData.GrantedAbilityIndex);
-	QueuedAbilities.Push(InAbilityData);
-}
-
-
 void UGMC_AbilityComponent::BindReplicationData_Implementation()
 {
 	Super::BindReplicationData_Implementation();
@@ -58,6 +32,18 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	BindInt(AbilityData.AbilityActivationID,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	BindBool(AbilityData.bProgressTask,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	BindInt(AbilityData.TaskID,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
@@ -103,7 +89,7 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::NearestNeighbour);
+		EGMC_InterpolationFunction::TargetValue);
 		
 	BindBool(bJustTeleported,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
@@ -112,16 +98,66 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 		EGMC_InterpolationFunction::TargetValue);
 	}
 
+void UGMC_AbilityComponent::GenAncillaryTick_Implementation(float DeltaTime, bool bIsCombinedClientMove)
+{
+	Super::GenAncillaryTick_Implementation(DeltaTime, bIsCombinedClientMove);
+	OnFGMCAbilitySystemComponentTickDelegate.Broadcast(DeltaTime);
+	
+}
+
+bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
+{
+	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
+	if (AbilityData.GrantedAbilityIndex >= 0 && AbilityData.GrantedAbilityIndex <= GrantedAbilities.Num() - 1)
+	{
+		UGMCAbility* Ability = NewObject<UGMCAbility>(this, GrantedAbilities[AbilityData.GrantedAbilityIndex]);
+		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
+
+		// Check to make sure there's enough resource to use
+		if (!CanAffordAbilityCost(Ability)) return false;
+		
+		Ability->Execute(InAbilityData, this);
+
+		return true;
+		// UE_LOG(LogTemp, Warning, TEXT("Ability: %d Activated | %s"), AbilityData.GrantedAbilityIndex, *AbilityData.AbilityActivationID.ToString());
+	}
+
+	return false;
+}
+
+void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
+{
+	UE_LOG(LogTemp, Warning, TEXT("Queued Ability: %d"), AbilityData.GrantedAbilityIndex);
+	QueuedAbilities.Push(InAbilityData);
+}
+
 void UGMC_AbilityComponent::GenPredictionTick_Implementation(float DeltaTime)
 {
 	Super::GenPredictionTick_Implementation(DeltaTime);
 	
 	bJustTeleported = false;
+	CleanupStaleAbilities();
 	
 	if (AbilityData.bProcessed == false)
 	{
-		TryActivateAbility(AbilityData);
-		UE_LOG(LogTemp, Warning, TEXT("%d: Processing Ability..."), GetOwner()->GetLocalRole());
+		if (AbilityData.bProgressTask)
+		{
+			// UE_LOG(LogTemp, Warning, TEXT("%d: Continuing Ability..."), GetOwner()->GetLocalRole());
+
+			if (ActiveAbilities.Contains(AbilityData.AbilityActivationID))
+			{
+				// UE_LOG(LogTemp, Warning, TEXT("%d: Found Ability to continue!"), GetOwner()->GetLocalRole());
+				ActiveAbilities[AbilityData.AbilityActivationID]->CompleteLatentTask(AbilityData.TaskID);
+			}
+		}
+		else
+		{
+			if (!ActiveAbilities.Contains(AbilityData.AbilityActivationID))
+			{
+				TryActivateAbility(AbilityData);
+				// UE_LOG(LogTemp, Warning, TEXT("%d: Processing Ability..."), GetOwner()->GetLocalRole());
+			}
+		}
 		AbilityData.bProcessed = true;
 	}
 }
@@ -144,6 +180,7 @@ void UGMC_AbilityComponent::GenSimulationTick_Implementation(float DeltaTime)
 void UGMC_AbilityComponent::PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove)
 {
 	Super::PreLocalMoveExecution_Implementation(LocalMove);
+
 	if (QueuedAbilities.Num() > 0)
 	{
 		AbilityData = QueuedAbilities.Pop();
@@ -182,6 +219,24 @@ void UGMC_AbilityComponent::InstantiateAttributes()
 	else if (Attributes == nullptr)
 	{
 		Attributes = NewObject<UGMCAttributeSet>();
+	}
+}
+
+void UGMC_AbilityComponent::CleanupStaleAbilities()
+{
+	TArray<int> MarkedForDeletion;
+	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	{
+		if (Ability.Value->AbilityState == EAbilityState::Ended)
+		{
+			MarkedForDeletion.Push(Ability.Key);
+		}
+	}
+
+	for (const int AbilityActivationID : MarkedForDeletion)
+	{
+		ActiveAbilities.Remove(AbilityActivationID);
+		// UE_LOG(LogTemp, Warning, TEXT("%d: Cleaned Up Ability: %d"),GetOwner()->GetLocalRole(),  AbilityActivationID);
 	}
 }
 

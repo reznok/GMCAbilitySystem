@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Attributes.h"
+#include "GMCAttributes.h"
 #include "UObject/Object.h"
 #include "GMCAbilityEffect.generated.h"
 

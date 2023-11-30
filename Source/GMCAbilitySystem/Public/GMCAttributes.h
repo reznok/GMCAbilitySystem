@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-#include "Attributes.generated.h"
+#include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
 struct FAttribute

@@ -1,4 +1,4 @@
-﻿#include "Attributes.h"
+﻿#include "..\Public\GMCAttributes.h"
 
 UGMCAttributeSet::UGMCAttributeSet()
 {

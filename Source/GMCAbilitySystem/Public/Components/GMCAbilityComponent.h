@@ -3,12 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Attributes.h"
+#include "GMCAttributes.h"
 #include "GMCAbility.h"
 #include "GMCAbilityEffect.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FGMCAbilitySystemComponentUpdateSignature, float DeltaTime);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGMC_MovementUtilityCmp
@@ -19,11 +21,15 @@ public:
 	// Sets default values for this component's properties
 	UGMC_AbilityComponent();
 
+	
+	FGMCAbilitySystemComponentUpdateSignature OnFGMCAbilitySystemComponentTickDelegate;
+
 	bool TryActivateAbility(FGMCAbilityData AbilityData);
 
 	// Queue an ability to be executed
-	void QueueAbility(FGMCAbilityData AbilityData);
+	void QueueAbility(const FGMCAbilityData& InAbilityData);
 
+	// Allows for BP instances of attributes. Attributes gets set to this.
 	UPROPERTY(EditDefaultsOnly)
 	TSubclassOf<UGMCAttributeSet> StartingAttributes;
 	
@@ -41,6 +47,7 @@ public:
 
 protected:
 	virtual void BindReplicationData_Implementation() override;
+	virtual void GenAncillaryTick_Implementation(float DeltaTime, bool bIsCombinedClientMove) override;
 	virtual void GenPredictionTick_Implementation(float DeltaTime) override;
 	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
 	virtual void PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove) override;
@@ -62,8 +69,14 @@ private:
 	// Members of this struct are bound over GMC
 	FGMCAbilityData AbilityData{};
 
+	UPROPERTY()
+	TMap<int, UGMCAbility*> ActiveAbilities;
+
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
 	void InstantiateAttributes();
+
+	// Clear out abilities in the Ended state from the ActivateAbilities map
+	void CleanupStaleAbilities();
 	
 };
