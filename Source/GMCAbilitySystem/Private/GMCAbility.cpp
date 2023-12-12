@@ -23,7 +23,7 @@ UWorld* UGMCAbility::GetWorld() const
 	return GEngine->GetWorldContexts()[0].World();
 }
 
-void UGMCAbility::Execute(FGMCAbilityData AbilityData, UGMC_AbilityComponent* InAbilityComponent)
+void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData)
 {
 	this->InitialAbilityData = AbilityData;
 	this->AbilityComponent = InAbilityComponent;
@@ -57,7 +57,7 @@ void UGMCAbility::BeginAbility(FGMCAbilityData AbilityData)
 	AbilityState = EAbilityState::Initialized;
 
 	// Execute BP Event
-	BeginAbilityBP(AbilityData);
+	BeginAbilityEvent(AbilityData);
 }
 
 void UGMCAbility::EndAbility()
@@ -74,4 +74,5 @@ void UGMCAbility::EndAbility()
 	}
 	
 	AbilityState = EAbilityState::Ended;
+	EndAbilityEvent();
 }

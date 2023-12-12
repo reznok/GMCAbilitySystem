@@ -1,0 +1,1 @@
+﻿- Recommended to turn Client Smoothing off

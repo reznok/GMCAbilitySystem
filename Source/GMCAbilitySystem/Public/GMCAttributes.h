@@ -29,7 +29,15 @@ public:
 	UGMCAttributeSet();
 
 	// Get a specific attribute by name. Used mainly for Effects.
+	UFUNCTION(BlueprintCallable)
+	FAttribute GetAttributeValueByName(FName PropName);
+		
+	// Get a specific attribute by name. Used mainly for Effects.
 	FAttribute* GetAttributeByName(FName PropName);
+
+	// Set a specific attribute by name. Used mainly for Effects.
+	UFUNCTION(BlueprintCallable)
+	void SetAttributeByName(FName PropName, float NewValue);
 	
 	// Used to get the variables to bind for Replication automatically
 	TArray<FAttribute*> GetAllAttributes();

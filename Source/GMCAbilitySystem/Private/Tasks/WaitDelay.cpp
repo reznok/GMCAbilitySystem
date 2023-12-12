@@ -6,12 +6,16 @@ void UWaitDelayAsyncAction::InternalTick(float DeltaTime)
 	Super::InternalTick(DeltaTime);
 
 	// UE_LOG(LogTemp, Warning, TEXT("Tick"));
+
+	FTimerHandle Timer;
+	GetWorld()->GetTimerManager().SetTimer(Timer, this, &UWaitDelayAsyncAction::InternalClientCompleted, Duration, false);
 	
 	float TimePassed = GetWorld()->GetRealTimeSeconds() - StartTime;
 
 	if (!bTaskCompleted && TimePassed >= Duration && !OwningAbility->HasAuthority())
 	{
 		InternalClientCompleted();
+		UE_LOG(LogTemp, Warning, TEXT("Completed (Start Time: %f"), StartTime);
 	}
 
 	if (TimePassed >= Duration - FaultTolerance && bTaskCompleted)

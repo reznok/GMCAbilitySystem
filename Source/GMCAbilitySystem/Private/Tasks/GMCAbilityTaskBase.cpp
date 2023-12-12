@@ -24,10 +24,9 @@ void UGMCAbilityTaskBase::InternalTick(float DeltaTime)
 void UGMCAbilityTaskBase::InternalCompleted(bool Forced)
 {
 	OwningAbility->AbilityComponent->OnFGMCAbilitySystemComponentTickDelegate.Remove(TickHandle);
-	if (Forced) {Cancel(); return;}
-	
-	Completed.Broadcast();
-	
+	if (!Forced) {Completed.Broadcast();}
+	Cancel();
+	SetReadyToDestroy();
 }
 
 void UGMCAbilityTaskBase::InternalClientCompleted()
@@ -36,4 +35,5 @@ void UGMCAbilityTaskBase::InternalClientCompleted()
 	ContinueRunning.TaskID = TaskID;
 	ContinueRunning.bProgressTask = true;
 	OwningAbility->AbilityComponent->QueueAbility(ContinueRunning);
+	SetReadyToDestroy();
 }

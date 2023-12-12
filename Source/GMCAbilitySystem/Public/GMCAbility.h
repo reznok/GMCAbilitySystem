@@ -4,7 +4,7 @@
 #include "Tasks/GMCAbilityTaskBase.h"
 #include "GMCAbility.generated.h"
 
-UENUM()
+UENUM(BlueprintType)
 enum class EAbilityState : uint8
 {
 	Initialized,
@@ -20,6 +20,7 @@ struct FGMCAbilityData
 
 	FGMCAbilityData()
 	{
+		// replicated
 		GrantedAbilityIndex = -1;
 		AbilityActivationID = AbilityActivationIDCounter++;
 		TargetVector0 = FVector::Zero();
@@ -28,8 +29,10 @@ struct FGMCAbilityData
 		TargetActor = nullptr;
 		TargetComponent = nullptr;
 		bProgressTask = false;
-		ActionInput = nullptr;
 		TaskID = -1;
+
+		// non replicated
+		ActionInput = nullptr;
 	}
 
 	FGMCAbilityData(FGMCAbilityData const& Other)
@@ -105,30 +108,31 @@ public:
 	
 	//// Ability State
 	// EAbilityState. Use Getters/Setters
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly)
 	EAbilityState AbilityState;
 
-	UPROPERTY()
-	int TaskID = -1;
-
+	// Assign a new, incrementing, Task ID
 	UFUNCTION()
-	int GetNextTaskID(){TaskID += 1; return TaskID;};
+	int GetNextTaskID(){TaskIDCounter += 1; return TaskIDCounter;};
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityTaskBase*> RunningTasks;
 
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	
-	void Execute(FGMCAbilityData AbilityData, UGMC_AbilityComponent* InAbilityComponent);
+	void Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
 
 	UFUNCTION()
 	void BeginAbility(FGMCAbilityData AbilityData);
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem")
-	void BeginAbilityBP(FGMCAbilityData AbilityData);
+	void BeginAbilityEvent(FGMCAbilityData AbilityData);
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem")
 	void EndAbility();
+
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem")
+	void EndAbilityEvent();
 	
 	UPROPERTY(EditAnywhere)
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
@@ -149,6 +153,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
+private:
+
+	int TaskIDCounter = -1;
+
 };
 
 
