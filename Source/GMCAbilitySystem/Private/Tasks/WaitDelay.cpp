@@ -1,51 +1,35 @@
 ﻿#include "Tasks/WaitDelay.h"
 #include "Components/GMCAbilityComponent.h"
 
-void UWaitDelayAsyncAction::InternalTick(float DeltaTime)
+
+UGMCAbilityTask_WaitDelay::UGMCAbilityTask_WaitDelay(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-	Super::InternalTick(DeltaTime);
-
-	// UE_LOG(LogTemp, Warning, TEXT("Tick"));
-
-	FTimerHandle Timer;
-	GetWorld()->GetTimerManager().SetTimer(Timer, this, &UWaitDelayAsyncAction::InternalClientCompleted, Duration, false);
-	
-	float TimePassed = GetWorld()->GetRealTimeSeconds() - StartTime;
-
-	if (!bTaskCompleted && TimePassed >= Duration && !OwningAbility->HasAuthority())
-	{
-		InternalClientCompleted();
-		UE_LOG(LogTemp, Warning, TEXT("Completed (Start Time: %f"), StartTime);
-	}
-
-	if (TimePassed >= Duration - FaultTolerance && bTaskCompleted)
-	{		
-		InternalCompleted(false);
-	}
+	Duration = 0.f;
+	StartTime = 0.f;
 }
 
-
-UWaitDelayAsyncAction* UWaitDelayAsyncAction::WaitForDelay(const UObject* WorldContext, UGMCAbility* Ability,
+UGMCAbilityTask_WaitDelay* UGMCAbilityTask_WaitDelay::WaitForDelay(UGMCAbility* InAbility,
 	float Duration)
 {
-	UWorld* ContextWorld = GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::ReturnNull);
-	if(!ensureAlwaysMsgf(IsValid(WorldContext), TEXT("World Context was not valid.")))
-	{
-		return nullptr;
-	}
-
 	// Create a new UWaitDelayAsyncAction, and store function arguments in it.
-	UWaitDelayAsyncAction* NewAction = NewObject<UWaitDelayAsyncAction>();
-	NewAction->OwningAbility = Ability;
-	NewAction->ContextWorld = ContextWorld;
-	NewAction->Duration = Duration;
-	NewAction->RegisterWithGameInstance(ContextWorld->GetGameInstance());
-	return NewAction;
+	UGMCAbilityTask_WaitDelay* DelayTask = NewAbilityTask<UGMCAbilityTask_WaitDelay>(InAbility);
+	DelayTask->Duration = Duration;
+
+	return DelayTask;
 }
 
-void UWaitDelayAsyncAction::Activate()
+void UGMCAbilityTask_WaitDelay::Activate()
 {
-	Super::Activate();
-	TickHandle = OwningAbility->AbilityComponent->OnFGMCAbilitySystemComponentTickDelegate.AddUObject(this, &UWaitDelayAsyncAction::InternalTick);
-	StartTime = GetWorld()->GetRealTimeSeconds();
+	const UWorld* World = GetWorld();
+	StartTime = World->GetTimeSeconds();
+	
+	// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
+	FTimerHandle TimerHandle;
+	World->GetTimerManager().SetTimer(TimerHandle, this, &UGMCAbilityTask_WaitDelay::OnTimeFinish, Duration, false);
+}
+
+void UGMCAbilityTask_WaitDelay::OnTimeFinish()
+{
+	OnFinish.Broadcast();
+	EndTask();
 }

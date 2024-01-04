@@ -178,7 +178,7 @@ bool UGMCAbilityEffect::CompletedAndServerConfirmed()
 
 double UGMCAbilityEffect::GetNetworkRoundTripTimeSeconds()
 {
-	if (AGMC_PlayerController* PC = Cast<AGMC_PlayerController>(OwnerAbilityComponent->GetPawnOwner()->GetController()))
+	if (AGMC_PlayerController* PC = Cast<AGMC_PlayerController>(OwnerAbilityComponent->GetOwner()->GetNetOwningPlayer()->GetPlayerController(GetWorld())))
 	{
 		return PC->GetPingInMilliseconds() / 1000;
 	}

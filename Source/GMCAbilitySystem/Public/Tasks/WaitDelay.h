@@ -1,31 +1,19 @@
 ﻿#pragma once
-#include "GMCAbility.h"
 #include "GMCAbilityTaskBase.h"
-#include "LatentActions.h"
-#include "Engine/CancellableAsyncAction.h"
 #include "WaitDelay.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FWaitDelayAsyncActionOutputPin);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FWaitDelayDelegate);
 
 UCLASS()
-class UWaitDelayAsyncAction : public UGMCAbilityTaskBase
+class UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
 {
-	GENERATED_BODY()
+	GENERATED_UCLASS_BODY()
 	
-public:
-
-	virtual void InternalTick(float DeltaTime) override;
-
-	// Start UObject Functions
-	virtual UWorld* GetWorld() const override
-	{
-		return ContextWorld.IsValid() ? ContextWorld.Get() : nullptr;
-	}
-	// End UObject Functions
- 
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", HidePin = "Ability", DefaultToSelf = "Ability", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait Delay",Category = "GMCAbilitySystem/Tasks")
-	static UWaitDelayAsyncAction* WaitForDelay(const UObject* WorldContext, UGMCAbility* Ability, float Duration);
- 
+	UPROPERTY(BlueprintAssignable)
+	FWaitDelayDelegate	OnFinish;
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait Delay",Category = "GMCAbilitySystem/Tasks")
+	static UGMCAbilityTask_WaitDelay* WaitForDelay(UGMCAbility* InAbility, float Duration);
+	
 	//Overriding BP async action base
 	virtual void Activate() override;
 	
@@ -36,4 +24,6 @@ private:
 	float StartTime;
 	float Duration;
 	const float FaultTolerance = .1;
+
+	void OnTimeFinish();
 };

@@ -97,7 +97,7 @@ struct FGMCAbilityData
 class UGMC_AbilityComponent;
 
 UCLASS(Blueprintable, BlueprintType)
-class GMCABILITYSYSTEM_API UGMCAbility : public UObject
+class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwnerInterface
 {
 	GENERATED_BODY()
 
@@ -153,9 +153,25 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
+	
+
+	// --------------------------------------
+	//	IGameplayTaskOwnerInterface
+	// --------------------------------------	
+	virtual UGameplayTasksComponent* GetGameplayTasksComponent(const UGameplayTask& Task) const override;
+	virtual AActor* GetGameplayTaskOwner(const UGameplayTask* Task) const override;
+	virtual AActor* GetGameplayTaskAvatar(const UGameplayTask* Task) const override;
+	virtual void OnGameplayTaskInitialized(UGameplayTask& Task) override;
+	virtual void OnGameplayTaskActivated(UGameplayTask& Task) override;
+	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
+	
 private:
 
 	int TaskIDCounter = -1;
+
+	/** List of currently active tasks, do not modify directly */
+	UPROPERTY()
+	TArray<TObjectPtr<UGameplayTask>>	ActiveTasks;
 
 };
 

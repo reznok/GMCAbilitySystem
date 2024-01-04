@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTasksComponent.h"
 #include "GMCAttributes.h"
 #include "GMCAbility.h"
 #include "GMCAbilityEffect.h"
@@ -26,14 +27,14 @@ struct FEffectStatePrediction
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FGMCAbilitySystemComponentUpdateSignature, float DeltaTime);
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGMC_MovementUtilityCmp
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"))
+class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this component's properties
-	UGMC_AbilityComponent();
+	UGMC_AbilityComponent(const FObjectInitializer& ObjectInitializer);
 
 	
 	FGMCAbilitySystemComponentUpdateSignature OnFGMCAbilitySystemComponentTickDelegate;
@@ -93,13 +94,18 @@ public:
 	// Client attempt to start a server-applied effect at the estimated start time
 	// This is only used with server-applied effects, not properly locally predicted effects
 	void ClientPredictEffectStateChange(int EffectID, EEffectState State);
+
+	UPROPERTY(BlueprintReadOnly)
+	UGMC_MovementUtilityCmp* GMCMovementComponent;
+
+	// GMC 
+	virtual void BindReplicationData();
+	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
+	virtual void GenPredictionTick(float DeltaTime);
+	virtual void GenSimulationTick(float DeltaTime);
+	virtual void PreLocalMoveExecution(const FGMC_Move& LocalMove);
 	
 protected:
-	virtual void BindReplicationData_Implementation() override;
-	virtual void GenAncillaryTick_Implementation(float DeltaTime, bool bIsCombinedClientMove) override;
-	virtual void GenPredictionTick_Implementation(float DeltaTime) override;
-	virtual void GenSimulationTick_Implementation(float DeltaTime) override;
-	virtual void PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove) override;
 	virtual void BeginPlay() override;
 	
 	bool CanAffordAbilityCost(UGMCAbility* Ability);

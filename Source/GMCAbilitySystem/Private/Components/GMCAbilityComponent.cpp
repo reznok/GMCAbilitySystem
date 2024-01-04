@@ -11,7 +11,7 @@
 
 
 // Sets default values for this component's properties
-UGMC_AbilityComponent::UGMC_AbilityComponent()
+UGMC_AbilityComponent::UGMC_AbilityComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
@@ -19,16 +19,15 @@ UGMC_AbilityComponent::UGMC_AbilityComponent()
 	// ...
 }
 
-void UGMC_AbilityComponent::BindReplicationData_Implementation()
+void UGMC_AbilityComponent::BindReplicationData()
 {
-	Super::BindReplicationData_Implementation();
-
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+	
 	for (const FAttribute* Attribute : Attributes->GetAllAttributes())
 	{
-		BindSinglePrecisionFloat(Attribute->Value,
+		GMCMovementComponent->BindSinglePrecisionFloat(Attribute->Value,
 			EGMC_PredictionMode::ServerAuth_Output_ServerValidated,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -37,89 +36,88 @@ void UGMC_AbilityComponent::BindReplicationData_Implementation()
 	//
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
-	BindInt(AbilityData.AbilityActivationID,
+	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindBool(AbilityData.bProgressTask,
+	GMCMovementComponent->BindBool(AbilityData.bProgressTask,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindInt(AbilityData.TaskID,
+	GMCMovementComponent->BindInt(AbilityData.TaskID,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindInt(AbilityData.GrantedAbilityIndex,
+	GMCMovementComponent->BindInt(AbilityData.GrantedAbilityIndex,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindCompressedVector(AbilityData.TargetVector0,
+	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector0,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindCompressedVector(AbilityData.TargetVector1,
+	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector1,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindCompressedVector(AbilityData.TargetVector2,
+	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector2,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindActorReference(AbilityData.TargetActor,
+	GMCMovementComponent->BindActorReference(AbilityData.TargetActor,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindActorComponentReference(AbilityData.TargetComponent,
+	GMCMovementComponent->BindActorComponentReference(AbilityData.TargetComponent,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindBool(AbilityData.bProcessed,
+	GMCMovementComponent->BindBool(AbilityData.bProcessed,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 		
-	BindBool(bJustTeleported,
+	GMCMovementComponent->BindBool(bJustTeleported,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
 	// Effect State binds
-	BindInt(EffectStatePrediction.EffectID,
+	GMCMovementComponent->BindInt(EffectStatePrediction.EffectID,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	BindHalfByte(EffectStatePrediction.State,
+	GMCMovementComponent->BindHalfByte(EffectStatePrediction.State,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 	} 
 
-void UGMC_AbilityComponent::GenAncillaryTick_Implementation(float DeltaTime, bool bIsCombinedClientMove)
+void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-	Super::GenAncillaryTick_Implementation(DeltaTime, bIsCombinedClientMove);
 	TickActiveEffects(DeltaTime);
 	OnFGMCAbilitySystemComponentTickDelegate.Broadcast(DeltaTime);
 }
@@ -150,11 +148,8 @@ void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 	QueuedAbilities.Push(InAbilityData);
 }
 
-void UGMC_AbilityComponent::GenPredictionTick_Implementation(float DeltaTime)
+void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime)
 {
-	Super::GenPredictionTick_Implementation(DeltaTime);
-
-	
 	for (TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
 	{
 		ApplyAbilityEffect(DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this));
@@ -197,13 +192,12 @@ void UGMC_AbilityComponent::GenPredictionTick_Implementation(float DeltaTime)
 	}
 }
 
-void UGMC_AbilityComponent::GenSimulationTick_Implementation(float DeltaTime)
+void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
 {
-	Super::GenSimulationTick_Implementation(DeltaTime);
 
-	if (GetSmoothingTargetIdx() == -1) return;	
+	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	
-	const FVector TargetLocation = MoveHistory[GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
+	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
 	if (bJustTeleported)
 	{
 		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
@@ -212,10 +206,8 @@ void UGMC_AbilityComponent::GenSimulationTick_Implementation(float DeltaTime)
 	}
 }
 
-void UGMC_AbilityComponent::PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove)
+void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
 {
-	Super::PreLocalMoveExecution_Implementation(LocalMove);
-
 	if (QueuedAbilities.Num() > 0)
 	{
 		AbilityData = QueuedAbilities.Pop();
