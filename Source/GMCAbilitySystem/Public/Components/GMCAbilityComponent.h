@@ -36,6 +36,8 @@ public:
 	// Sets default values for this component's properties
 	UGMC_AbilityComponent(const FObjectInitializer& ObjectInitializer);
 
+	// Bound/Synced over GMC
+	double ActionTimer;
 	
 	FGMCAbilitySystemComponentUpdateSignature OnFGMCAbilitySystemComponentTickDelegate;
 

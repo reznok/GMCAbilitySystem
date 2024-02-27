@@ -24,6 +24,13 @@ void UGMC_AbilityComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+
+	// Sync'd Action Timer
+	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
 	
 	for (const FAttribute* Attribute : Attributes->GetAllAttributes())
 	{
@@ -118,7 +125,6 @@ void UGMC_AbilityComponent::BindReplicationData()
 
 void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-	TickActiveEffects(DeltaTime);
 	OnFGMCAbilitySystemComponentTickDelegate.Broadcast(DeltaTime);
 }
 
@@ -150,6 +156,10 @@ void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 
 void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime)
 {
+	ActionTimer += DeltaTime;
+	
+	TickActiveEffects(DeltaTime);
+	// Synced timer for handling timed actions
 	for (TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
 	{
 		ApplyAbilityEffect(DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this));
@@ -194,7 +204,7 @@ void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime)
 
 void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
 {
-
+	
 	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
@@ -224,6 +234,8 @@ void UGMC_AbilityComponent::BeginPlay()
 
 bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
+	if (Ability->AbilityCost == nullptr) return true;
+	
 	UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
 	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
 	{
@@ -446,7 +458,7 @@ void UGMC_AbilityComponent::ApplyAbilityEffectModifiers(UGMCAbilityEffect* Effec
 		FAttribute CurrentValue = Attributes->GetAttributeValueByName(AttributeModifier.AttributeName);
 		if (!HasAuthority())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Current Value: %f"), CurrentValue.Value);
+			 UE_LOG(LogTemp, Warning, TEXT("Current Value (%s): %f"), *AttributeModifier.AttributeName.ToString(),  CurrentValue.Value);
 		}
 		Attributes->SetAttributeByName(AttributeModifier.AttributeName, CurrentValue.Value + AttributeModifier.Value);
 	}

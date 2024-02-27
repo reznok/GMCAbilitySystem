@@ -14,8 +14,8 @@ class GMCABILITYSYSTEM_API UGMCAbilityTaskBase : public UGameplayTask
 	
 public:
 	
-	UPROPERTY()
-	UGMCAbility* OwningAbility;
+	// UPROPERTY()
+	// UGMCAbility* OwningAbility;
 
 	UPROPERTY()
 	int TaskID;
@@ -24,6 +24,7 @@ public:
 
 	void SetAbilitySystemComponent(UGMC_AbilityComponent* InAbilitySystemComponent);
 
+	/** GameplayAbility that created us */
 	UPROPERTY()
 	TWeakObjectPtr<UGMCAbility> Ability;
 

@@ -1,31 +1,37 @@
 ﻿#include "Tasks/WaitDelay.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 
-UGMCAbilityTask_WaitDelay::UGMCAbilityTask_WaitDelay(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+UGMCAbilityTask_WaitDelay::UGMCAbilityTask_WaitDelay(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
 {
-	Duration = 0.f;
-	StartTime = 0.f;
+	Time = 0.f;
+	TimeStarted = 0.f;
 }
 
-UGMCAbilityTask_WaitDelay* UGMCAbilityTask_WaitDelay::WaitForDelay(UGMCAbility* InAbility,
-	float Duration)
+UGMCAbilityTask_WaitDelay* UGMCAbilityTask_WaitDelay::WaitDelay(UGMCAbility* OwningAbility, float Time)
 {
-	// Create a new UWaitDelayAsyncAction, and store function arguments in it.
-	UGMCAbilityTask_WaitDelay* DelayTask = NewAbilityTask<UGMCAbilityTask_WaitDelay>(InAbility);
-	DelayTask->Duration = Duration;
-
-	return DelayTask;
+	UGMCAbilityTask_WaitDelay* MyObj = NewAbilityTask<UGMCAbilityTask_WaitDelay>(OwningAbility);
+	MyObj->Time = Time;
+	return MyObj;
 }
 
 void UGMCAbilityTask_WaitDelay::Activate()
 {
-	const UWorld* World = GetWorld();
-	StartTime = World->GetTimeSeconds();
-	
-	// Use a dummy timer handle as we don't need to store it for later but we don't need to look for something to clear
-	FTimerHandle TimerHandle;
-	World->GetTimerManager().SetTimer(TimerHandle, this, &UGMCAbilityTask_WaitDelay::OnTimeFinish, Duration, false);
+	Super::Activate();
+
+	bTickingTask = true;
+	TimeStarted = AbilitySystemComponent->ActionTimer;
+}
+
+void UGMCAbilityTask_WaitDelay::TickTask(float DeltaTime)
+{
+	Super::TickTask(DeltaTime);
+	if (TimeStarted + Time <= AbilitySystemComponent->ActionTimer)
+	{
+		OnTimeFinish();
+	}
 }
 
 void UGMCAbilityTask_WaitDelay::OnTimeFinish()

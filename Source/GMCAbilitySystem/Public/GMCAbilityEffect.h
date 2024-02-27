@@ -122,7 +122,7 @@ public:
 	
 	void EndEffect();
 	double GetEndTime(){return StartTime + Duration;}
-	double GetStartTime(){return EndTime; };
+	double GetStartTime(){return StartTime; };
 	
 	void Tick(float DeltaTime);
 	void TickPeriodicEffects(float DeltaTime);
@@ -145,22 +145,12 @@ private:
 	bool bHasStarted;
 
 	double StartTime;
-
-	// Time the Client will stop predicting the effect
-	// This is offset from the server time as ServerEndTime - RTT/2
-	// This is set when initially client predicting an ability, and updated
-	// when receiving the ability confirmation/notification from the server.
 	double EndTime;
 
 	UPROPERTY()
 	UGMC_AbilityComponent* OwnerAbilityComponent;
-
-	// Get the ping of the owning player controller
-	double GetNetworkRoundTripTimeSeconds();
-
-	double GetReplicatedTime();
-
-	void CheckState(EEffectState State);
+	
+	void CheckState();
 
 	float PeriodicApplicationTimer = 0;
 };
