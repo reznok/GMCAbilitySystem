@@ -83,18 +83,33 @@ void UGMCAbilityEffect::InitializeEffect(UGMC_AbilityComponent* AbilityComponent
 
 void UGMCAbilityEffect::EndEffect()
 {
-	if (bCompleted) return;
-	// Instant effects are "permanent"
-	// Periodic effects are just repeated instant effects
+	bCompleted = true;
+
+	if (CurrentState != EEffectState::Ended)
+	{
+		UpdateState(EEffectState::Ended, true);
+	}
+
+	// Only remove tags and abilities if the effect has started
+	if (!bHasStarted) return;
+	
+	RemoveTagsFromOwner();
+	RemoveAbilitiesFromOwner();
+	
 	if (EffectType != EEffectType::Instant && Period == 0)
 	{
 		OwnerAbilityComponent->RemoveActiveAbilityModifiers(this);
 	}
-	bCompleted = true;
 }
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
+	// Ensure tag requirements are met before applying the effect
+	if( !CheckMustHaveTags() || !CheckMustNotHaveTags() )
+	{
+		UpdateState(EEffectState::Ended, true);
+	}
+	
 	TickPeriodicEffects(DeltaTime);
 	CheckState();
 }
@@ -123,6 +138,80 @@ void UGMCAbilityEffect::UpdateState(EEffectState State, bool Force)
 	CurrentState = State;
 }
 
+void UGMCAbilityEffect::AddTagsToOwner()
+{
+	for (const FGameplayTag Tag : GrantedTags)
+	{
+		OwnerAbilityComponent->AddActiveTag(Tag);
+	}
+}
+
+void UGMCAbilityEffect::RemoveTagsFromOwner()
+{
+	for (const FGameplayTag Tag : GrantedTags)
+	{
+		OwnerAbilityComponent->RemoveActiveTag(Tag);
+	}
+}
+
+void UGMCAbilityEffect::AddAbilitiesToOwner()
+{
+	for (const FGameplayTag Tag : GrantedAbilities)
+	{
+		OwnerAbilityComponent->GrantAbilityByTag(Tag);
+	}
+}
+
+void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
+{
+	for (const FGameplayTag Tag : GrantedAbilities)
+	{
+		OwnerAbilityComponent->RemoveGrantedAbilityByTag(Tag);
+	}
+}
+
+bool UGMCAbilityEffect::CheckMustHaveTags()
+{
+	for (const FGameplayTag Tag : MustHaveTags)
+	{
+		if (!OwnerAbilityComponent->HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UGMCAbilityEffect::CheckMustNotHaveTags()
+{
+	for (const FGameplayTag Tag : MustNotHaveTags)
+	{
+		if (OwnerAbilityComponent->HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool UGMCAbilityEffect::DuplicateEffectAlreadyApplied()
+{
+	if (EffectTag == FGameplayTag::EmptyTag)
+	{
+		return false;
+	}
+	
+	for (const TPair<int, UGMCAbilityEffect*> Effect : OwnerAbilityComponent->GetActiveEffects())
+	{
+		if (Effect.Value->EffectTag == this->EffectTag && Effect.Value->bHasStarted)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool UGMCAbilityEffect::CompletedAndServerConfirmed()
 {
 	return bCompleted && bServerConfirmed;
@@ -135,6 +224,18 @@ void UGMCAbilityEffect::CheckState()
 		case EEffectState::Initialized:
 			if (OwnerAbilityComponent->ActionTimer >= StartTime)
 			{
+				// Ensure tag requirements are met before applying the effect
+				if( !CheckMustHaveTags() || !CheckMustNotHaveTags() || DuplicateEffectAlreadyApplied() )
+				{
+					UpdateState(EEffectState::Ended, true);
+					return;
+				}
+
+				bHasStarted = true;
+				
+				AddTagsToOwner();
+				AddAbilitiesToOwner();
+				
 				// Instant/Duration effects that apply immediately
 				if (Period == 0)
 				{
@@ -157,10 +258,10 @@ void UGMCAbilityEffect::CheckState()
 			if (EffectType == EEffectType::Duration && OwnerAbilityComponent->ActionTimer >= EndTime)
 			{
 				UpdateState(EEffectState::Ended, true);
-				EndEffect();
 			}
 			break;
 		case EEffectState::Ended:
+			EndEffect();
 			bCompleted = true;
 			break;
 	default: break;

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
 #include "UObject/Object.h"
 #include "GMCAbilityEffect.generated.h"
 
@@ -117,6 +118,24 @@ public:
 
 	UPROPERTY(EditDefaultsOnly);
 	TArray<FGMCAttributeModifier> Modifiers;
+
+	// Tag to identify this effect
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTag EffectTag;
+
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTagContainer GrantedTags;
+
+	// Tags that the owner must have to apply and maintain this effect
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTagContainer MustHaveTags;
+
+	// Tags that the owner must not have to apply and maintain this effect
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTagContainer MustNotHaveTags;
+
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTagContainer GrantedAbilities;
 	
 	void InitializeEffect(UGMC_AbilityComponent* AbilityComponent, bool bServerApplied = false, FGMCAbilityEffectData InitializationData = {});
 	
@@ -128,6 +147,8 @@ public:
 	void TickPeriodicEffects(float DeltaTime);
 
 	void UpdateState(EEffectState State, bool Force=false);
+
+
 
 	bool CompletedAndServerConfirmed();
 	
@@ -153,5 +174,16 @@ private:
 	void CheckState();
 
 	float PeriodicApplicationTimer = 0;
+
+	// Tags
+	void AddTagsToOwner();
+	void RemoveTagsFromOwner();
+
+	void AddAbilitiesToOwner();
+	void RemoveAbilitiesFromOwner();
+
+	bool CheckMustHaveTags();
+	bool CheckMustNotHaveTags();
+	bool DuplicateEffectAlreadyApplied();
 };
 

@@ -43,10 +43,38 @@ public:
 	
 	FGMCAbilitySystemComponentUpdateSignature OnFGMCAbilitySystemComponentTickDelegate;
 
+	// Ability tags that the controller has 
+	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
+
+	// Gameplay tags that the controller has
+	FGameplayTagContainer GetActiveTags() const { return ActiveTags; }
+
+	// Return the active ability effects
+	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
+
+	// Add an ability to the GrantedAbilities array
+	UFUNCTION(BlueprintCallable)
+	void GrantAbilityByTag(FGameplayTag AbilityTag);
+
+	// Remove an ability from the GrantedAbilities array
+	UFUNCTION(BlueprintCallable)
+	void RemoveGrantedAbilityByTag(FGameplayTag AbilityTag);
+
+	// Add an ability to the GrantedAbilities array
+	UFUNCTION(BlueprintCallable)
+	void AddActiveTag(FGameplayTag AbilityTag);
+
+	// Remove an ability from the GrantedAbilities array
+	UFUNCTION(BlueprintCallable)
+	void RemoveActiveTag(FGameplayTag AbilityTag);
+
+	bool HasActiveTag(FGameplayTag GameplayTag);
+	
 	bool TryActivateAbility(FGMCAbilityData AbilityData);
 
 	// Queue an ability to be executed
 	void QueueAbility(const FGMCAbilityData& InAbilityData);
+	
 
 	// Allows for BP instances of attributes. Attributes gets set to this.
 	UPROPERTY(EditDefaultsOnly)
@@ -116,6 +144,9 @@ protected:
 
 	// Abilities that are granted to the player (bound)
 	FGameplayTagContainer GrantedAbilityTags;
+
+	// Effect tags that are granted to the player (bound)
+	FGameplayTagContainer ActiveTags;
 
 	UPROPERTY(EditAnywhere)
 	TArray<TSubclassOf<UGMCAbility>> StartingAbilities;

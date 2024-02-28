@@ -153,6 +153,15 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
+
+	// Tags
+	// Tags that the owner must have to activate ability
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTagContainer ActivationRequiredTags;
+
+	UPROPERTY(EditDefaultsOnly)
+	// Tags that the owner must not have to activate ability
+	FGameplayTagContainer ActivationBlockedTags;
 	
 
 	// --------------------------------------
@@ -172,6 +181,8 @@ private:
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()
 	TArray<TObjectPtr<UGameplayTask>>	ActiveTasks;
+
+	bool CheckActivationTags();
 
 };
 

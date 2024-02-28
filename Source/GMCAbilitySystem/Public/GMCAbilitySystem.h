@@ -2,6 +2,11 @@
 
 #pragma once
 
+#if WITH_GAMEPLAY_DEBUGGER
+	#include "GameplayDebugger.h"
+	#include "Debug\GameplayDebuggerCategory_GMCAbilitySystem.h"
+#endif // WITH_GAMEPLAY_DEBUGGER
+
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 

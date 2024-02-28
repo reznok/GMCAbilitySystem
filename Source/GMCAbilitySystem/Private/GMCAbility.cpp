@@ -1,4 +1,6 @@
 ﻿#include "GMCAbility.h"
+
+#include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
 
 bool FGMCAbilityData::operator==(FGMCAbilityData const& Other) const
@@ -88,8 +90,37 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 	ActiveTasks.Remove(&Task);
 }
 
+bool UGMCAbility::CheckActivationTags()
+{
+	// Required Tags
+	for (const FGameplayTag Tag : ActivationRequiredTags)
+	{
+		if (!AbilityComponent->HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+
+	// Blocking Tags
+	for (const FGameplayTag Tag : ActivationBlockedTags)
+	{
+		if (AbilityComponent->HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 void UGMCAbility::BeginAbility(FGMCAbilityData AbilityData)
 {
+	// Check Activation Tags
+	if (!CheckActivationTags()){
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Activation Stopped By Tags"));
+		return;
+	}
+	
 	// Initialize Ability
 	AbilityState = EAbilityState::Initialized;
 

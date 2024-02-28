@@ -5,10 +5,7 @@
 
 #include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
-#include "WorldTime.h"
-#include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/ObjectLibrary.h"
-#include "Kismet/GameplayStatics.h"
 
 
 // Sets default values for this component's properties
@@ -28,6 +25,20 @@ void UGMC_AbilityComponent::BindReplicationData()
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	// Granted Abilities
+	GMCMovementComponent->BindGameplayTagContainer(GrantedAbilityTags,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	// Active Tags
+	GMCMovementComponent->BindGameplayTagContainer(ActiveTags,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
@@ -127,6 +138,40 @@ void UGMC_AbilityComponent::BindReplicationData()
 void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 	OnFGMCAbilitySystemComponentTickDelegate.Broadcast(DeltaTime);
+}
+
+void UGMC_AbilityComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
+{
+	if (!GrantedAbilityTags.HasTag(AbilityTag))
+	{
+		GrantedAbilityTags.AddTag(AbilityTag);
+	}
+}
+
+void UGMC_AbilityComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
+{
+	if (GrantedAbilityTags.HasTag(AbilityTag))
+	{
+		GrantedAbilityTags.RemoveTag(AbilityTag);
+	}
+}
+
+void UGMC_AbilityComponent::AddActiveTag(FGameplayTag AbilityTag)
+{
+	ActiveTags.AddTag(AbilityTag);
+}
+
+void UGMC_AbilityComponent::RemoveActiveTag(FGameplayTag AbilityTag)
+{
+	if (ActiveTags.HasTag(AbilityTag))
+	{
+		ActiveTags.RemoveTag(AbilityTag);
+	}
+}
+
+bool UGMC_AbilityComponent::HasActiveTag(FGameplayTag GameplayTag)
+{
+	return ActiveTags.HasTag(GameplayTag);
 }
 
 bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
@@ -382,9 +427,13 @@ void UGMC_AbilityComponent::InitializeAbilityMap()
 	{
 		UGMCAbility* CDO = AbilityBPClass->GetDefaultObject<UGMCAbility>();
 
+		// Skip the BP generated SKELs
+		if (CDO->GetName().Contains("SKEL")) continue;
+
+		// Check for missing tags and if SKEL is present (BP generated)
 		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Ability Class Missing Tag: %s"), *AbilityBPClass->GetName());
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Class Missing Tag: %s"), *AbilityBPClass->GetName());
 			continue;
 		}
 

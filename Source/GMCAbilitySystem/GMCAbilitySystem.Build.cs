@@ -25,7 +25,7 @@ public class GMCAbilitySystem : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Core", "GMCCore", "GMCAbilitySystem", "EnhancedInput", "GameplayTasks", "GameplayTags"
+				"Core", "GMCCore", "GMCAbilitySystem", "EnhancedInput", "GameplayTasks", "GameplayTags", "GameplayDebugger"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
