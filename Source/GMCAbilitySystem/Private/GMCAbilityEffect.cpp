@@ -3,6 +3,7 @@
 
 #include "GMCAbilityEffect.h"
 
+#include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
 
 
@@ -14,7 +15,7 @@ void UGMCAbilityEffect::InitializeEffect(UGMC_AbilityComponent* AbilityComponent
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("Invalid AbilityComponent Passed to UGMCAbilityEffect"));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Invalid AbilityComponent Passed to UGMCAbilityEffect"));
 	}
 
 	// Add any programmatically generated modifiers
@@ -63,7 +64,7 @@ void UGMCAbilityEffect::InitializeEffect(UGMC_AbilityComponent* AbilityComponent
 	}
 	
 	// This is a client prediction
-	if (InitializationData == FGMCAbilityEffectData{})
+	if (InitializationData == FGMCAbilityEffectData{} && !bServerApplied)
 	{
 		StartTime = OwnerAbilityComponent->ActionTimer;
 		EndTime = OwnerAbilityComponent->ActionTimer + Duration;
@@ -73,11 +74,10 @@ void UGMCAbilityEffect::InitializeEffect(UGMC_AbilityComponent* AbilityComponent
 	{
 		// Actual delay is a bit longer than RTT, hence the 30% increase
 		StartTime = InitializationData.ServerStartTime;
-		UE_LOG(LogTemp, Warning, TEXT("Time Until Client Start: %lf"), StartTime - OwnerAbilityComponent->ActionTimer )
+		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Time Until Client Start: %lf"), StartTime - OwnerAbilityComponent->ActionTimer )
 		EndTime = InitializationData.ServerEndTime;
 		Id = InitializationData.EffectID;
 		bServerConfirmed = true;
-		
 	}
 }
 
@@ -117,7 +117,7 @@ void UGMCAbilityEffect::UpdateState(EEffectState State, bool Force)
 {
 	if (State == EEffectState::Ended)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Effect Ended"));
+		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Ended"));
 	}
 
 	CurrentState = State;

@@ -9,7 +9,9 @@
 #include "GMCAbilityEffect.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Components/ActorComponent.h"
+#include "Engine/ObjectLibrary.h"
 #include "GMCAbilityComponent.generated.h"
+
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -111,15 +113,36 @@ protected:
 	virtual void BeginPlay() override;
 	
 	bool CanAffordAbilityCost(UGMCAbility* Ability);
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Abilities")
-	TArray<TSubclassOf<UGMCAbility>> GrantedAbilities;
 
+	// Abilities that are granted to the player (bound)
+	FGameplayTagContainer GrantedAbilityTags;
+
+	UPROPERTY(EditAnywhere)
+	TArray<TSubclassOf<UGMCAbility>> StartingAbilities;
+
+	// Returns a matching granted ability by class name if that ability is in the GrantedAbilities array
+	TSubclassOf<UGMCAbility> GetGrantedAbilityByTag(FGameplayTag AbilityTag);
+	
 	// Used to set the starting Attributes from code
 	// Must be called before GMCAbilityComponent runs its BindReplicationData step
 	void SetAttributes(UGMCAttributeSet* NewAttributes);
 
 private:
+
+	// Cache of all Effect Asset Data
+	// Todo: Convert to using a tag system like abilities
+	UPROPERTY()
+	TArray<UBlueprintGeneratedClass *> EffectBPClasses;
+	void InitializeEffectAssetClasses();
+
+	// Map of Ability Tags to Ability Classes
+	UPROPERTY()
+	TMap<FGameplayTag, UBlueprintGeneratedClass *> AbilityMap;
+	void InitializeAbilityMap();
+
+	// Add the starting ability tags to GrantedAbilities at start
+	void InitializeStartingAbilities();
+	
 	TArray<FGMCAbilityData> QueuedAbilities;
 
 	// Current Ability Data being processed
@@ -140,9 +163,6 @@ private:
 
 	// Clear out abilities in the Ended state from the ActivateAbilities map
 	void CleanupStaleAbilities();
-
-	// Cache all Effect Asset Data from the Asset Manager
-	void InitializeEffectAssetData();
 
 	// Tick Predicted and Active Effects
 	void TickActiveEffects(float DeltaTime);

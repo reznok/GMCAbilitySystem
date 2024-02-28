@@ -3,6 +3,7 @@
 
 #include "Components/GMCAbilityComponent.h"
 
+#include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
 #include "WorldTime.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -24,7 +25,7 @@ void UGMC_AbilityComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
-
+	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
@@ -61,7 +62,7 @@ void UGMC_AbilityComponent::BindReplicationData()
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	GMCMovementComponent->BindInt(AbilityData.GrantedAbilityIndex,
+	GMCMovementComponent->BindGameplayTag(AbilityData.AbilityTag,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
@@ -131,11 +132,11 @@ void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedCl
 bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
-	if (AbilityData.GrantedAbilityIndex >= 0 && AbilityData.GrantedAbilityIndex <= GrantedAbilities.Num() - 1)
+	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(InAbilityData.AbilityTag))
 	{
-		UGMCAbility* Ability = NewObject<UGMCAbility>(this, GrantedAbilities[AbilityData.GrantedAbilityIndex]);
+		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
 		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
-
+		
 		// Check to make sure there's enough resource to use
 		if (!CanAffordAbilityCost(Ability)) return false;
 		
@@ -150,7 +151,7 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 
 void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Queued Ability: %d"), AbilityData.GrantedAbilityIndex);
+	UE_LOG(LogTemp, Warning, TEXT("Queued Ability: %s"), *AbilityData.AbilityTag.ToString());
 	QueuedAbilities.Push(InAbilityData);
 }
 
@@ -228,7 +229,9 @@ void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
 void UGMC_AbilityComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	InitializeEffectAssetData();
+	InitializeAbilityMap();
+	InitializeEffectAssetClasses();
+	InitializeStartingAbilities();
 }
 
 
@@ -278,11 +281,6 @@ void UGMC_AbilityComponent::CleanupStaleAbilities()
 		ActiveAbilities.Remove(AbilityActivationID);
 		// UE_LOG(LogTemp, Warning, TEXT("%d: Cleaned Up Ability: %d"),GetOwner()->GetLocalRole(),  AbilityActivationID);
 	}
-}
-
-void UGMC_AbilityComponent::InitializeEffectAssetData()
-{
-	// Todo: Cache the UObjectLibrary stuff 
 }
 
 void UGMC_AbilityComponent::TickActiveEffects(float DeltaTime)
@@ -342,9 +340,78 @@ UGMCAbilityEffect* UGMC_AbilityComponent::GetMatchingPredictedEffect(UGMCAbility
 	return nullptr;
 }
 
+TSubclassOf<UGMCAbility> UGMC_AbilityComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
+{
+	if (!GrantedAbilityTags.HasTag(AbilityTag))
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Granted: %s"), *AbilityTag.ToString());
+		return nullptr;
+	}
+
+	if (!AbilityMap.Contains(AbilityTag))
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s"), *AbilityTag.ToString());
+		return nullptr;
+	}
+
+	return AbilityMap[AbilityTag];
+}
+
 void UGMC_AbilityComponent::SetAttributes(UGMCAttributeSet* NewAttributes)
 {
 	this->Attributes = NewAttributes;
+}
+
+void UGMC_AbilityComponent::InitializeEffectAssetClasses()
+{
+	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbilityEffect::StaticClass(), true, GIsEditor);
+	Library->bRecursivePaths = true;
+	Library->LoadBlueprintsFromPath("/Game");
+	Library->GetObjects<UBlueprintGeneratedClass>(EffectBPClasses);
+}
+
+void UGMC_AbilityComponent::InitializeAbilityMap()
+{
+	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbility::StaticClass(), true, GIsEditor);
+	Library->bRecursivePaths = true;
+	Library->LoadBlueprintsFromPath("/Game");
+	TArray<UBlueprintGeneratedClass *> AbilityBPClasses;
+	Library->GetObjects<UBlueprintGeneratedClass>(AbilityBPClasses);
+
+	for (UBlueprintGeneratedClass* AbilityBPClass : AbilityBPClasses)
+	{
+		UGMCAbility* CDO = AbilityBPClass->GetDefaultObject<UGMCAbility>();
+
+		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Ability Class Missing Tag: %s"), *AbilityBPClass->GetName());
+			continue;
+		}
+
+		if (AbilityMap.Contains(CDO->AbilityTag))
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Duplicate Ability Tag: %s"), *CDO->AbilityTag.ToString());
+			continue;
+		}
+		
+		AbilityMap.Add(CDO->AbilityTag, AbilityBPClass);
+	}
+}
+
+void UGMC_AbilityComponent::InitializeStartingAbilities()
+{
+	for (const TSubclassOf<UGMCAbility> Ability : StartingAbilities)
+	{
+		const UGMCAbility* CDO = Ability->GetDefaultObject<UGMCAbility>();
+
+		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Starting Ability Missing Tag: %s"), *Ability->GetName());
+			continue;
+		}
+
+		GrantedAbilityTags.AddTag(CDO->AbilityTag);
+	}
 }
 
 void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
@@ -369,14 +436,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbi
 
 UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, bool bServerApplied, FGMCAbilityEffectData InitializationData)
 {
-	// Instant effects touch attributes, which are already replicated, so can just fire immediately
-	// if (Effect->EffectType == EEffectType::Instant)
-	// {
-	// 	ApplyAbilityEffectModifiers(Effect);
-	// 	return Effect;
-	// }
 	if (Effect == nullptr) return nullptr;
-	// Duration effects
 	Effect->InitializeEffect(this, bServerApplied, InitializationData);
 
 	// Apply effect on server
@@ -397,7 +457,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* 
 	if (!bServerApplied)
 	{
 		PredictedActiveEffects.Push(Effect);
-		UE_LOG(LogTemp, Warning, TEXT("Added Predicted Effect: %s"), *Effect->GetClass()->GetName())
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Added Predicted Effect: %s"), *Effect->GetClass()->GetName())
 		return Effect;
 	}
 	
@@ -407,14 +467,14 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* 
 	{
 		PredictedActiveEffects.Remove(PredictedEffect);
 		ActiveEffects.Add(InitializationData.EffectID, PredictedEffect);
-		UE_LOG(LogTemp, Warning, TEXT("Moved Predicted Effect to Active Effects: [%d] %s"),InitializationData.EffectID,
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Moved Predicted Effect to Active Effects: [%d] %s"),InitializationData.EffectID,
 		*Effect->GetClass()->GetName())
 	}
 	else
 	{
 		// Always push to active events
 		ActiveEffects.Add(InitializationData.EffectID, Effect);
-		UE_LOG(LogTemp, Warning, TEXT("Received An Unpredicted Effect:[%d] %s"),InitializationData.EffectID,
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Received An Unpredicted Effect:[%d] %s"),InitializationData.EffectID,
 			*Effect->GetClass()->GetName())
 	}
 
@@ -425,7 +485,7 @@ void UGMC_AbilityComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
 	if (Effect == nullptr)
 	{
-		UE_LOG(LogTemp, Error, TEXT("Tried to remove null active ability effect"));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to remove null active ability effect"));
 		return;
 	}
 
@@ -458,7 +518,7 @@ void UGMC_AbilityComponent::ApplyAbilityEffectModifiers(UGMCAbilityEffect* Effec
 		FAttribute CurrentValue = Attributes->GetAttributeValueByName(AttributeModifier.AttributeName);
 		if (!HasAuthority())
 		{
-			 UE_LOG(LogTemp, Warning, TEXT("Current Value (%s): %f"), *AttributeModifier.AttributeName.ToString(),  CurrentValue.Value);
+			 UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Current Value (%s): %f"), *AttributeModifier.AttributeName.ToString(),  CurrentValue.Value);
 		}
 		Attributes->SetAttributeByName(AttributeModifier.AttributeName, CurrentValue.Value + AttributeModifier.Value);
 	}
@@ -470,19 +530,10 @@ void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& E
 	// Also needs to support non BP effects
 	// https://www.reddit.com/r/unrealengine/comments/ptxadm/is_it_possible_to_get_a_class_using/
 	// FindObject<UClass>(ANY_PACKAGE, TEXT("MyClassName"));
-	
-	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbilityEffect::StaticClass(), true, GIsEditor);
-	Library->bRecursivePaths = true;
-	Library->LoadBlueprintsFromPath("/Game");
-	
-	TArray<UBlueprintGeneratedClass *> ClassesArray;
-	Library->GetObjects<UBlueprintGeneratedClass>(ClassesArray);
 
-	for (int32 i = 0; i < ClassesArray.Num(); ++i)
+	for (int32 i = 0; i < EffectBPClasses.Num(); ++i)
 	{
-		UBlueprintGeneratedClass * BlueprintClass = ClassesArray[i];
-
-		if (EffectClassName == BlueprintClass->GetName())
+		if (const UBlueprintGeneratedClass * BlueprintClass = EffectBPClasses[i]; EffectClassName == BlueprintClass->GetName())
 		{
 			UGMCAbilityEffect* Effect = DuplicateObject(BlueprintClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 			ApplyAbilityEffect(Effect, true, EffectInitializationData);
@@ -490,7 +541,7 @@ void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& E
 			return;
 		}
 	}
-	UE_LOG(LogTemp, Error, TEXT("[GMCABILITY] Received Invalid Effect Class Name From Server: %s"), *EffectClassName);
+	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[GMCABILITY] Received Invalid Effect Class Name From Server: %s"), *EffectClassName);
 }
 
 

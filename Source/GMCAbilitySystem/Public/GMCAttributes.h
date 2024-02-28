@@ -3,7 +3,7 @@
 #include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
-struct FAttribute
+struct GMCABILITYSYSTEM_API FAttribute
 {
 	GENERATED_BODY()
 	

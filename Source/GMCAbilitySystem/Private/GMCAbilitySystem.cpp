@@ -3,6 +3,7 @@
 #include "GMCAbilitySystem.h"
 
 #define LOCTEXT_NAMESPACE "FGMCAbilitySystemModule"
+DEFINE_LOG_CATEGORY(LogGMCAbilitySystem);
 
 void FGMCAbilitySystemModule::StartupModule()
 {

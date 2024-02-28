@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "GameplayTagContainer.h"
 #include "GMCAbilityEffect.h"
 #include "InputAction.h"
 #include "Tasks/GMCAbilityTaskBase.h"
@@ -21,7 +22,7 @@ struct FGMCAbilityData
 	FGMCAbilityData()
 	{
 		// replicated
-		GrantedAbilityIndex = -1;
+		AbilityTag = {};
 		AbilityActivationID = AbilityActivationIDCounter++;
 		TargetVector0 = FVector::Zero();
 		TargetVector1 = FVector::Zero();
@@ -42,12 +43,8 @@ struct FGMCAbilityData
 	
 	bool operator==(FGMCAbilityData const& Other) const;
 	FString ToStringSimple() const;
-
-	// // State of Ability execution
-	// UPROPERTY(BlueprintReadWrite)
-	// TEnumAsByte<EAbilityState> AbilityState;
-
-	// GUID to reference the specific ability data
+	
+	// ID to reference the specific ability data
 	// https://forums.unrealengine.com/t/fs-test-id-is-not-initialized-properly/560690/5 for why the meta is needed
 	UPROPERTY(BlueprintReadOnly, meta = (IgnoreForMemberInitializationTest))
 	int AbilityActivationID;
@@ -56,7 +53,7 @@ struct FGMCAbilityData
 	
 	// Ability ID to cast
 	UPROPERTY(BlueprintReadWrite)
-	int GrantedAbilityIndex;
+	FGameplayTag AbilityTag;
 
 	// Generic targeting data that can be used for anything
 	UPROPERTY(BlueprintReadWrite)
@@ -133,6 +130,9 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem")
 	void EndAbilityEvent();
+
+	UPROPERTY(EditAnywhere)
+	FGameplayTag AbilityTag;
 	
 	UPROPERTY(EditAnywhere)
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;

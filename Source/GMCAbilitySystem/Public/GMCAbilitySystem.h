@@ -5,7 +5,10 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-class FGMCAbilitySystemModule : public IModuleInterface
+DECLARE_LOG_CATEGORY_EXTERN(LogGMCAbilitySystem, Log, All);
+
+
+GMCABILITYSYSTEM_API class FGMCAbilitySystemModule : public IModuleInterface
 {
 public:
 

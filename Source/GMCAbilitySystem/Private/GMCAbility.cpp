@@ -3,7 +3,7 @@
 
 bool FGMCAbilityData::operator==(FGMCAbilityData const& Other) const
 {
-	return AbilityActivationID == Other.AbilityActivationID && GrantedAbilityIndex == Other.GrantedAbilityIndex;
+	return AbilityActivationID == Other.AbilityActivationID && AbilityTag == Other.AbilityTag;
 }
 
 FString FGMCAbilityData::ToStringSimple() const
