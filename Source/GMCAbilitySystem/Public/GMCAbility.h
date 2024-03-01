@@ -1,6 +1,6 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
-#include "GMCAbilityEffect.h"
+#include "Effects/GMCAbilityEffect.h"
 #include "InputAction.h"
 #include "Tasks/GMCAbilityTaskBase.h"
 #include "GMCAbility.generated.h"
@@ -110,12 +110,16 @@ public:
 
 	// Assign a new, incrementing, Task ID
 	UFUNCTION()
-	int GetNextTaskID(){TaskIDCounter += 1; return TaskIDCounter;};
+	int GetNextTaskID(){TaskIDCounter += 1; return TaskIDCounter;}
 
+	// Called by AbilityComponent
+	void Tick(float DeltaTime);;
+	
 	UPROPERTY()
 	TMap<int, UGMCAbilityTaskBase*> RunningTasks;
 
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
+	void TickTasks(float DeltaTime);
 	
 	void Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
 
@@ -146,7 +150,7 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	FGMCAbilityData InitialAbilityData;
 	
-	void CompleteLatentTask(int TaskID);
+	void ProgressTask(int TaskID);
 
 	UFUNCTION(BlueprintCallable)
 	bool HasAuthority();

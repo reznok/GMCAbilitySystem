@@ -5,7 +5,9 @@
 
 #include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
+#include "Effects/GMCAbilityEffect.h"
 #include "Engine/ObjectLibrary.h"
+#include "Net/UnrealNetwork.h"
 
 
 // Sets default values for this component's properties
@@ -137,7 +139,7 @@ void UGMC_AbilityComponent::BindReplicationData()
 
 void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-	OnFGMCAbilitySystemComponentTickDelegate.Broadcast(DeltaTime);
+
 }
 
 void UGMC_AbilityComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
@@ -196,30 +198,34 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 
 void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Queued Ability: %s"), *AbilityData.AbilityTag.ToString());
+	if (InAbilityData.bProgressTask)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Queued Ability Task: %s:%d"), *InAbilityData.AbilityTag.ToString(), InAbilityData.TaskID);
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Queued Ability: %s"), *InAbilityData.AbilityTag.ToString());
+	}
+	
 	QueuedAbilities.Push(InAbilityData);
 }
 
-void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime)
+void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
 	ActionTimer += DeltaTime;
 	
-	TickActiveEffects(DeltaTime);
-	// Synced timer for handling timed actions
+	TickActiveEffects(DeltaTime, bIsReplayingPrediction);
+	TickActiveAbilities(DeltaTime);
+
 	for (TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
 	{
-		ApplyAbilityEffect(DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this));
+		FGMCAbilityEffectData EffectData;
+		EffectData.OwnerAbilityComponent = this;
+		ApplyAbilityEffect(DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this), EffectData);
 	}
 	StartingEffects.Empty();
 	
 	bJustTeleported = false;
-	// Effects
-	if (EffectStatePrediction.EffectID != -1)
-	{
-		UpdateEffectState(EffectStatePrediction);
-		// QueuedEffectStates.Push(EffectStatePrediction);
-		EffectStatePrediction = {};
-	}
 	
 	// Abilities
 	CleanupStaleAbilities();
@@ -233,7 +239,7 @@ void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime)
 			if (ActiveAbilities.Contains(AbilityData.AbilityActivationID))
 			{
 				// UE_LOG(LogTemp, Warning, TEXT("%d: Found Ability to continue!"), GetOwner()->GetLocalRole());
-				ActiveAbilities[AbilityData.AbilityActivationID]->CompleteLatentTask(AbilityData.TaskID);
+				ActiveAbilities[AbilityData.AbilityActivationID]->ProgressTask(AbilityData.TaskID);
 			}
 		}
 		else
@@ -284,15 +290,15 @@ bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
 	if (Ability->AbilityCost == nullptr) return true;
 	
-	UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
-	{
-		if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
-		{
-			// If current - proposed is less than 0, cannot afford. Cost values are negative, so these are added.
-			if (AffectedAttribute->Value + AttributeModifier.Value < 0) return false;
-		}
-	}
+	// UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
+	// for (FGMCAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
+	// {
+	// 	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
+	// 	{
+	// 		// If current - proposed is less than 0, cannot afford. Cost values are negative, so these are added.
+	// 		if (AffectedAttribute->Value + AttributeModifier.Value < 0) return false;
+	// 	}
+	// }
 
 	return true;
 }
@@ -328,61 +334,71 @@ void UGMC_AbilityComponent::CleanupStaleAbilities()
 	}
 }
 
-void UGMC_AbilityComponent::TickActiveEffects(float DeltaTime)
+void UGMC_AbilityComponent::TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction)
 {
-	for (FEffectStatePrediction State : QueuedEffectStates)
-	{
-		UpdateEffectState(State);
-	}
-	QueuedEffectStates.Empty();
+	CheckRemovedEffects();
 	
 	TArray<UGMCAbilityEffect*> CompletedPredictedEffects;
 	TArray<int> CompletedActiveEffects;
 
 	// Tick Effects
-	for (UGMCAbilityEffect* Effect : PredictedActiveEffects)
-	{
-		Effect->Tick(DeltaTime);
-	}
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
-		Effect.Value->Tick(DeltaTime);
+		Effect.Value->Tick(DeltaTime, bIsReplayingPrediction);
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
 	}
 	
 	// Clean expired effects
-	for (UGMCAbilityEffect* Effect : CompletedPredictedEffects)
-	{
-		PredictedActiveEffects.Remove(Effect);
-	}
 	for (const int EffectID : CompletedActiveEffects)
 	{
 		ActiveEffects.Remove(EffectID);
+		ActiveEffectsData.RemoveAll([EffectID](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == EffectID;});
 	}
 }
 
-void UGMC_AbilityComponent::UpdateEffectState(FEffectStatePrediction EffectState)
+void UGMC_AbilityComponent::TickActiveAbilities(float DeltaTime)
 {
-	if (!ActiveEffects.Contains(EffectState.EffectID))
+	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
-		UE_LOG(LogTemp, Error, TEXT("%d: Attempted to update invalid state ID: %d"), GetOwnerRole(), EffectState.EffectID);
-		return;
+		Ability.Value->Tick(DeltaTime);
 	}
-
-	ActiveEffects[EffectState.EffectID]->UpdateState(static_cast<EEffectState>(EffectState.State));
 }
 
-UGMCAbilityEffect* UGMC_AbilityComponent::GetMatchingPredictedEffect(UGMCAbilityEffect* InEffect)
+void UGMC_AbilityComponent::OnRep_ActiveEffectsData()
 {
-	for (UGMCAbilityEffect* Effect : PredictedActiveEffects)
+	for (FGMCAbilityEffectData ActiveEffectData : ActiveEffectsData)
 	{
-		if (Effect->GetClass() == InEffect->GetClass())
+		if (ActiveEffectData.EffectID == 0) continue;
+		
+		if (!ProcessedEffectIDs.Contains(ActiveEffectData.EffectID))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Predicted Effect Found! (%s)"), *InEffect->GetClass()->GetName());
-			return Effect;
+			UGMCAbilityEffect* EffectCDO = DuplicateObject(UGMCAbilityEffect::StaticClass()->GetDefaultObject<UGMCAbilityEffect>(), this);
+			FGMCAbilityEffectData EffectData = ActiveEffectData;
+			ApplyAbilityEffect(EffectCDO, EffectData);
+			ProcessedEffectIDs.Add(EffectData.EffectID, true);
+		// 	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Replicated Effect: %d"), ActiveEffectData.EffectID);
+		}
+		
+		ProcessedEffectIDs[ActiveEffectData.EffectID] = true;
+	}
+}
+
+void UGMC_AbilityComponent::CheckRemovedEffects()
+{
+	for (TPair<int, UGMCAbilityEffect*> Effect : ActiveEffects)
+	{
+		// Ensure this effect has been processed locally
+		if (!ProcessedEffectIDs.Contains(Effect.Key)){return;}
+
+		// Ensure this effect has already been confirmed by the server so that if it's now missing,
+		// it means the server removed it
+		if (!ProcessedEffectIDs[Effect.Key]){return;}
+		
+		if (!ActiveEffectsData.ContainsByPredicate([Effect](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == Effect.Key;}))
+		{
+			RemoveActiveAbilityEffect(Effect.Value);
 		}
 	}
-	return nullptr;
 }
 
 TSubclassOf<UGMCAbility> UGMC_AbilityComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
@@ -465,127 +481,114 @@ void UGMC_AbilityComponent::InitializeStartingAbilities()
 
 void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
 {
-
 	if (Ability->AbilityCost != nullptr)
 	{
-		ApplyAbilityEffect(DuplicateObject(Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this));
+		const UGMCAbilityEffect* EffectCDO = DuplicateObject(Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+		FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
+		EffectData.OwnerAbilityComponent = this;
+		ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
 	}
 }
 
-UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, TArray<FGMCAttributeModifier> AdditionalModifiers, bool bOverwriteExistingModifiers, bool bAppliedByServer)
+//BP Version
+UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
 {
 	if (Effect == nullptr) return nullptr;
-	UGMCAbilityEffect* AbilityEffect = DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this);
-	FGMCAbilityEffectData EffectData = {};
-	EffectData.Modifiers = AdditionalModifiers;
-	EffectData.bOverwriteExistingModifiers = bOverwriteExistingModifiers;
-	ApplyAbilityEffect(AbilityEffect, bAppliedByServer, EffectData);
-	return AbilityEffect;
-}
-
-UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, bool bServerApplied, FGMCAbilityEffectData InitializationData)
-{
-	if (Effect == nullptr) return nullptr;
-	Effect->InitializeEffect(this, bServerApplied, InitializationData);
-
-	// Apply effect on server
-	// Client needs to be told about effects that last for a duration
-	// Ideally they've already predicted it
-	if (GetOwner()->HasAuthority())
-	{
-		InitializationData.ServerStartTime = Effect->GetStartTime();
-		InitializationData.ServerEndTime = Effect->GetEndTime();
-		InitializationData.Duration = Effect->Duration;
-		InitializationData.EffectID = GetNextEffectID();
-		RPCServerApplyEffect(Effect->GetClass()->GetName(), InitializationData);
-		ActiveEffects.Add(InitializationData.EffectID, Effect);
-		return Effect;
-	}
-
-	// This is a client predicted event
-	if (!bServerApplied)
-	{
-		PredictedActiveEffects.Push(Effect);
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Added Predicted Effect: %s"), *Effect->GetClass()->GetName())
-		return Effect;
-	}
 	
-	// Check if there is a predicted effect matching the incoming effect class 
-	// If one isn't found, push to ActiveEffects array
-	if (UGMCAbilityEffect* PredictedEffect = GetMatchingPredictedEffect(Effect))
+	UGMCAbilityEffect* AbilityEffect = DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this);
+	
+	FGMCAbilityEffectData EffectData;
+	if (InitializationData.IsValid())
 	{
-		PredictedActiveEffects.Remove(PredictedEffect);
-		ActiveEffects.Add(InitializationData.EffectID, PredictedEffect);
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Moved Predicted Effect to Active Effects: [%d] %s"),InitializationData.EffectID,
-		*Effect->GetClass()->GetName())
+		EffectData = InitializationData;
 	}
 	else
 	{
-		// Always push to active events
-		ActiveEffects.Add(InitializationData.EffectID, Effect);
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Received An Unpredicted Effect:[%d] %s"),InitializationData.EffectID,
-			*Effect->GetClass()->GetName())
+		EffectData = AbilityEffect->EffectData;
+	}
+	
+	ApplyAbilityEffect(AbilityEffect, EffectData);
+	return AbilityEffect;
+}
+
+UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
+{
+	if (Effect == nullptr) return nullptr;
+	// Force the component this is being applied to to be the owner
+	InitializationData.OwnerAbilityComponent = this;
+	
+	Effect->InitializeEffect(InitializationData);
+	
+	if (Effect->EffectData.EffectID == 0)
+	{
+		// Todo: Need a better way to generate EffectIDs
+		int NewEffectID = static_cast<int>(ActionTimer * 1000);
+		while (ActiveEffects.Contains(NewEffectID))
+		{
+			NewEffectID++;
+		}
+		Effect->EffectData.EffectID = NewEffectID;
+		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
 	}
 
-	return nullptr;
+	// This is Replicated, so only server needs to manage it
+	if (HasAuthority())
+	{
+		ActiveEffectsData.Push(Effect->EffectData);
+	}
+	else
+	{
+		ProcessedEffectIDs.Add(Effect->EffectData.EffectID, false);
+	}
+	
+	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
+	return Effect;
 }
 
 void UGMC_AbilityComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
 	if (Effect == nullptr)
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to remove null active ability effect"));
 		return;
 	}
-
+	
+	if (!ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
 	Effect->EndEffect();
 }
 
-void UGMC_AbilityComponent::ClientPredictEffectStateChange(int EffectID, EEffectState State)
-{
-	EffectStatePrediction.EffectID = EffectID;
-	EffectStatePrediction.State = static_cast<uint8>(State);
-}
 
-void UGMC_AbilityComponent::RemoveActiveAbilityModifiers(UGMCAbilityEffect* Effect)
+void UGMC_AbilityComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilityComponent* SourceAbilityComponent)
 {
-	// Iterate through each attribute modifier and apply the inverse of it
-	for (FGMCAttributeModifier AttributeModifier : Effect->Modifiers)
-	{
-		if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
-		{
-			AffectedAttribute->Value -= AttributeModifier.Value;
-		}
-	}
-}
+	// Provide an opportunity to modify the attribute modifier before applying it
+	UGMCAttributeModifierContainer* AttributeModifierContainer = DuplicateObject(UGMCAttributeModifierContainer::StaticClass()->GetDefaultObject<UGMCAttributeModifierContainer>(), this);
+	AttributeModifierContainer->AttributeModifier = AttributeModifier;
+	OnAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
 
-void UGMC_AbilityComponent::ApplyAbilityEffectModifiers(UGMCAbilityEffect* Effect)
-{
-	// Iterate through each attribute modifier and apply it
-	for (FGMCAttributeModifier AttributeModifier : Effect->Modifiers)
+	// Apply the modified attribute modifier. If no changes were made, it's just the same as the original
+	// Extra copying going on here? Can this be done with a reference? BPs are weird.
+	AttributeModifier = AttributeModifierContainer->AttributeModifier;
+	
+	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
 	{
-		FAttribute CurrentValue = Attributes->GetAttributeValueByName(AttributeModifier.AttributeName);
-		if (!HasAuthority())
+		if (bNegateValue)
 		{
-			 UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Current Value (%s): %f"), *AttributeModifier.AttributeName.ToString(),  CurrentValue.Value);
+			AffectedAttribute->Value += -AttributeModifier.Value;
 		}
-		Attributes->SetAttributeByName(AttributeModifier.AttributeName, CurrentValue.Value + AttributeModifier.Value);
+		else
+		{
+			AffectedAttribute->Value += AttributeModifier.Value;
+		}
 	}
 }
 
 void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& EffectClassName, FGMCAbilityEffectData EffectInitializationData)
 {
-	// Todo: This can all be cached, not run every time
-	// Also needs to support non BP effects
-	// https://www.reddit.com/r/unrealengine/comments/ptxadm/is_it_possible_to_get_a_class_using/
-	// FindObject<UClass>(ANY_PACKAGE, TEXT("MyClassName"));
-
 	for (int32 i = 0; i < EffectBPClasses.Num(); ++i)
 	{
 		if (const UBlueprintGeneratedClass * BlueprintClass = EffectBPClasses[i]; EffectClassName == BlueprintClass->GetName())
 		{
 			UGMCAbilityEffect* Effect = DuplicateObject(BlueprintClass->GetDefaultObject<UGMCAbilityEffect>(), this);
-			ApplyAbilityEffect(Effect, true, EffectInitializationData);
+			ApplyAbilityEffect(Effect, EffectInitializationData);
 			// UE_LOG(LogTemp, Warning, TEXT("[GMCABILITY] Successfully Found Effect Class From Server: %s"), *EffectClassName);
 			return;
 		}
@@ -593,5 +596,11 @@ void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& E
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[GMCABILITY] Received Invalid Effect Class Name From Server: %s"), *EffectClassName);
 }
 
+// ReplicatedProps
+void UGMC_AbilityComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(UGMC_AbilityComponent, ActiveEffectsData);
+}
 
 

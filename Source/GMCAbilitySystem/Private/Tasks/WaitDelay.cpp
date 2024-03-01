@@ -12,9 +12,9 @@ UGMCAbilityTask_WaitDelay::UGMCAbilityTask_WaitDelay(const FObjectInitializer& O
 
 UGMCAbilityTask_WaitDelay* UGMCAbilityTask_WaitDelay::WaitDelay(UGMCAbility* OwningAbility, float Time)
 {
-	UGMCAbilityTask_WaitDelay* MyObj = NewAbilityTask<UGMCAbilityTask_WaitDelay>(OwningAbility);
-	MyObj->Time = Time;
-	return MyObj;
+	UGMCAbilityTask_WaitDelay* Task = NewAbilityTask<UGMCAbilityTask_WaitDelay>(OwningAbility);
+	Task->Time = Time;
+	return Task;
 }
 
 void UGMCAbilityTask_WaitDelay::Activate()
@@ -25,9 +25,9 @@ void UGMCAbilityTask_WaitDelay::Activate()
 	TimeStarted = AbilitySystemComponent->ActionTimer;
 }
 
-void UGMCAbilityTask_WaitDelay::TickTask(float DeltaTime)
+void UGMCAbilityTask_WaitDelay::Tick(float DeltaTime)
 {
-	Super::TickTask(DeltaTime);
+	Super::Tick(DeltaTime);
 	if (TimeStarted + Time <= AbilitySystemComponent->ActionTimer)
 	{
 		OnTimeFinish();
@@ -36,6 +36,6 @@ void UGMCAbilityTask_WaitDelay::TickTask(float DeltaTime)
 
 void UGMCAbilityTask_WaitDelay::OnTimeFinish()
 {
-	OnFinish.Broadcast();
+	Completed.Broadcast();
 	EndTask();
 }

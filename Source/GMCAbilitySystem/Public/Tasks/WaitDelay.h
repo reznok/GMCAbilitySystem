@@ -3,20 +3,17 @@
 #include "WorldTime.h"
 #include "WaitDelay.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FWaitDelayDelegate);
+
 
 UCLASS()
 class UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
 {
 	GENERATED_UCLASS_BODY()
-
-	UPROPERTY(BlueprintAssignable)
-	FWaitDelayDelegate OnFinish;
-
+	
 	float TimePassed = 0.f;
 
 	virtual void Activate() override;
-	virtual void TickTask(float DeltaTime) override;
+	virtual void Tick(float DeltaTime) override;
 
 	/** Return debug string describing task */
 	// virtual FString GetDebugString() const override;

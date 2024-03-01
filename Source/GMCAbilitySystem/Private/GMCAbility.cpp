@@ -25,6 +25,20 @@ UWorld* UGMCAbility::GetWorld() const
 	return GEngine->GetWorldContexts()[0].World();
 }
 
+void UGMCAbility::Tick(float DeltaTime)
+{
+	TickTasks(DeltaTime);
+}
+
+void UGMCAbility::TickTasks(float DeltaTime)
+{
+	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	{
+		if (Task.Value == nullptr) {continue;}
+		Task.Value->Tick(DeltaTime);
+	}
+}
+
 void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData)
 {
 	this->InitialAbilityData = AbilityData;
@@ -40,11 +54,11 @@ void UGMCAbility::CommitAbilityCost()
 	}
 }
 
-void UGMCAbility::CompleteLatentTask(int Task)
+void UGMCAbility::ProgressTask(int Task)
 {
 	if (RunningTasks.Contains(Task))
 	{
-		// RunningTasks[Task]->CompleteTask(false);
+		RunningTasks[Task]->ProgressTask();
 	}
 }
 
@@ -75,6 +89,11 @@ AActor* UGMCAbility::GetGameplayTaskAvatar(const UGameplayTask* Task) const
 void UGMCAbility::OnGameplayTaskInitialized(UGameplayTask& Task)
 {
 	UGMCAbilityTaskBase* AbilityTask = Cast<UGMCAbilityTaskBase>(&Task);
+	if (!AbilityTask)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbility::OnGameplayTaskInitialized called with non-UGMCAbilityTaskBase task"));
+		return;
+	}
 	AbilityTask->SetAbilitySystemComponent(AbilityComponent);
 	AbilityTask->Ability = this;
 	
@@ -130,15 +149,10 @@ void UGMCAbility::BeginAbility(FGMCAbilityData AbilityData)
 
 void UGMCAbility::EndAbility()
 {
-	TArray<int> OldTasks;
 	// RunningTasks.Empty();
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
-		// Task.Value->CompleteTask(true);
-	}
-	for (int TaskId : OldTasks)
-	{
-		RunningTasks.Remove(TaskId);
+		Task.Value->EndTask();
 	}
 	
 	AbilityState = EAbilityState::Ended;

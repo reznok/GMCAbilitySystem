@@ -1,76 +1,75 @@
-﻿// #include "Tasks/WaitForInputKeyRelease.h"
-//
-// #include "EnhancedInputComponent.h"
-// #include "Components/GMCAbilityComponent.h"
-//
-// UWaitForInputKeyReleaseAsyncAction* UWaitForInputKeyReleaseAsyncAction::WaitForKeyRelease(const UObject* WorldContext, UGMCAbility* Ability)
-// {
-// 	UWorld* ContextWorld = GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::ReturnNull);
-// 	if(!ensureAlwaysMsgf(IsValid(WorldContext), TEXT("World Context was not valid.")))
-// 	{
-// 		return nullptr;
-// 	}
-//
-// 	// Create a new UMyDelayAsyncAction, and store function arguments in it.
-// 	UWaitForInputKeyReleaseAsyncAction* NewAction = NewObject<UWaitForInputKeyReleaseAsyncAction>();
-// 	NewAction->OwningAbility = Ability;
-// 	NewAction->ContextWorld = ContextWorld;
-// 	NewAction->RegisterWithGameInstance(ContextWorld->GetGameInstance());
-// 	return NewAction;
-// }
-//
-// void UWaitForInputKeyReleaseAsyncAction::Activate()
-// {
-// 	Super::Activate();
-// 	
-// 	StartTime = GetWorld()->GetRealTimeSeconds();
-//
-// 	if (OwningAbility->InitialAbilityData.ActionInput != nullptr)
-// 	{
-// 		InputReleaseBindHandle = GetEnhancedInputComponent()->BindAction(OwningAbility->InitialAbilityData.ActionInput, ETriggerEvent::Completed, this, &UWaitForInputKeyReleaseAsyncAction::InternalClientCompleted).GetHandle();
-// 	}
-// 	
-// 	TickHandle = OwningAbility->AbilityComponent->OnFGMCAbilitySystemComponentTickDelegate.AddUObject(this, &UWaitForInputKeyReleaseAsyncAction::TickTask);
-// }
-//
-// UEnhancedInputComponent* UWaitForInputKeyReleaseAsyncAction::GetEnhancedInputComponent() const
-// {
-// 	UInputComponent* InputComponent = OwningAbility->AbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
-// 	if (InputComponent)
-// 	{
-// 		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
-// 		{
-// 			return EnhancedInputComponent;
-// 		}
-// 	}
-// 	return nullptr;
-// }
-//
-// void UWaitForInputKeyReleaseAsyncAction::TickTask(float DeltaTime)
-// {
-// 	Super::TickTask(DeltaTime);
-// 	// UE_LOG(LogTemp, Warning, TEXT("%d: Tick!"), OwningAbility->AbilityComponent->GetOwner()->GetLocalRole());
-// 	// If no InputAction was passed, this node completes immediately
-// 	if (!OwningAbility->HasAuthority() && OwningAbility->InitialAbilityData.ActionInput == nullptr)
-// 	{
-// 		UE_LOG(LogTemp, Warning, TEXT("Attempted to use WaitForKeyRelease without setting ActionInput"));
-// 		InternalClientCompleted();
-// 	}
-//
-// 	if (bTaskCompleted)
-// 	{		
-// 		InternalCompleted(false);
-// 	}
-// }
-//
-// void UWaitForInputKeyReleaseAsyncAction::InternalCompleted(bool Forced)
-// {
-// 	Super::InternalCompleted(Forced);
-// 	
-// 	if (InputReleaseBindHandle != -1)
-// 	{
-// 		GetEnhancedInputComponent()->RemoveBindingByHandle(InputReleaseBindHandle);
-// 	}
-// }
-//
-//
+﻿#include "Tasks/WaitForInputKeyRelease.h"
+
+#include "EnhancedInputComponent.h"
+#include "Components/GMCAbilityComponent.h"
+
+UGMCAbilityTask_WaitForInputKeyRelease* UGMCAbilityTask_WaitForInputKeyRelease::WaitForKeyRelease(UGMCAbility* OwningAbility)
+{
+	UGMCAbilityTask_WaitForInputKeyRelease* Task = NewAbilityTask<UGMCAbilityTask_WaitForInputKeyRelease>(OwningAbility);
+	Task->Ability = OwningAbility;
+	return Task;
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
+{
+	Super::Activate();
+	
+	if (Ability->InitialAbilityData.ActionInput != nullptr)
+	{
+		InputReleaseBindHandle = GetEnhancedInputComponent()->BindAction(Ability->InitialAbilityData.ActionInput, ETriggerEvent::Completed, this, &UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask).GetHandle();
+	}
+	
+}
+
+UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
+{
+	UInputComponent* InputComponent = Ability->AbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
+	if (InputComponent)
+	{
+		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
+		{
+			return EnhancedInputComponent;
+		}
+	}
+	return nullptr;
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::TickTask(float DeltaTime)
+{
+	Super::TickTask(DeltaTime);
+	
+	if (bTaskCompleted)
+	{		
+		// InternalCompleted(false);
+	}
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
+{
+	Completed.Broadcast();
+
+	if (!AbilitySystemComponent->HasAuthority())
+	{
+		ClientProgressTask();
+	}
+	// Clean up. Calls OnDestroy.
+	
+	EndTask();
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
+{
+	Super::OnDestroy(bInOwnerFinished);
+	
+	if (InputReleaseBindHandle != -1)
+	{
+		GetEnhancedInputComponent()->RemoveBindingByHandle(InputReleaseBindHandle);
+	}
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask()
+{
+	Super::ProgressTask();
+	OnTaskCompleted();
+}
+

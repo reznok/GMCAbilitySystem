@@ -20,9 +20,10 @@ public:
 	UPROPERTY()
 	int TaskID;
 
-	FDelegateHandle TickHandle;
-
+	virtual void Activate() override;
+	
 	void SetAbilitySystemComponent(UGMC_AbilityComponent* InAbilitySystemComponent);
+	void RegisterTask(UGMCAbilityTaskBase* Task);
 
 	/** GameplayAbility that created us */
 	UPROPERTY()
@@ -31,14 +32,8 @@ public:
 	UPROPERTY()
 	TWeakObjectPtr<UGMC_AbilityComponent> AbilitySystemComponent;
 
-	// /** Returns true if the ability is a locally predicted ability running on a client. Usually this means we need to tell the server something. */
-	// bool IsPredictingClient() const;
-	//
-	// /** Returns true if we are executing the ability on the server for a non locally controlled client */
-	// bool IsForRemoteClient() const;
-	//
-	// /** Returns true if we are executing the ability on the locally controlled client */
-	// bool IsLocallyControlled() const;
+	// Tick called by AbilityComponent, different from TickTask
+	virtual void Tick(float DeltaTime){};
 
 	/** Helper function for instantiating and initializing a new task */
 	template <class T>
@@ -65,10 +60,16 @@ public:
 	//virtual void InternalCompleted(bool Forced);
 	//virtual void InternalClientCompleted();
 
+	// Called when client requests to progress task. Task must make sure this is handled properly/securely
+	virtual void ProgressTask(){};
+	
+	// Client calling to progress the task forward
+	// Task must make sure this is handled properly
+	void ClientProgressTask();
+
 	UPROPERTY(BlueprintAssignable)
 	FGMCAbilityTaskOutputPin Completed;
 	
-
 	//void CompleteTask(bool Forced) {InternalCompleted(Forced);};
 
 protected:

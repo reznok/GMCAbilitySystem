@@ -6,12 +6,12 @@
 #include "GameplayTasksComponent.h"
 #include "GMCAttributes.h"
 #include "GMCAbility.h"
-#include "GMCAbilityEffect.h"
 #include "GMCMovementUtilityComponent.h"
+#include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
-#include "Engine/ObjectLibrary.h"
 #include "GMCAbilityComponent.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilityComponent*, SourceAbilityComponent);
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -27,7 +27,6 @@ struct FEffectStatePrediction
 	uint8 State;
 };
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FGMCAbilitySystemComponentUpdateSignature, float DeltaTime);
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"))
 class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
@@ -41,8 +40,6 @@ public:
 	// Bound/Synced over GMC
 	double ActionTimer;
 	
-	FGMCAbilitySystemComponentUpdateSignature OnFGMCAbilitySystemComponentTickDelegate;
-
 	// Ability tags that the controller has 
 	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
 
@@ -89,28 +86,32 @@ public:
 	// Adds "AbilityCost" set in BP defaults
 	UFUNCTION(BlueprintCallable)
 	void ApplyAbilityCost(UGMCAbility* Ability);
+	
 
 	/**
 	 * Applies an effect to the Ability Component
 	 *
 	 * @param	Effect		        Effect to apply
 	 * @param	AdditionalModifiers	Additional Modifiers to apply with this effect application
+	 * @param	SourceAbilityComponent	Ability Component from which this effect originated
 	 * @param	bOverwriteExistingModifiers	Whether or not to replace existing modifiers that have the same name as additional modifiers. If false, will add them.
 	 * @param	bAppliedByServer	Is this Effect only applied by server? Used to help client predict the unpredictable.
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AutoCreateRefTerm = "AdditionalModifiers"))
-	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, TArray<FGMCAttributeModifier> AdditionalModifiers, bool bOverwriteExistingModifiers = true, bool bAppliedByServer = false);
+	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData);
 	
-	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, bool bServerApplied = false, FGMCAbilityEffectData InitializationData = {});
+	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 
 	
 	UFUNCTION(BlueprintCallable)
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
+
+	UPROPERTY(BlueprintAssignable)
+	FOnAttributeChanged OnAttributeChanged;
 	
-	// Apply the modifiers that affect attributes
-	void ApplyAbilityEffectModifiers(UGMCAbilityEffect* Effect);
-	// Remove the modifiers that affect attributes. For the end of duration effects.
-	void RemoveActiveAbilityModifiers(UGMCAbilityEffect* Effect);
+	// Apply modifiers that affect attributes
+	UFUNCTION(BlueprintCallable)
+	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilityComponent* SourceAbilityComponent = nullptr);
 
 	UPROPERTY(BlueprintReadWrite)
 	bool bJustTeleported;
@@ -133,7 +134,7 @@ public:
 	// GMC 
 	virtual void BindReplicationData();
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
-	virtual void GenPredictionTick(float DeltaTime);
+	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
 	virtual void GenSimulationTick(float DeltaTime);
 	virtual void PreLocalMoveExecution(const FGMC_Move& LocalMove);
 	
@@ -196,22 +197,30 @@ private:
 	void CleanupStaleAbilities();
 
 	// Tick Predicted and Active Effects
-	void TickActiveEffects(float DeltaTime);
+	void TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction);
 
-	void UpdateEffectState(FEffectStatePrediction EffectState);
+	// Tick active abilities, primarily the Tasks inside them
+	void TickActiveAbilities(float DeltaTime);
 
-	// Active Effects with a duration affecting this component0
-	// These are Server Confirmed and have an ID assigned by the server
+	// Active Effects with a duration affecting this component
+	// Can be just normally replicated since if the client doesn't have them already
+	// then prediction is already out the window
+
+	UPROPERTY(ReplicatedUsing = OnRep_ActiveEffectsData)
+	TArray<FGMCAbilityEffectData> ActiveEffectsData;
+
+	UFUNCTION()
+	void OnRep_ActiveEffectsData();
+
+	// Check if any effects have been removed by the server and remove them locally
+	void CheckRemovedEffects();
+
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
-	// Effects that have a duration that the client has predicted will be applied
+	// Effect IDs that have been processed and don't need to be remade when ActiveEffectsData is replicated
+	// Maybe this is a bad way to do it
 	UPROPERTY()
-	TArray<UGMCAbilityEffect*> PredictedActiveEffects;
-
-	UGMCAbilityEffect* GetMatchingPredictedEffect(UGMCAbilityEffect* InEffect);
-
-	// Get a new, incremented, Effect ID
-	int GetNextEffectID(){EffectIDCounter += 1; return EffectIDCounter;};
-	int EffectIDCounter = -1;
+	TMap<int /*ID*/, bool /*bServerConfirmed*/> ProcessedEffectIDs;
+	
 };
