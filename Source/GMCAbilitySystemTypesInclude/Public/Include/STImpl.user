@@ -1,0 +1,77 @@
+﻿
+void TSyncType<FGMCAbilityData>::InitDefault(UType& Value, ::UGMC_ReplicationCmp* const Component)
+{
+  // Determines how the data will be initialized, leave blank for default construction.
+}
+
+void TSyncType<FGMCAbilityData>::Quantize(UType& Value, ::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines how values will be quantized. Usually only applicable for numeric values, leave the value unchanged if rounding is not possible or desired.
+}
+
+bool TSyncType<FGMCAbilityData>::ShouldCombine(const UType& Value, const UType& PreviousValue, ::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines when the current value can be combined with the previous one. Usually only the case if the values are considered equal, e.g.
+  return IsEqual(Value, PreviousValue, Component);
+}
+
+void TSyncType<FGMCAbilityData>::Combine(UType& Value, const UType& ValueToCombine, ::UGMC_ReplicationCmp* const Component)
+{
+  // Determines how two consecutive values will be combined. Usually the original value can just remain unchanged.
+}
+
+bool TSyncType<FGMCAbilityData>::IsEqual(const UType& Value, const UType& OtherValue, ::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines when two values are considered equal, e.g.
+  return Value == OtherValue;
+}
+
+bool TSyncType<FGMCAbilityData>::IsValid(const UType& Value, const UType& OtherValue, ::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines when the values will be considered in sync. Usually only the case if they are equal, e.g.
+  return IsEqual(Value, OtherValue, Component);
+}
+
+TSyncType<FGMCAbilityData>::UType TSyncType<FGMCAbilityData>::Interpolate(
+  uint8 Function,
+  const UType& StartValue,
+  const UType& TargetValue,
+  const UType& PreviousValue,
+  const UType& NextValue,
+  const USceneComponent* const StartActorBase,
+  const USceneComponent* const TargetActorBase,
+  const USceneComponent* const PreviousActorBase,
+  const USceneComponent* const NextActorBase,
+  double Ratio,
+  bool bUseRelative,
+  ::UGMC_ReplicationCmp* const Component
+) const
+{
+  // Determines how values will be interpolated. You don't have access to the enum for the passed interpolation function here, but you can look it up in
+  // GMCCore/Public/Replication/Smoothing.h (EGMC_InterpolationFunction).
+  return Ratio < 0.5 ? StartValue : TargetValue;
+}
+
+void TSyncType<FGMCAbilityData>::Serialize(UType& Value, FArchive& Ar, UPackageMap* Map, const FGMC_NetInfo& NetInfo, const FGMC_MetaData& MetaData) const
+{
+  // Determines how the data will be serialized for replication, e.g.
+	 Value.NetSerialize(Ar, Map, UNUSED(bool));
+}
+
+FString TSyncType<FGMCAbilityData>::GetLogName(::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines the name that will be used for your sync type in the log for debugging, e.g.
+  return TEXT("GMCAbilityData");
+}
+
+FString TSyncType<FGMCAbilityData>::GetLogValue(const UType& Value, ::UGMC_ReplicationCmp* const Component) const
+{
+  // Determines how the values of your sync type will be printed to the log for debugging, e.g.
+   return FString::Printf(TEXT("Hello"));
+}
+
+EGMC_SyncType TSyncType<FGMCAbilityData>::GetTypeEnum(::UGMC_ReplicationCmp* const Component) const
+{
+  // Return the enum value for your sync type (the name you chose).
+  return EGMC_SyncType::GMCAbilityData;
+}

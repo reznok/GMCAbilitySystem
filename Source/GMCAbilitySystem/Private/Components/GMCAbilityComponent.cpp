@@ -6,6 +6,7 @@
 #include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "SyncCore.h"
 #include "Engine/ObjectLibrary.h"
 #include "Net/UnrealNetwork.h"
 
@@ -24,6 +25,7 @@ void UGMC_AbilityComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+	
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
@@ -57,80 +59,7 @@ void UGMC_AbilityComponent::BindReplicationData()
 	//
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
-	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindBool(AbilityData.bProgressTask,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindInt(AbilityData.TaskID,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindGameplayTag(AbilityData.AbilityTag,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector0,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector1,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindCompressedVector(AbilityData.TargetVector2,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindActorReference(AbilityData.TargetActor,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindActorComponentReference(AbilityData.TargetComponent,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindBool(AbilityData.bProcessed,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-		
-	GMCMovementComponent->BindBool(bJustTeleported,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::PeriodicAndOnChange_Output,
-		EGMC_InterpolationFunction::TargetValue);
-
-	// Effect State binds
-	GMCMovementComponent->BindInt(EffectStatePrediction.EffectID,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindHalfByte(EffectStatePrediction.State,
+	BindGMCAbilityData(AbilityData,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,

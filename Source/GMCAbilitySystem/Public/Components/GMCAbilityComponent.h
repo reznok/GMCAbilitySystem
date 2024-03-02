@@ -7,6 +7,7 @@
 #include "GMCAttributes.h"
 #include "GMCAbility.h"
 #include "GMCMovementUtilityComponent.h"
+#include "GMCAbilityData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
@@ -159,6 +160,37 @@ protected:
 	// Must be called before GMCAbilityComponent runs its BindReplicationData step
 	void SetAttributes(UGMCAttributeSet* NewAttributes);
 
+	UFUNCTION(BlueprintCallable)
+	int32 BindGMCAbilityData(
+	  UPARAM(Ref) FGMCAbilityData& VariableToBind,
+	  EGMC_PredictionMode PredictionMode,
+	  EGMC_CombineMode CombineMode,
+	  EGMC_SimulationMode SimulationMode,
+	  EGMC_InterpolationFunction Interpolation
+	)
+	{
+		int32 BindingIndex = -1;
+		UE_LOG(LogTemp, Warning, TEXT("Binding!"))
+				GMCMovementComponent->AliasData.GMCAbilityData.BindMember(
+				  VariableToBind,
+				  TranslateToSyncSettings(PredictionMode, CombineMode, SimulationMode, Interpolation),
+				  BindingIndex
+				);
+		return BindingIndex;
+	}
+
+	UFUNCTION(BlueprintCallable)
+	FGMCAbilityData GetBoundGMCAbilityData(int32 Index, const FGMC_PawnState& State) const
+	{
+		return State.GMCAbilityData.Read(Index);
+	}
+
+	UFUNCTION(BlueprintCallable, BlueprintPure = false)
+	void SetBoundGMCAbilityData(const FGMCAbilityData& Value, int32 Index, UPARAM(Ref) FGMC_PawnState& State) const
+	{
+		State.GMCAbilityData.Write(Value, Index);
+	}
+
 private:
 
 	// Cache of all Effect Asset Data
@@ -179,7 +211,7 @@ private:
 
 	// Current Ability Data being processed
 	// Members of this struct are bound over GMC
-	FGMCAbilityData AbilityData{};
+	FGMCAbilityData AbilityData;
 
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};

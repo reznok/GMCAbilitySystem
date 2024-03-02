@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using UnrealBuildTool;
 
 public class GMCAbilitySystem : ModuleRules
@@ -8,28 +9,13 @@ public class GMCAbilitySystem : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		
-		PublicIncludePaths.AddRange(
-			new string[] {
-				// ... add public include paths required here ...
-			}
-			);
-				
-		
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				// ... add other private include paths required here ...
-			}
-			);
-			
-		
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Core", "GMCCore", "GMCAbilitySystem", "EnhancedInput", "GameplayTasks", "GameplayTags", "GameplayDebugger"
+				"Core", "GMCCore", "GMCAbilitySystemTypesInclude", "EnhancedInput", "GameplayTasks", "GameplayTags", "GameplayDebugger"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
-			
 		
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
@@ -49,5 +35,9 @@ public class GMCAbilitySystem : ModuleRules
 				// ... add any modules that your module loads dynamically here ...
 			}
 			);
+		
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 	}
 }

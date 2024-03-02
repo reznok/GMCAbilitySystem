@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
+#include "GMCAbilityData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "InputAction.h"
 #include "Tasks/GMCAbilityTaskBase.h"
@@ -14,81 +15,6 @@ enum class EAbilityState : uint8
 	Ended
 };
 
-USTRUCT(BlueprintType)
-struct FGMCAbilityData
-{
-	GENERATED_USTRUCT_BODY()
-
-	FGMCAbilityData()
-	{
-		// replicated
-		AbilityTag = {};
-		AbilityActivationID = AbilityActivationIDCounter++;
-		TargetVector0 = FVector::Zero();
-		TargetVector1 = FVector::Zero();
-		TargetVector2 = FVector::Zero();
-		TargetActor = nullptr;
-		TargetComponent = nullptr;
-		bProgressTask = false;
-		TaskID = -1;
-
-		// non replicated
-		ActionInput = nullptr;
-	}
-
-	FGMCAbilityData(FGMCAbilityData const& Other)
-	{
-		*this = Other;
-	}
-	
-	bool operator==(FGMCAbilityData const& Other) const;
-	FString ToStringSimple() const;
-	
-	// ID to reference the specific ability data
-	// https://forums.unrealengine.com/t/fs-test-id-is-not-initialized-properly/560690/5 for why the meta is needed
-	UPROPERTY(BlueprintReadOnly, meta = (IgnoreForMemberInitializationTest))
-	int AbilityActivationID;
-
-	inline static int AbilityActivationIDCounter;
-	
-	// Ability ID to cast
-	UPROPERTY(BlueprintReadWrite)
-	FGameplayTag AbilityTag;
-
-	// Generic targeting data that can be used for anything
-	UPROPERTY(BlueprintReadWrite)
-	FVector TargetVector0;
-	
-	UPROPERTY(BlueprintReadWrite)
-	FVector TargetVector1;
-	
-	UPROPERTY(BlueprintReadWrite)
-	FVector TargetVector2;
-
-	// Target Actor
-	UPROPERTY(BlueprintReadWrite)
-	AActor* TargetActor;
-
-	// Target Component
-	UPROPERTY(BlueprintReadWrite)
-	UActorComponent* TargetComponent;
-	
-	bool bProcessed = true;
-
-	// The input used to start the ability on the client
-	// Needed for things like "WaitForKeyRelease"
-	UPROPERTY()
-	UInputAction* ActionInput;
-	
-	// Used to continue execution of blueprints with waiting latent nodes where client can progress execution
-	// Ie: Waiting for a key to be released
-	UPROPERTY(BlueprintReadWrite)
-	bool bProgressTask;
-
-	// Task to continue ability execution on
-	UPROPERTY(BlueprintReadWrite)
-	int TaskID;
-};
 
 // Forward Declarations
 class UGMC_AbilityComponent;

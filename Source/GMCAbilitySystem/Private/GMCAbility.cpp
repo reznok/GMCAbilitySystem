@@ -3,16 +3,12 @@
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
 
-bool FGMCAbilityData::operator==(FGMCAbilityData const& Other) const
-{
-	return AbilityActivationID == Other.AbilityActivationID && AbilityTag == Other.AbilityTag;
-}
-
 FString FGMCAbilityData::ToStringSimple() const
 {
 	FString RetString = FString::Printf(TEXT("ID: %d"), AbilityActivationID);
 	return RetString;
 }
+
 
 UWorld* UGMCAbility::GetWorld() const
 {
