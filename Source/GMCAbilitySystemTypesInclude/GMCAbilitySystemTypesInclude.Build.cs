@@ -11,9 +11,8 @@ public class GMCAbilitySystemTypesInclude : ModuleRules
 			new string[]
 			{
 				"Core",
+				"StructUtils",
 				"CoreUObject",
-				"EnhancedInput",
-				"GameplayTags"
 			}
 			);
 		

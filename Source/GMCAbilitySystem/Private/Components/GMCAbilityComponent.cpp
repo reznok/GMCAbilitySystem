@@ -6,7 +6,6 @@
 #include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
 #include "Effects/GMCAbilityEffect.h"
-#include "SyncCore.h"
 #include "Engine/ObjectLibrary.h"
 #include "Net/UnrealNetwork.h"
 
@@ -59,13 +58,26 @@ void UGMC_AbilityComponent::BindReplicationData()
 	//
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
-	BindGMCAbilityData(AbilityData,
+	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
-	} 
 
+	GMCMovementComponent->BindGameplayTag(AbilityData.AbilityTag,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	// TaskData Bind
+	BindInstancedStruct(TaskData,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+	
+}
 void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 
@@ -100,7 +112,7 @@ void UGMC_AbilityComponent::RemoveActiveTag(FGameplayTag AbilityTag)
 	}
 }
 
-bool UGMC_AbilityComponent::HasActiveTag(FGameplayTag GameplayTag)
+bool UGMC_AbilityComponent::HasActiveTag(FGameplayTag GameplayTag) const
 {
 	return ActiveTags.HasTag(GameplayTag);
 }
@@ -110,16 +122,24 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
 	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(InAbilityData.AbilityTag))
 	{
+		// Invalid Activation ID
+		if (InAbilityData.AbilityActivationID < 0) return false;
+		
+		// Client Sets the Activation ID
+		if (InAbilityData.AbilityActivationID == 0)
+		{
+			InAbilityData.AbilityActivationID = GetNextAbilityActivationID();
+		}
+		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
-		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
 		
 		// Check to make sure there's enough resource to use
 		if (!CanAffordAbilityCost(Ability)) return false;
 		
 		Ability->Execute(this, InAbilityData);
-
+		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
+		
 		return true;
-		// UE_LOG(LogTemp, Warning, TEXT("Ability: %d Activated | %s"), AbilityData.GrantedAbilityIndex, *AbilityData.AbilityActivationID.ToString());
 	}
 
 	return false;
@@ -127,60 +147,43 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 
 void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 {
-	if (InAbilityData.bProgressTask)
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Queued Ability Task: %s:%d"), *InAbilityData.AbilityTag.ToString(), InAbilityData.TaskID);
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Queued Ability: %s"), *InAbilityData.AbilityTag.ToString());
-	}
-	
 	QueuedAbilities.Push(InAbilityData);
 }
 
+void UGMC_AbilityComponent::QueueTaskData(const FInstancedStruct& InTaskData)
+{
+	QueuedTaskData.Push(InTaskData);
+}	
+
 void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
+	bJustTeleported = false;
 	ActionTimer += DeltaTime;
 	
 	TickActiveEffects(DeltaTime, bIsReplayingPrediction);
 	TickActiveAbilities(DeltaTime);
-
-	for (TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
-	{
-		FGMCAbilityEffectData EffectData;
-		EffectData.OwnerAbilityComponent = this;
-		ApplyAbilityEffect(DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this), EffectData);
-	}
-	StartingEffects.Empty();
-	
-	bJustTeleported = false;
 	
 	// Abilities
 	CleanupStaleAbilities();
-	
-	if (AbilityData.bProcessed == false)
-	{
-		if (AbilityData.bProgressTask)
-		{
-			// UE_LOG(LogTemp, Warning, TEXT("%d: Continuing Ability..."), GetOwner()->GetLocalRole());
 
-			if (ActiveAbilities.Contains(AbilityData.AbilityActivationID))
-			{
-				// UE_LOG(LogTemp, Warning, TEXT("%d: Found Ability to continue!"), GetOwner()->GetLocalRole());
-				ActiveAbilities[AbilityData.AbilityActivationID]->ProgressTask(AbilityData.TaskID);
-			}
-		}
-		else
-		{
-			if (!ActiveAbilities.Contains(AbilityData.AbilityActivationID))
-			{
-				TryActivateAbility(AbilityData);
-				// UE_LOG(LogTemp, Warning, TEXT("%d: Processing Ability..."), GetOwner()->GetLocalRole());
-			}
-		}
-		AbilityData.bProcessed = true;
+	// Was an ability used?
+	if (AbilityData != FGMCAbilityData{})
+	{
+		TryActivateAbility(AbilityData);
 	}
+
+	// Ability Task Data
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	if (TaskDataFromInstance != FGMCAbilityTaskData{} && TaskDataFromInstance.TaskID >= 0)
+	{
+			if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
+			{
+				ActiveAbilities[TaskDataFromInstance.AbilityID]->ProgressTask(TaskDataFromInstance.TaskID, TaskData);
+			}
+	}
+	
+	AbilityData = FGMCAbilityData{};
+	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
 void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
@@ -202,7 +205,10 @@ void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
 	if (QueuedAbilities.Num() > 0)
 	{
 		AbilityData = QueuedAbilities.Pop();
-		AbilityData.bProcessed = false;
+	}
+	if (QueuedTaskData.Num() > 0)
+	{
+		TaskData = QueuedTaskData.Pop();
 	}
 }
 
@@ -247,19 +253,13 @@ void UGMC_AbilityComponent::InstantiateAttributes()
 
 void UGMC_AbilityComponent::CleanupStaleAbilities()
 {
-	TArray<int> MarkedForDeletion;
-	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
 	{
-		if (Ability.Value->AbilityState == EAbilityState::Ended)
+		// If the contained ability is in the Ended state, delete it
+		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
-			MarkedForDeletion.Push(Ability.Key);
+			It.RemoveCurrent();
 		}
-	}
-
-	for (const int AbilityActivationID : MarkedForDeletion)
-	{
-		ActiveAbilities.Remove(AbilityActivationID);
-		// UE_LOG(LogTemp, Warning, TEXT("%d: Cleaned Up Ability: %d"),GetOwner()->GetLocalRole(),  AbilityActivationID);
 	}
 }
 

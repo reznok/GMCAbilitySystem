@@ -1,14 +1,7 @@
-﻿#include "GMCAbility.h"
-
+﻿#include "Ability/GMCAbility.h"
 #include "GMCAbilitySystem.h"
+#include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
-
-FString FGMCAbilityData::ToStringSimple() const
-{
-	FString RetString = FString::Printf(TEXT("ID: %d"), AbilityActivationID);
-	return RetString;
-}
-
 
 UWorld* UGMCAbility::GetWorld() const
 {
@@ -38,6 +31,7 @@ void UGMCAbility::TickTasks(float DeltaTime)
 void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData)
 {
 	this->InitialAbilityData = AbilityData;
+	this->AbilityID = AbilityData.AbilityActivationID;
 	this->AbilityComponent = InAbilityComponent;
 	BeginAbility(AbilityData);
 }
@@ -50,11 +44,11 @@ void UGMCAbility::CommitAbilityCost()
 	}
 }
 
-void UGMCAbility::ProgressTask(int Task)
+void UGMCAbility::ProgressTask(int Task, FInstancedStruct TaskData)
 {
 	if (RunningTasks.Contains(Task))
 	{
-		RunningTasks[Task]->ProgressTask();
+		RunningTasks[Task]->ProgressTask(TaskData);
 	}
 }
 
@@ -153,4 +147,14 @@ void UGMCAbility::EndAbility()
 	
 	AbilityState = EAbilityState::Ended;
 	EndAbilityEvent();
+}
+
+AActor* UGMCAbility::OwnerActor() const
+{
+	return AbilityComponent->GetOwner();
+}
+
+void UGMCAbility::SetJustTeleported(bool bValue)
+{
+	AbilityComponent->bJustTeleported = bValue;
 }

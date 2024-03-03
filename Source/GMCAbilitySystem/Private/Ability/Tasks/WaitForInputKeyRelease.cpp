@@ -1,4 +1,4 @@
-﻿#include "Tasks/WaitForInputKeyRelease.h"
+﻿#include "Ability/Tasks/WaitForInputKeyRelease.h"
 
 #include "EnhancedInputComponent.h"
 #include "Components/GMCAbilityComponent.h"
@@ -67,9 +67,19 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
 	}
 }
 
-void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask()
+void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& TaskData)
 {
-	Super::ProgressTask();
+	Super::ProgressTask(TaskData);
 	OnTaskCompleted();
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask()
+{
+	FGMCAbilityTaskData TaskData;
+	TaskData.AbilityID = Ability->GetAbilityID();
+	TaskData.TaskID = TaskID;
+	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
+	
+	Ability->AbilityComponent->QueueTaskData(TaskDataInstance);
 }
 

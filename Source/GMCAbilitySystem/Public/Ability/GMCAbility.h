@@ -1,9 +1,8 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
 #include "GMCAbilityData.h"
+#include "InstancedStruct.h"
 #include "Effects/GMCAbilityEffect.h"
-#include "InputAction.h"
-#include "Tasks/GMCAbilityTaskBase.h"
 #include "GMCAbility.generated.h"
 
 UENUM(BlueprintType)
@@ -18,6 +17,7 @@ enum class EAbilityState : uint8
 
 // Forward Declarations
 class UGMC_AbilityComponent;
+class UGMCAbilityTaskBase;
 
 UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwnerInterface
@@ -39,7 +39,9 @@ public:
 	int GetNextTaskID(){TaskIDCounter += 1; return TaskIDCounter;}
 
 	// Called by AbilityComponent
-	void Tick(float DeltaTime);;
+	void Tick(float DeltaTime);
+
+	int GetAbilityID() const {return AbilityID;};;
 	
 	UPROPERTY()
 	TMap<int, UGMCAbilityTaskBase*> RunningTasks;
@@ -52,15 +54,21 @@ public:
 	UFUNCTION()
 	void BeginAbility(FGMCAbilityData AbilityData);
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem/Ability")
 	void BeginAbilityEvent(FGMCAbilityData AbilityData);
 
-	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem/Ability")
 	void EndAbility();
 
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem/Ability")
 	void EndAbilityEvent();
 
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem/Ability")
+	AActor* OwnerActor() const;
+
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem/Ability")
+	void SetJustTeleported(bool bValue);
+	
 	UPROPERTY(EditAnywhere)
 	FGameplayTag AbilityTag;
 	
@@ -72,11 +80,10 @@ public:
 
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilityComponent* AbilityComponent;
-
-	UPROPERTY(BlueprintReadOnly)
+	
 	FGMCAbilityData InitialAbilityData;
 	
-	void ProgressTask(int TaskID);
+	void ProgressTask(int TaskID, FInstancedStruct TaskData);
 
 	UFUNCTION(BlueprintCallable)
 	bool HasAuthority();
@@ -93,7 +100,7 @@ public:
 	// Tags that the owner must not have to activate ability
 	FGameplayTagContainer ActivationBlockedTags;
 	
-
+	
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
 	// --------------------------------------	
@@ -106,6 +113,7 @@ public:
 	
 private:
 
+	int AbilityID = -1;
 	int TaskIDCounter = -1;
 
 	/** List of currently active tasks, do not modify directly */

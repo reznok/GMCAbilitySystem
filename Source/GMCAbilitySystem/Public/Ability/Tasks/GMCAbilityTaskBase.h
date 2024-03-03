@@ -1,11 +1,11 @@
 ﻿#pragma once
+#include "InstancedStruct.h"
+#include "Ability/GMCAbility.h"
+#include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "GMCAbilityTaskBase.generated.h"
 
-class UGMCAbility;
 class UGMC_AbilityComponent;
 class UGameplayTasksComponent;
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGMCAbilityTaskOutputPin);
 
 UCLASS(Abstract, BlueprintType, meta = (ExposedAsyncProxy=AsyncTask), config = Game)
 class GMCABILITYSYSTEM_API UGMCAbilityTaskBase : public UGameplayTask
@@ -61,14 +61,11 @@ public:
 	//virtual void InternalClientCompleted();
 
 	// Called when client requests to progress task. Task must make sure this is handled properly/securely
-	virtual void ProgressTask(){};
+	virtual void ProgressTask(FInstancedStruct& TaskData){};
 	
 	// Client calling to progress the task forward
 	// Task must make sure this is handled properly
-	void ClientProgressTask();
-
-	UPROPERTY(BlueprintAssignable)
-	FGMCAbilityTaskOutputPin Completed;
+	virtual void ClientProgressTask();
 	
 	//void CompleteTask(bool Forced) {InternalCompleted(Forced);};
 

@@ -1,6 +1,7 @@
-﻿#include "Tasks/GMCAbilityTaskBase.h"
-#include "GMCAbility.h"
-#include "Components/GMCAbilityComponent.h"
+﻿#include "Ability/Tasks/GMCAbilityTaskBase.h"
+#include "Ability/GMCAbility.h"
+
+
 
 void UGMCAbilityTaskBase::Activate()
 {
@@ -21,9 +22,10 @@ void UGMCAbilityTaskBase::RegisterTask(UGMCAbilityTaskBase* Task)
 
 void UGMCAbilityTaskBase::ClientProgressTask()
 {
-	FGMCAbilityData ContinueRunning = Ability->InitialAbilityData;
-	ContinueRunning.TaskID = TaskID;
-	ContinueRunning.bProgressTask = true;
-	Ability->AbilityComponent->QueueAbility(ContinueRunning);
+	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(FGMCAbilityTaskData{
+		.AbilityID = Ability->GetAbilityID(),
+		.TaskID = TaskID
+	});
+	Ability->AbilityComponent->QueueTaskData(TaskDataInstance);
 }
 

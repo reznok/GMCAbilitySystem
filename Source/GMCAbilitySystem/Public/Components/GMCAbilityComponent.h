@@ -5,9 +5,10 @@
 #include "CoreMinimal.h"
 #include "GameplayTasksComponent.h"
 #include "GMCAttributes.h"
-#include "GMCAbility.h"
+#include "Ability/GMCAbility.h"
 #include "GMCMovementUtilityComponent.h"
-#include "GMCAbilityData.h"
+#include "Ability/GMCAbilityData.h"
+#include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
@@ -66,20 +67,18 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void RemoveActiveTag(FGameplayTag AbilityTag);
 
-	bool HasActiveTag(FGameplayTag GameplayTag);
+	bool HasActiveTag(FGameplayTag GameplayTag) const;
 	
 	bool TryActivateAbility(FGMCAbilityData AbilityData);
 
 	// Queue an ability to be executed
 	void QueueAbility(const FGMCAbilityData& InAbilityData);
-	
+	void QueueTaskData(const FInstancedStruct& TaskData);
+
 
 	// Allows for BP instances of attributes. Attributes gets set to this.
 	UPROPERTY(EditDefaultsOnly)
 	TSubclassOf<UGMCAttributeSet> StartingAttributes;
-
-	UPROPERTY(EditDefaultsOnly)
-	TArray<TSubclassOf<UGMCAbilityEffect>> StartingEffects;
 	
 	UPROPERTY(BlueprintReadOnly)
 	UGMCAttributeSet* Attributes;
@@ -160,9 +159,15 @@ protected:
 	// Must be called before GMCAbilityComponent runs its BindReplicationData step
 	void SetAttributes(UGMCAttributeSet* NewAttributes);
 
+	UPROPERTY(EditAnywhere)
+	FGMCAbilityData AbilityData;
+
+	UPROPERTY(EditAnywhere, NoClear, Meta = (ExcludeBaseStruct, BaseStruct = "FTaskData"))
+	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
+
 	UFUNCTION(BlueprintCallable)
-	int32 BindGMCAbilityData(
-	  UPARAM(Ref) FGMCAbilityData& VariableToBind,
+	int32 BindInstancedStruct(
+	  UPARAM(Ref) FInstancedStruct& VariableToBind,
 	  EGMC_PredictionMode PredictionMode,
 	  EGMC_CombineMode CombineMode,
 	  EGMC_SimulationMode SimulationMode,
@@ -171,24 +176,12 @@ protected:
 	{
 		int32 BindingIndex = -1;
 		UE_LOG(LogTemp, Warning, TEXT("Binding!"))
-				GMCMovementComponent->AliasData.GMCAbilityData.BindMember(
+				GMCMovementComponent->AliasData.InstancedStruct.BindMember(
 				  VariableToBind,
 				  TranslateToSyncSettings(PredictionMode, CombineMode, SimulationMode, Interpolation),
 				  BindingIndex
 				);
 		return BindingIndex;
-	}
-
-	UFUNCTION(BlueprintCallable)
-	FGMCAbilityData GetBoundGMCAbilityData(int32 Index, const FGMC_PawnState& State) const
-	{
-		return State.GMCAbilityData.Read(Index);
-	}
-
-	UFUNCTION(BlueprintCallable, BlueprintPure = false)
-	void SetBoundGMCAbilityData(const FGMCAbilityData& Value, int32 Index, UPARAM(Ref) FGMC_PawnState& State) const
-	{
-		State.GMCAbilityData.Write(Value, Index);
 	}
 
 private:
@@ -208,10 +201,11 @@ private:
 	void InitializeStartingAbilities();
 	
 	TArray<FGMCAbilityData> QueuedAbilities;
+	TArray<FInstancedStruct> QueuedTaskData;
 
 	// Current Ability Data being processed
 	// Members of this struct are bound over GMC
-	FGMCAbilityData AbilityData;
+	// FGMCAbilityData AbilityData;
 
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};
@@ -221,6 +215,9 @@ private:
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 
+	int AbilityActivationIDCounter = 0;
+	int GetNextAbilityActivationID(){return ++AbilityActivationIDCounter;}
+	
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
 	void InstantiateAttributes();

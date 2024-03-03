@@ -3,7 +3,7 @@
 #include "WorldTime.h"
 #include "WaitDelay.generated.h"
 
-
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGMCAbilityTaskWaitDelayOutputPin);
 
 UCLASS()
 class UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
@@ -14,6 +14,9 @@ class UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
 
 	virtual void Activate() override;
 	virtual void Tick(float DeltaTime) override;
+	
+	UPROPERTY(BlueprintAssignable)
+	FGMCAbilityTaskWaitDelayOutputPin Completed;
 
 	/** Return debug string describing task */
 	// virtual FString GetDebugString() const override;
