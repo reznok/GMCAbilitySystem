@@ -1,4 +1,6 @@
 ﻿#include "Ability/Tasks/GMCAbilityTaskBase.h"
+
+#include "GMCAbilityComponent.h"
 #include "Ability/GMCAbility.h"
 
 

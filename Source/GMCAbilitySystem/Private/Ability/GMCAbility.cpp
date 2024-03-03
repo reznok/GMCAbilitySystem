@@ -154,7 +154,7 @@ AActor* UGMCAbility::OwnerActor() const
 	return AbilityComponent->GetOwner();
 }
 
-void UGMCAbility::SetJustTeleported(bool bValue)
+void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
 	AbilityComponent->bJustTeleported = bValue;
 }

@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
 #include "GMCAbilityData.h"
+#include "GMCAbilitySystem.h"
 #include "InstancedStruct.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
@@ -36,7 +37,8 @@ public:
 
 	// Assign a new, incrementing, Task ID
 	UFUNCTION()
-	int GetNextTaskID(){TaskIDCounter += 1; return TaskIDCounter;}
+	int GetNextTaskID(){TaskIDCounter += 1;
+		return TaskIDCounter;}
 
 	// Called by AbilityComponent
 	void Tick(float DeltaTime);
@@ -54,20 +56,20 @@ public:
 	UFUNCTION()
 	void BeginAbility(FGMCAbilityData AbilityData);
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem/Ability")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent(FGMCAbilityData AbilityData);
 
-	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem/Ability")
+	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbility();
 
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem/Ability")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
 
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem/Ability")
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	AActor* OwnerActor() const;
 
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem/Ability")
-	void SetJustTeleported(bool bValue);
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
+	void SetOwnerJustTeleported(bool bValue);
 	
 	UPROPERTY(EditAnywhere)
 	FGameplayTag AbilityTag;

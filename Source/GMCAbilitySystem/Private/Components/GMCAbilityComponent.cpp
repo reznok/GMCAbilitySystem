@@ -5,6 +5,7 @@
 
 #include "GMCAbilitySystem.h"
 #include "GMCPlayerController.h"
+#include "InterchangeResult.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Engine/ObjectLibrary.h"
 #include "Net/UnrealNetwork.h"
@@ -76,6 +77,12 @@ void UGMC_AbilityComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindBool(bJustTeleported,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::PeriodicAndOnChange_Output,
+		EGMC_InterpolationFunction::TargetValue);
 	
 }
 void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
@@ -122,14 +129,13 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
 	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(InAbilityData.AbilityTag))
 	{
-		// Invalid Activation ID
-		if (InAbilityData.AbilityActivationID < 0) return false;
-		
-		// Client Sets the Activation ID
-		if (InAbilityData.AbilityActivationID == 0)
-		{
-			InAbilityData.AbilityActivationID = GetNextAbilityActivationID();
-		}
+		// Invalid Activation ID, should always be 0 at this point
+		if (InAbilityData.AbilityActivationID != 0) return false;
+
+		// Generated ID is based on ActionTimer so it always lines up on client/server
+		// Also helps when dealing with replays
+		InAbilityData.AbilityActivationID = GenerateAbilityID();
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
 		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
 		
@@ -457,7 +463,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* 
 			NewEffectID++;
 		}
 		Effect->EffectData.EffectID = NewEffectID;
-		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
 	}
 
 	// This is Replicated, so only server needs to manage it

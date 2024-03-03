@@ -216,7 +216,7 @@ private:
 	TMap<int, UGMCAbility*> ActiveAbilities;
 
 	int AbilityActivationIDCounter = 0;
-	int GetNextAbilityActivationID(){return ++AbilityActivationIDCounter;}
+	int GenerateAbilityID() const {return ActionTimer * 100;}
 	
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
