@@ -17,7 +17,7 @@ enum class EAbilityState : uint8
 
 
 // Forward Declarations
-class UGMC_AbilityComponent;
+class UGMC_AbilitySystemComponent;
 class UGMCAbilityTaskBase;
 
 UCLASS(Blueprintable, BlueprintType)
@@ -49,7 +49,7 @@ public:
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
 	
-	void Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
+	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
 	
 	// Called by AbilityComponent
 	void Tick(float DeltaTime);
@@ -82,11 +82,11 @@ public:
 
 	// Get Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	static float GetAttributeValueByName(const UGMC_AbilityComponent* AbilityComponent, FName Attribute);
+	static float GetAttributeValueByName(const UGMC_AbilitySystemComponent* AbilityComponent, FName Attribute);
 
 	// Get Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	static float GetAttributeValueByTag(const UGMC_AbilityComponent* AbilityComponent, FGameplayTag AttributeTag);
+	static float GetAttributeValueByTag(const UGMC_AbilitySystemComponent* AbilityComponent, FGameplayTag AttributeTag);
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
@@ -101,7 +101,7 @@ public:
 	void CommitAbilityCost();
 
 	UPROPERTY(BlueprintReadOnly)
-	UGMC_AbilityComponent* OwnerAbilityComponent;
+	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 	
 	FGMCAbilityData InitialAbilityData;
 	

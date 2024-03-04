@@ -13,7 +13,7 @@
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilityComponent*, SourceAbilityComponent);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*, SourceAbilityComponent);
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -31,13 +31,13 @@ struct FEffectStatePrediction
 
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"))
-class GMCABILITYSYSTEM_API UGMC_AbilityComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
+class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
 {
 	GENERATED_BODY()
 
 public:
 	// Sets default values for this component's properties
-	UGMC_AbilityComponent(const FObjectInitializer& ObjectInitializer);
+	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer);
 
 	// Bound/Synced over GMC
 	double ActionTimer;
@@ -67,6 +67,7 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void RemoveActiveTag(FGameplayTag AbilityTag);
 
+	UFUNCTION(BlueprintPure)
 	bool HasActiveTag(FGameplayTag GameplayTag) const;
 	
 	bool TryActivateAbility(FGMCAbilityData AbilityData);
@@ -111,7 +112,7 @@ public:
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable)
-	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilityComponent* SourceAbilityComponent = nullptr);
+	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
 
 	UPROPERTY(BlueprintReadWrite)
 	bool bJustTeleported;
@@ -148,6 +149,9 @@ protected:
 	UPROPERTY(EditAnywhere)
 	TArray<TSubclassOf<UGMCAbility>> StartingAbilities;
 
+	UPROPERTY(EditAnywhere)
+	TArray<TSubclassOf<UGMCAbilityEffect>> StartingEffects;
+	
 	// Returns a matching granted ability by class name if that ability is in the GrantedAbilities array
 	TSubclassOf<UGMCAbility> GetGrantedAbilityByTag(FGameplayTag AbilityTag);
 	
@@ -155,10 +159,9 @@ protected:
 	// Must be called before GMCAbilityComponent runs its BindReplicationData step
 	void SetAttributes(UGMCAttributeSet* NewAttributes);
 
-	UPROPERTY(EditAnywhere)
-	FGMCAbilityData AbilityData;
 
-	UPROPERTY(EditAnywhere, NoClear)
+	// Sync'd containers for abilities and effects
+	FGMCAbilityData AbilityData;
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
 	// FInstancedStruct GMC Binding

@@ -29,7 +29,7 @@ void UGMCAbility::TickTasks(float DeltaTime)
 	}
 }
 
-void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData)
+void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, FGMCAbilityData AbilityData)
 {
 	this->InitialAbilityData = AbilityData;
 	this->AbilityID = AbilityData.AbilityActivationID;
@@ -166,8 +166,10 @@ float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 	return GetAttributeValueByTag(OwnerAbilityComponent, AttributeTag);
 }
 
-float UGMCAbility::GetAttributeValueByName(const UGMC_AbilityComponent* AbilityComponent, const FName Attribute)
+float UGMCAbility::GetAttributeValueByName(const UGMC_AbilitySystemComponent* AbilityComponent, const FName Attribute)
 {
+	 if (AbilityComponent == nullptr) return 0;
+	
 	 if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByName(Attribute))
 	 {
 		 return Att->Value;
@@ -176,8 +178,13 @@ float UGMCAbility::GetAttributeValueByName(const UGMC_AbilityComponent* AbilityC
 	return 0;
 }
 
-float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilityComponent* AbilityComponent, const FGameplayTag AttributeTag)
+float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilitySystemComponent* AbilityComponent, const FGameplayTag AttributeTag)
 {
+	if (AbilityComponent == nullptr || AttributeTag == FGameplayTag::EmptyTag)
+	{
+		return 0;
+	}
+	
 	if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByTag(AttributeTag))
 	{
 		return Att->Value;

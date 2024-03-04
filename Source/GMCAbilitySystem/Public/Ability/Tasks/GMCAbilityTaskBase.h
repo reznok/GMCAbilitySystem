@@ -4,7 +4,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "GMCAbilityTaskBase.generated.h"
 
-class UGMC_AbilityComponent;
+class UGMC_AbilitySystemComponent;
 class UGameplayTasksComponent;
 
 UCLASS(Abstract, BlueprintType, meta = (ExposedAsyncProxy=AsyncTask), config = Game)
@@ -22,7 +22,7 @@ public:
 
 	virtual void Activate() override;
 	
-	void SetAbilitySystemComponent(UGMC_AbilityComponent* InAbilitySystemComponent);
+	void SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent);
 	void RegisterTask(UGMCAbilityTaskBase* Task);
 
 	/** GameplayAbility that created us */
@@ -30,7 +30,7 @@ public:
 	TWeakObjectPtr<UGMCAbility> Ability;
 
 	UPROPERTY()
-	TWeakObjectPtr<UGMC_AbilityComponent> AbilitySystemComponent;
+	TWeakObjectPtr<UGMC_AbilitySystemComponent> AbilitySystemComponent;
 
 	// Tick called by AbilityComponent, different from TickTask
 	virtual void Tick(float DeltaTime){};

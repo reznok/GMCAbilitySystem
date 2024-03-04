@@ -7,7 +7,7 @@
 #include "UObject/Object.h"
 #include "GMCAbilityEffect.generated.h"
 
-class UGMC_AbilityComponent;
+class UGMC_AbilitySystemComponent;
 
 UENUM(BlueprintType)
 enum class EEffectType : uint8
@@ -34,11 +34,9 @@ struct FGMCAttributeModifier
 	{
 		Value = 0;
 	}
-
-	// String name of the attribute to modify, ie: Health, Mana, etc
-	// Needs to match the attribute name in the AttributeSet
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	FName AttributeName;
+		
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
+	FGameplayTag AttributeTag;
 
 	// Value to modify the attribute by
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
@@ -76,10 +74,10 @@ struct FGMCAbilityEffectData
 	}
 
 	UPROPERTY(BlueprintReadWrite)
-	UGMC_AbilityComponent* SourceAbilityComponent;
+	UGMC_AbilitySystemComponent* SourceAbilityComponent;
 
 	UPROPERTY()
-	UGMC_AbilityComponent* OwnerAbilityComponent;
+	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 	UPROPERTY()
 	int EffectID;
@@ -154,7 +152,7 @@ struct FGMCAbilityEffectData
 /**
  * 
  */
-class UGMC_AbilityComponent;
+class UGMC_AbilitySystemComponent;
 
 UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
@@ -189,10 +187,10 @@ public:
 
 protected:
 	UPROPERTY(BlueprintReadOnly)
-	UGMC_AbilityComponent* SourceAbilityComponent;
+	UGMC_AbilitySystemComponent* SourceAbilityComponent;
 
 	UPROPERTY(BlueprintReadOnly)
-	UGMC_AbilityComponent* OwnerAbilityComponent;
+	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 private:
 	bool bHasStarted;

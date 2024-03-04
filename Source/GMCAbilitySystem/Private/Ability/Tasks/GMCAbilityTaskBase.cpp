@@ -11,7 +11,7 @@ void UGMCAbilityTaskBase::Activate()
 	RegisterTask(this);
 }
 
-void UGMCAbilityTaskBase::SetAbilitySystemComponent(UGMC_AbilityComponent* InAbilitySystemComponent)
+void UGMCAbilityTaskBase::SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent)
 {
 	this->AbilitySystemComponent = InAbilitySystemComponent;
 }

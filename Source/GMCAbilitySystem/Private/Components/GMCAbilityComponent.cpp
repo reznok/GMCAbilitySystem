@@ -12,7 +12,7 @@
 
 
 // Sets default values for this component's properties
-UGMC_AbilityComponent::UGMC_AbilityComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
@@ -20,7 +20,7 @@ UGMC_AbilityComponent::UGMC_AbilityComponent(const FObjectInitializer& ObjectIni
 	// ...
 }
 
-void UGMC_AbilityComponent::BindReplicationData()
+void UGMC_AbilitySystemComponent::BindReplicationData()
 {
 	// Attribute Binds
 	//
@@ -88,12 +88,12 @@ void UGMC_AbilityComponent::BindReplicationData()
 		EGMC_InterpolationFunction::TargetValue);
 	
 }
-void UGMC_AbilityComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
+void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 
 }
 
-void UGMC_AbilityComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
 {
 	if (!GrantedAbilityTags.HasTag(AbilityTag))
 	{
@@ -101,7 +101,7 @@ void UGMC_AbilityComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
 	}
 }
 
-void UGMC_AbilityComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
 {
 	if (GrantedAbilityTags.HasTag(AbilityTag))
 	{
@@ -109,12 +109,12 @@ void UGMC_AbilityComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
 	}
 }
 
-void UGMC_AbilityComponent::AddActiveTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::AddActiveTag(FGameplayTag AbilityTag)
 {
 	ActiveTags.AddTag(AbilityTag);
 }
 
-void UGMC_AbilityComponent::RemoveActiveTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveActiveTag(FGameplayTag AbilityTag)
 {
 	if (ActiveTags.HasTag(AbilityTag))
 	{
@@ -122,12 +122,12 @@ void UGMC_AbilityComponent::RemoveActiveTag(FGameplayTag AbilityTag)
 	}
 }
 
-bool UGMC_AbilityComponent::HasActiveTag(FGameplayTag GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasActiveTag(FGameplayTag GameplayTag) const
 {
 	return ActiveTags.HasTag(GameplayTag);
 }
 
-bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
 	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(InAbilityData.AbilityTag))
@@ -154,20 +154,30 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 	return false;
 }
 
-void UGMC_AbilityComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
+void UGMC_AbilitySystemComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
 {
 	QueuedAbilities.Push(InAbilityData);
 }
 
-void UGMC_AbilityComponent::QueueTaskData(const FInstancedStruct& InTaskData)
+void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
 {
 	QueuedTaskData.Push(InTaskData);
 }	
 
-void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
+void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
 	bJustTeleported = false;
 	ActionTimer += DeltaTime;
+
+	// Startup Effects
+	if (StartingEffects.Num() > 0)
+	{
+		for (const TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
+		{
+			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+		}
+		StartingEffects.Empty();
+	}
 	
 	TickActiveEffects(DeltaTime, bIsReplayingPrediction);
 	TickActiveAbilities(DeltaTime);
@@ -195,7 +205,7 @@ void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime, bool bIsReplaying
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
-void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
+void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
 	
 	// if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
@@ -209,7 +219,7 @@ void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
 	// }
 }
 
-void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
+void UGMC_AbilitySystemComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
 {
 	if (QueuedAbilities.Num() > 0)
 	{
@@ -221,7 +231,7 @@ void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
 	}
 }
 
-void UGMC_AbilityComponent::BeginPlay()
+void UGMC_AbilitySystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializeAbilityMap();
@@ -230,7 +240,7 @@ void UGMC_AbilityComponent::BeginPlay()
 }
 
 
-bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
+bool UGMC_AbilitySystemComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
 	if (Ability->AbilityCost == nullptr) return true;
 	
@@ -247,7 +257,7 @@ bool UGMC_AbilityComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 	return true;
 }
 
-void UGMC_AbilityComponent::InstantiateAttributes()
+void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
 	// Use BP'd Attributes if provided. Else use default attributes (which is nothing by default)
 	if (StartingAttributes)
@@ -260,7 +270,7 @@ void UGMC_AbilityComponent::InstantiateAttributes()
 	}
 }
 
-void UGMC_AbilityComponent::CleanupStaleAbilities()
+void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 {
 	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
 	{
@@ -272,7 +282,7 @@ void UGMC_AbilityComponent::CleanupStaleAbilities()
 	}
 }
 
-void UGMC_AbilityComponent::TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction)
+void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction)
 {
 	CheckRemovedEffects();
 	
@@ -294,7 +304,7 @@ void UGMC_AbilityComponent::TickActiveEffects(float DeltaTime, bool bIsReplaying
 	}
 }
 
-void UGMC_AbilityComponent::TickActiveAbilities(float DeltaTime)
+void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 {
 	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
@@ -302,7 +312,7 @@ void UGMC_AbilityComponent::TickActiveAbilities(float DeltaTime)
 	}
 }
 
-void UGMC_AbilityComponent::OnRep_ActiveEffectsData()
+void UGMC_AbilitySystemComponent::OnRep_ActiveEffectsData()
 {
 	for (FGMCAbilityEffectData ActiveEffectData : ActiveEffectsData)
 	{
@@ -321,7 +331,7 @@ void UGMC_AbilityComponent::OnRep_ActiveEffectsData()
 	}
 }
 
-void UGMC_AbilityComponent::CheckRemovedEffects()
+void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 {
 	for (TPair<int, UGMCAbilityEffect*> Effect : ActiveEffects)
 	{
@@ -339,7 +349,7 @@ void UGMC_AbilityComponent::CheckRemovedEffects()
 	}
 }
 
-TSubclassOf<UGMCAbility> UGMC_AbilityComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
+TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
 {
 	if (!GrantedAbilityTags.HasTag(AbilityTag))
 	{
@@ -356,12 +366,12 @@ TSubclassOf<UGMCAbility> UGMC_AbilityComponent::GetGrantedAbilityByTag(FGameplay
 	return AbilityMap[AbilityTag];
 }
 
-void UGMC_AbilityComponent::SetAttributes(UGMCAttributeSet* NewAttributes)
+void UGMC_AbilitySystemComponent::SetAttributes(UGMCAttributeSet* NewAttributes)
 {
 	this->Attributes = NewAttributes;
 }
 
-void UGMC_AbilityComponent::InitializeEffectAssetClasses()
+void UGMC_AbilitySystemComponent::InitializeEffectAssetClasses()
 {
 	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbilityEffect::StaticClass(), true, GIsEditor);
 	Library->bRecursivePaths = true;
@@ -369,7 +379,7 @@ void UGMC_AbilityComponent::InitializeEffectAssetClasses()
 	Library->GetObjects<UBlueprintGeneratedClass>(EffectBPClasses);
 }
 
-void UGMC_AbilityComponent::InitializeAbilityMap()
+void UGMC_AbilitySystemComponent::InitializeAbilityMap()
 {
 	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbility::StaticClass(), true, GIsEditor);
 	Library->bRecursivePaths = true;
@@ -401,7 +411,7 @@ void UGMC_AbilityComponent::InitializeAbilityMap()
 	}
 }
 
-void UGMC_AbilityComponent::InitializeStartingAbilities()
+void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 {
 	for (const TSubclassOf<UGMCAbility> Ability : StartingAbilities)
 	{
@@ -419,7 +429,7 @@ void UGMC_AbilityComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
+void UGMC_AbilitySystemComponent::ApplyAbilityCost(UGMCAbility* Ability)
 {
 	if (Ability->AbilityCost != nullptr)
 	{
@@ -431,7 +441,7 @@ void UGMC_AbilityComponent::ApplyAbilityCost(UGMCAbility* Ability)
 }
 
 //BP Version
-UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
 {
 	if (Effect == nullptr) return nullptr;
 	
@@ -451,7 +461,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbi
 	return AbilityEffect;
 }
 
-UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
 {
 	if (Effect == nullptr) return nullptr;
 	// Force the component this is being applied to to be the owner
@@ -485,7 +495,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* 
 	return Effect;
 }
 
-void UGMC_AbilityComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
+void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
 	if (Effect == nullptr)
 	{
@@ -497,7 +507,7 @@ void UGMC_AbilityComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 }
 
 
-void UGMC_AbilityComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilityComponent* SourceAbilityComponent)
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
 	UGMCAttributeModifierContainer* AttributeModifierContainer = DuplicateObject(UGMCAttributeModifierContainer::StaticClass()->GetDefaultObject<UGMCAttributeModifierContainer>(), this);
@@ -508,7 +518,7 @@ void UGMC_AbilityComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier Att
 	// Extra copying going on here? Can this be done with a reference? BPs are weird.
 	AttributeModifier = AttributeModifierContainer->AttributeModifier;
 	
-	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
+	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByTag(AttributeModifier.AttributeTag))
 	{
 		if (bNegateValue)
 		{
@@ -521,7 +531,7 @@ void UGMC_AbilityComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier Att
 	}
 }
 
-void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& EffectClassName, FGMCAbilityEffectData EffectInitializationData)
+void UGMC_AbilitySystemComponent::RPCServerApplyEffect_Implementation(const FString& EffectClassName, FGMCAbilityEffectData EffectInitializationData)
 {
 	for (int32 i = 0; i < EffectBPClasses.Num(); ++i)
 	{
@@ -537,10 +547,10 @@ void UGMC_AbilityComponent::RPCServerApplyEffect_Implementation(const FString& E
 }
 
 // ReplicatedProps
-void UGMC_AbilityComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
+void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UGMC_AbilityComponent, ActiveEffectsData);
+	DOREPLIFETIME(UGMC_AbilitySystemComponent, ActiveEffectsData);
 }
 
 

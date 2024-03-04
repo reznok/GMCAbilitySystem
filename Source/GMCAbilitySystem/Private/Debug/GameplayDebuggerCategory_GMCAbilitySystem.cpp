@@ -17,7 +17,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 	{
 		DataPack.ActorName = OwnerPC->GetPawn()->GetName();
 
-		if (const UGMC_AbilityComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilityComponent>())
+		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
 		{
 			DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
 			DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
@@ -35,7 +35,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		// Abilities
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Granted Abilities: {white}%s"), *DataPack.GrantedAbilities);
 		// Show client-side data
-		if (const UGMC_AbilityComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilityComponent>())
+		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
 		{
 			CanvasContext.Printf(TEXT("{green}[client] {yellow}Granted Abilities: {white}%s"), *AbilityComponent->GetGrantedAbilities().ToStringSimple());
 		}
@@ -43,7 +43,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		// Tags
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Tags: {white}%s"), *DataPack.ActiveTags);
 		// Show client-side data
-		if (const UGMC_AbilityComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilityComponent>())
+		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
 		{
 			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Tags: {white}%s"), *AbilityComponent->GetActiveTags().ToStringSimple());
 		}

@@ -21,7 +21,7 @@ struct GMCABILITYSYSTEM_API FAttribute
 	mutable float Value;
 
 	// Attribute.* 
-	UPROPERTY(EditDefaultsOnly, Category="Attribute")
+	UPROPERTY(EditDefaultsOnly, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag Tag;
 
 	// Whether this should be bound over GMC or not.
