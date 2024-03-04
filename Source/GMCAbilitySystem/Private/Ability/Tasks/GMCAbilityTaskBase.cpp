@@ -24,10 +24,10 @@ void UGMCAbilityTaskBase::RegisterTask(UGMCAbilityTaskBase* Task)
 
 void UGMCAbilityTaskBase::ClientProgressTask()
 {
-	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(FGMCAbilityTaskData{
-		.AbilityID = Ability->GetAbilityID(),
-		.TaskID = TaskID
-	});
+	FGMCAbilityTaskData TaskData;
+	TaskData.AbilityID = Ability->GetAbilityID();
+	TaskData.TaskID = TaskID;
+	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
 	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
 }
 

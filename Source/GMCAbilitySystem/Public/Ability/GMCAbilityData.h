@@ -29,5 +29,6 @@ struct FGMCAbilityData
 	UInputAction* ActionInput;
 
 	bool operator==(const FGMCAbilityData& Other) const { return AbilityActivationID == Other.AbilityActivationID && AbilityTag == Other.AbilityTag;}
+	bool operator!=(const FGMCAbilityData& Other) const { return *this == Other;}
 
 };
