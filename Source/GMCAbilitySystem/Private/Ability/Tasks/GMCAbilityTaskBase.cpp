@@ -28,6 +28,6 @@ void UGMCAbilityTaskBase::ClientProgressTask()
 		.AbilityID = Ability->GetAbilityID(),
 		.TaskID = TaskID
 	});
-	Ability->AbilityComponent->QueueTaskData(TaskDataInstance);
+	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
 }
 

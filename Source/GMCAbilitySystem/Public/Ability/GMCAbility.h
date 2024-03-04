@@ -39,9 +39,7 @@ public:
 	UFUNCTION()
 	int GetNextTaskID(){TaskIDCounter += 1;
 		return TaskIDCounter;}
-
-	// Called by AbilityComponent
-	void Tick(float DeltaTime);
+	
 
 	int GetAbilityID() const {return AbilityID;};;
 	
@@ -52,7 +50,13 @@ public:
 	void TickTasks(float DeltaTime);
 	
 	void Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
-
+	
+	// Called by AbilityComponent
+	void Tick(float DeltaTime);
+	
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
+	void TickEvent(float DeltaTime);
+	
 	UFUNCTION()
 	void BeginAbility(FGMCAbilityData AbilityData);
 	
@@ -66,7 +70,23 @@ public:
 	void EndAbilityEvent();
 
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	AActor* OwnerActor() const;
+	AActor* GetOwnerActor() const;
+
+	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	float GetOwnerAttributeValueByName(FName Attribute) const;
+
+	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	float GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const;
+
+	// Get Attribute value by Name from a passed AbilityComponent
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	static float GetAttributeValueByName(const UGMC_AbilityComponent* AbilityComponent, FName Attribute);
+
+	// Get Attribute value by Name from a passed AbilityComponent
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	static float GetAttributeValueByTag(const UGMC_AbilityComponent* AbilityComponent, FGameplayTag AttributeTag);
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
@@ -81,7 +101,7 @@ public:
 	void CommitAbilityCost();
 
 	UPROPERTY(BlueprintReadOnly)
-	UGMC_AbilityComponent* AbilityComponent;
+	UGMC_AbilityComponent* OwnerAbilityComponent;
 	
 	FGMCAbilityData InitialAbilityData;
 	

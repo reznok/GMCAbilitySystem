@@ -23,7 +23,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
 {
-	UInputComponent* InputComponent = Ability->AbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
+	UInputComponent* InputComponent = Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
 	if (InputComponent)
 	{
 		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
@@ -80,6 +80,6 @@ void UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask()
 	TaskData.TaskID = TaskID;
 	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
 	
-	Ability->AbilityComponent->QueueTaskData(TaskDataInstance);
+	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
 }
 

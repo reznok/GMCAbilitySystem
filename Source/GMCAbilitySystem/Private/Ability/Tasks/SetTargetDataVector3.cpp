@@ -39,5 +39,5 @@ void UGMCAbilityTask_SetTargetDataVector3::ClientProgressTask()
 	TaskData.Target = Target;
 	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
 	
-	Ability->AbilityComponent->QueueTaskData(TaskDataInstance);
+	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
 }

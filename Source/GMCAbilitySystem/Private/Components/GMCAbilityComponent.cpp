@@ -47,9 +47,12 @@ void UGMC_AbilityComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
-	
+
+	// Attributes
 	for (const FAttribute* Attribute : Attributes->GetAllAttributes())
 	{
+		if (!Attribute->bIsGMCBound) continue;
+		
 		GMCMovementComponent->BindSinglePrecisionFloat(Attribute->Value,
 			EGMC_PredictionMode::ServerAuth_Output_ServerValidated,
 			EGMC_CombineMode::CombineIfUnchanged,
@@ -135,7 +138,7 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 		// Generated ID is based on ActionTimer so it always lines up on client/server
 		// Also helps when dealing with replays
 		InAbilityData.AbilityActivationID = GenerateAbilityID();
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
+		//UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
 		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
 		
@@ -402,6 +405,8 @@ void UGMC_AbilityComponent::InitializeStartingAbilities()
 {
 	for (const TSubclassOf<UGMCAbility> Ability : StartingAbilities)
 	{
+		if (Ability == nullptr) return;
+		
 		const UGMCAbility* CDO = Ability->GetDefaultObject<UGMCAbility>();
 
 		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
@@ -463,7 +468,7 @@ UGMCAbilityEffect* UGMC_AbilityComponent::ApplyAbilityEffect(UGMCAbilityEffect* 
 			NewEffectID++;
 		}
 		Effect->EffectData.EffectID = NewEffectID;
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
+		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
 	}
 
 	// This is Replicated, so only server needs to manage it

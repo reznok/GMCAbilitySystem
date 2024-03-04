@@ -1,5 +1,7 @@
 ﻿#include "..\Public\GMCAttributes.h"
 
+#define GENERATE_TAG_NAME(name) TAG_Attribute_##name
+
 UGMCAttributeSet::UGMCAttributeSet()
 {
 }
@@ -7,6 +9,19 @@ UGMCAttributeSet::UGMCAttributeSet()
 FAttribute UGMCAttributeSet::GetAttributeValueByName(FName PropName)
 {
 	return *GetAttributeByName(PropName);
+}
+
+FAttribute* UGMCAttributeSet::GetAttributeByTag(FGameplayTag Tag)
+{
+	for (FAttribute* Attribute : GetAllAttributes())
+	{
+		if (Attribute->Tag.MatchesTag(Tag))
+		{
+			return Attribute;
+		}
+	}
+
+	return nullptr;
 }
 
 FAttribute* UGMCAttributeSet::GetAttributeByName(FName PropName)

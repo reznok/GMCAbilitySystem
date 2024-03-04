@@ -16,11 +16,11 @@ struct FGMCAbilityData
 {
 	GENERATED_BODY()
 	
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY()
 	int AbilityActivationID{0};
 	
 	// Ability ID to cast
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY()
 	FGameplayTag AbilityTag;
 
 	// The input used to start the ability on the client

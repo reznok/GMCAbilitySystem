@@ -1,5 +1,5 @@
 ﻿#pragma once
-
+#include "GameplayTagContainer.h"
 #include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
@@ -19,6 +19,15 @@ struct GMCABILITYSYSTEM_API FAttribute
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	mutable float Value;
+
+	// Attribute.* 
+	UPROPERTY(EditDefaultsOnly, Category="Attribute")
+	FGameplayTag Tag;
+
+	// Whether this should be bound over GMC or not.
+	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
+	UPROPERTY(EditDefaultsOnly)
+	bool bIsGMCBound = true;
 };
 
 UCLASS(Blueprintable, BlueprintType)
@@ -31,7 +40,10 @@ public:
 	// Get a specific attribute by name. Used mainly for Effects.
 	UFUNCTION(BlueprintCallable)
 	FAttribute GetAttributeValueByName(FName PropName);
-		
+
+	// Get a specific attribute by tag
+	FAttribute* GetAttributeByTag(FGameplayTag Tag);
+	
 	// Get a specific attribute by name. Used mainly for Effects.
 	FAttribute* GetAttributeByName(FName PropName);
 

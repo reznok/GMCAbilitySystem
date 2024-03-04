@@ -17,6 +17,7 @@ UWorld* UGMCAbility::GetWorld() const
 void UGMCAbility::Tick(float DeltaTime)
 {
 	TickTasks(DeltaTime);
+	TickEvent(DeltaTime);
 }
 
 void UGMCAbility::TickTasks(float DeltaTime)
@@ -32,15 +33,15 @@ void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbility
 {
 	this->InitialAbilityData = AbilityData;
 	this->AbilityID = AbilityData.AbilityActivationID;
-	this->AbilityComponent = InAbilityComponent;
+	this->OwnerAbilityComponent = InAbilityComponent;
 	BeginAbility(AbilityData);
 }
 
 void UGMCAbility::CommitAbilityCost()
 {
-	if (AbilityComponent)
+	if (OwnerAbilityComponent)
 	{
-		AbilityComponent->ApplyAbilityCost(this);
+		OwnerAbilityComponent->ApplyAbilityCost(this);
 	}
 }
 
@@ -54,25 +55,25 @@ void UGMCAbility::ProgressTask(int Task, FInstancedStruct TaskData)
 
 bool UGMCAbility::HasAuthority()
 {
-	return AbilityComponent->GetOwner()->GetLocalRole() == ROLE_Authority;
+	return OwnerAbilityComponent->GetOwner()->GetLocalRole() == ROLE_Authority;
 }
 
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const
 {
-	if (AbilityComponent != nullptr) { return AbilityComponent; }
+	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent; }
 	return nullptr;
 }
 
 AActor* UGMCAbility::GetGameplayTaskOwner(const UGameplayTask* Task) const
 {
-	if (AbilityComponent != nullptr) { return AbilityComponent->GetOwner(); }
+	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent->GetOwner(); }
 	return nullptr;
 }
 
 AActor* UGMCAbility::GetGameplayTaskAvatar(const UGameplayTask* Task) const
 {
 	// Wtf is avatar?
-	if (AbilityComponent != nullptr) { return AbilityComponent->GetOwner(); }
+	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent->GetOwner(); }
 	return nullptr;
 }
 
@@ -84,7 +85,7 @@ void UGMCAbility::OnGameplayTaskInitialized(UGameplayTask& Task)
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbility::OnGameplayTaskInitialized called with non-UGMCAbilityTaskBase task"));
 		return;
 	}
-	AbilityTask->SetAbilitySystemComponent(AbilityComponent);
+	AbilityTask->SetAbilitySystemComponent(OwnerAbilityComponent);
 	AbilityTask->Ability = this;
 	
 }
@@ -104,7 +105,7 @@ bool UGMCAbility::CheckActivationTags()
 	// Required Tags
 	for (const FGameplayTag Tag : ActivationRequiredTags)
 	{
-		if (!AbilityComponent->HasActiveTag(Tag))
+		if (!OwnerAbilityComponent->HasActiveTag(Tag))
 		{
 			return false;
 		}
@@ -113,7 +114,7 @@ bool UGMCAbility::CheckActivationTags()
 	// Blocking Tags
 	for (const FGameplayTag Tag : ActivationBlockedTags)
 	{
-		if (AbilityComponent->HasActiveTag(Tag))
+		if (OwnerAbilityComponent->HasActiveTag(Tag))
 		{
 			return false;
 		}
@@ -142,6 +143,7 @@ void UGMCAbility::EndAbility()
 	// RunningTasks.Empty();
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
+		if (Task.Value == nullptr) continue;
 		Task.Value->EndTask();
 	}
 	
@@ -149,12 +151,42 @@ void UGMCAbility::EndAbility()
 	EndAbilityEvent();
 }
 
-AActor* UGMCAbility::OwnerActor() const
+AActor* UGMCAbility::GetOwnerActor() const
 {
-	return AbilityComponent->GetOwner();
+	return OwnerAbilityComponent->GetOwner();
+}
+
+float UGMCAbility::GetOwnerAttributeValueByName(FName Attribute) const
+{
+	return GetAttributeValueByName(OwnerAbilityComponent, Attribute);
+}
+
+float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
+{
+	return GetAttributeValueByTag(OwnerAbilityComponent, AttributeTag);
+}
+
+float UGMCAbility::GetAttributeValueByName(const UGMC_AbilityComponent* AbilityComponent, const FName Attribute)
+{
+	 if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByName(Attribute))
+	 {
+		 return Att->Value;
+	 }
+
+	return 0;
+}
+
+float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilityComponent* AbilityComponent, const FGameplayTag AttributeTag)
+{
+	if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByTag(AttributeTag))
+	{
+		return Att->Value;
+	}
+
+	return 0;
 }
 
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
-	AbilityComponent->bJustTeleported = bValue;
+	OwnerAbilityComponent->bJustTeleported = bValue;
 }
