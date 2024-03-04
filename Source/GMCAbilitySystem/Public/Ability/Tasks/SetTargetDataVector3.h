@@ -14,7 +14,7 @@ struct FGMCAbilityTaskTargetDataVector3 : public FGMCAbilityTaskData
 	GENERATED_BODY()
 	
 	UPROPERTY(BlueprintReadWrite)
-	FVector Target;
+	FVector Target{FVector::Zero()};
 };
 
 UCLASS()

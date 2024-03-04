@@ -123,11 +123,7 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
-
-	// Client attempt to start a server-applied effect at the estimated start time
-	// This is only used with server-applied effects, not properly locally predicted effects
-	void ClientPredictEffectStateChange(int EffectID, EEffectState State);
-
+	
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
@@ -162,9 +158,10 @@ protected:
 	UPROPERTY(EditAnywhere)
 	FGMCAbilityData AbilityData;
 
-	UPROPERTY(EditAnywhere, NoClear, Meta = (ExcludeBaseStruct, BaseStruct = "FTaskData"))
+	UPROPERTY(EditAnywhere, NoClear)
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
+	// FInstancedStruct GMC Binding
 	UFUNCTION(BlueprintCallable)
 	int32 BindInstancedStruct(
 	  UPARAM(Ref) FInstancedStruct& VariableToBind,
@@ -175,7 +172,6 @@ protected:
 	)
 	{
 		int32 BindingIndex = -1;
-		UE_LOG(LogTemp, Warning, TEXT("Binding!"))
 				GMCMovementComponent->AliasData.InstancedStruct.BindMember(
 				  VariableToBind,
 				  TranslateToSyncSettings(PredictionMode, CombineMode, SimulationMode, Interpolation),

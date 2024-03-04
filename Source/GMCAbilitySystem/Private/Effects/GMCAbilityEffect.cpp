@@ -220,7 +220,7 @@ void UGMCAbilityEffect::StartEffect()
 	}
 
 	// Tick period at start
-	if (EffectData.bPeriodTickAtStart)
+	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
 	{
 		PeriodTickEvent();
 	}

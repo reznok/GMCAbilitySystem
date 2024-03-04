@@ -71,9 +71,7 @@ struct FGMCAbilityEffectData
 							OwnerAbilityComponent(nullptr),
 							EffectID(0),
 	                         StartTime(0),
-	                         EndTime(0),
-	                         Delay(0),
-	                         Duration(0)
+	                         EndTime(0)
 	{
 	}
 
@@ -94,7 +92,7 @@ struct FGMCAbilityEffectData
 
 	// Instantly applies effect then exits. Will not tick.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	bool bIsInstant;
+	bool bIsInstant = true;
 
 	// Apply an inversed version of the modifiers at effect end
 	// Does not apply to Instant effects
@@ -104,20 +102,20 @@ struct FGMCAbilityEffectData
 
 	// Delay before the effect starts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	double Delay;
+	double Delay = 0;
 
 	// How long the effect lasts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	double Duration;
+	double Duration = 0;
 
 	// How often the periodic effect ticks
 	// Suggest keeping this above .01
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	double Period;
+	double Period = 0;
 
 	// For Period effects, whether first tick should happen immediately
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
-	bool bPeriodTickAtStart;
+	bool bPeriodTickAtStart = false;
 
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)

@@ -34,7 +34,7 @@ void UGMCAbility::Execute(UGMC_AbilityComponent* InAbilityComponent, FGMCAbility
 	this->InitialAbilityData = AbilityData;
 	this->AbilityID = AbilityData.AbilityActivationID;
 	this->OwnerAbilityComponent = InAbilityComponent;
-	BeginAbility(AbilityData);
+	BeginAbility();
 }
 
 void UGMCAbility::CommitAbilityCost()
@@ -123,7 +123,7 @@ bool UGMCAbility::CheckActivationTags()
 	return true;
 }
 
-void UGMCAbility::BeginAbility(FGMCAbilityData AbilityData)
+void UGMCAbility::BeginAbility()
 {
 	// Check Activation Tags
 	if (!CheckActivationTags()){
@@ -135,7 +135,7 @@ void UGMCAbility::BeginAbility(FGMCAbilityData AbilityData)
 	AbilityState = EAbilityState::Initialized;
 
 	// Execute BP Event
-	BeginAbilityEvent(AbilityData);
+	BeginAbilityEvent();
 }
 
 void UGMCAbility::EndAbility()

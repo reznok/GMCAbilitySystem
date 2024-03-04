@@ -58,10 +58,10 @@ public:
 	void TickEvent(float DeltaTime);
 	
 	UFUNCTION()
-	void BeginAbility(FGMCAbilityData AbilityData);
+	void BeginAbility();
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem|Ability")
-	void BeginAbilityEvent(FGMCAbilityData AbilityData);
+	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbility();

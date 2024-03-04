@@ -144,7 +144,7 @@ bool UGMC_AbilityComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
 		
 		// Check to make sure there's enough resource to use
 		if (!CanAffordAbilityCost(Ability)) return false;
-		
+
 		Ability->Execute(this, InAbilityData);
 		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
 		
@@ -198,15 +198,15 @@ void UGMC_AbilityComponent::GenPredictionTick(float DeltaTime, bool bIsReplaying
 void UGMC_AbilityComponent::GenSimulationTick(float DeltaTime)
 {
 	
-	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
-	
-	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
-	if (bJustTeleported)
-	{
-		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
-		GetOwner()->SetActorLocation(TargetLocation);
-		bJustTeleported = false;
-	}
+	// if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
+	//
+	// const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
+	// if (bJustTeleported)
+	// {
+	// 	// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
+	// 	GetOwner()->SetActorLocation(TargetLocation);
+	// 	bJustTeleported = false;
+	// }
 }
 
 void UGMC_AbilityComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
