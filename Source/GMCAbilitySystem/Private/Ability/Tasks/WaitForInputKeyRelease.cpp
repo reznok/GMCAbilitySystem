@@ -14,9 +14,9 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 {
 	Super::Activate();
 	
-	if (Ability->InitialAbilityData.ActionInput != nullptr)
+	if (Ability->AbilityKey != nullptr)
 	{
-		InputReleaseBindHandle = GetEnhancedInputComponent()->BindAction(Ability->InitialAbilityData.ActionInput, ETriggerEvent::Completed, this, &UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask).GetHandle();
+		InputReleaseBindHandle = GetEnhancedInputComponent()->BindAction(Ability->AbilityKey, ETriggerEvent::Completed, this, &UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask).GetHandle();
 	}
 	
 }

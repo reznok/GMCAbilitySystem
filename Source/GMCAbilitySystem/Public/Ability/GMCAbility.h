@@ -29,8 +29,7 @@ class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwn
 	virtual UWorld* GetWorld() const override;
 	
 public:
-	
-	//// Ability State
+		//// Ability State
 	// EAbilityState. Use Getters/Setters
 	UPROPERTY(BlueprintReadOnly)
 	EAbilityState AbilityState;
@@ -49,7 +48,7 @@ public:
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
 	
-	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, FGMCAbilityData AbilityData = {});
+	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction = nullptr);
 	
 	// Called by AbilityComponent
 	void Tick(float DeltaTime);
@@ -91,7 +90,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
 	
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category="Ability", meta=(Categories="Ability"))
 	FGameplayTag AbilityTag;
 	
 	UPROPERTY(EditAnywhere)
@@ -103,7 +102,8 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 	
-	FGMCAbilityData InitialAbilityData;
+	UPROPERTY()
+	UInputAction* AbilityKey;
 	
 	void ProgressTask(int TaskID, FInstancedStruct TaskData);
 

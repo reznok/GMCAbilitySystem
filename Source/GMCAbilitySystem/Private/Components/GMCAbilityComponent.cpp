@@ -4,6 +4,7 @@
 #include "Components/GMCAbilityComponent.h"
 
 #include "GMCAbilitySystem.h"
+#include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "InterchangeResult.h"
 #include "Effects/GMCAbilityEffect.h"
@@ -25,7 +26,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
-	
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
@@ -127,17 +127,14 @@ bool UGMC_AbilitySystemComponent::HasActiveTag(FGameplayTag GameplayTag) const
 	return ActiveTags.HasTag(GameplayTag);
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(FGMCAbilityData InAbilityData)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
-	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(InAbilityData.AbilityTag))
+	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(AbilityTag))
 	{
-		// Invalid Activation ID, should always be 0 at this point
-		if (InAbilityData.AbilityActivationID != 0) return false;
-
 		// Generated ID is based on ActionTimer so it always lines up on client/server
 		// Also helps when dealing with replays
-		InAbilityData.AbilityActivationID = GenerateAbilityID();
+		const int AbilityID = GenerateAbilityID();
 		//UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
 		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
@@ -145,8 +142,8 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGMCAbilityData InAbilityDa
 		// Check to make sure there's enough resource to use
 		if (!CanAffordAbilityCost(Ability)) return false;
 
-		Ability->Execute(this, InAbilityData);
-		ActiveAbilities.Add(InAbilityData.AbilityActivationID, Ability);
+		Ability->Execute(this, AbilityID, InputAction);
+		ActiveAbilities.Add(AbilityID, Ability);
 		
 		return true;
 	}
@@ -154,9 +151,12 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGMCAbilityData InAbilityDa
 	return false;
 }
 
-void UGMC_AbilitySystemComponent::QueueAbility(const FGMCAbilityData& InAbilityData)
+void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
 {
-	QueuedAbilities.Push(InAbilityData);
+	FGMCAbilityData Data;
+	Data.AbilityTag = AbilityTag;
+	Data.ActionInput = InputAction;
+	QueuedAbilities.Push(Data);
 }
 
 void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
@@ -167,7 +167,10 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
 	bJustTeleported = false;
-	ActionTimer += DeltaTime;
+	if (HasAuthority())
+	{
+		ActionTimer += DeltaTime;
+	}
 
 	// Startup Effects
 	if (StartingEffects.Num() > 0)
@@ -186,9 +189,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 	CleanupStaleAbilities();
 
 	// Was an ability used?
-	if (AbilityData != FGMCAbilityData{})
+	if (AbilityData.AbilityTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbility(AbilityData);
+		TryActivateAbility(AbilityData.AbilityTag, AbilityData.ActionInput);
 	}
 
 	// Ability Task Data
@@ -207,19 +210,18 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
+	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	
-	// if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
-	//
-	// const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
-	// if (bJustTeleported)
-	// {
-	// 	// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
-	// 	GetOwner()->SetActorLocation(TargetLocation);
-	// 	bJustTeleported = false;
-	// }
+	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
+	if (bJustTeleported)
+	{
+		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
+		GetOwner()->SetActorLocation(TargetLocation);
+		bJustTeleported = false;
+	}
 }
 
-void UGMC_AbilitySystemComponent::PreLocalMoveExecution(const FGMC_Move& LocalMove)
+void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 {
 	if (QueuedAbilities.Num() > 0)
 	{
@@ -381,6 +383,10 @@ void UGMC_AbilitySystemComponent::InitializeEffectAssetClasses()
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap()
 {
+	return;
+	// This doesn't seem to work when abilities are contained inside plugins
+	// Works super well if they're in the main game content
+	// Forcing people to manually define the map for now
 	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbility::StaticClass(), true, GIsEditor);
 	Library->bRecursivePaths = true;
 	Library->LoadBlueprintsFromPath("/Game");

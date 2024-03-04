@@ -21,7 +21,7 @@ struct FGMCAbilityData
 	
 	// Ability ID to cast
 	UPROPERTY()
-	FGameplayTag AbilityTag;
+	FGameplayTag AbilityTag = FGameplayTag::EmptyTag;
 
 	// The input used to start the ability on the client
 	// Needed for things like "WaitForKeyRelease"

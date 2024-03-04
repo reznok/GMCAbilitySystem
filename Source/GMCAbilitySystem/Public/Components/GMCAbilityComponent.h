@@ -69,11 +69,14 @@ public:
 
 	UFUNCTION(BlueprintPure)
 	bool HasActiveTag(FGameplayTag GameplayTag) const;
-	
-	bool TryActivateAbility(FGMCAbilityData AbilityData);
 
+	// Do not call directly, go through QueueAbility
+	bool TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
+	
 	// Queue an ability to be executed
-	void QueueAbility(const FGMCAbilityData& InAbilityData);
+	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability", HidePin="InputAction"))
+	void QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
+
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
 
@@ -125,15 +128,24 @@ public:
 	UFUNCTION(BlueprintCallable)
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
 	
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadWrite)
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
-	// GMC 
+	// GMC
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void BindReplicationData();
+	
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
+
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
+
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenSimulationTick(float DeltaTime);
-	virtual void PreLocalMoveExecution(const FGMC_Move& LocalMove);
+
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	virtual void PreLocalMoveExecution();
 	
 protected:
 	virtual void BeginPlay() override;
@@ -192,8 +204,8 @@ private:
 	void InitializeEffectAssetClasses();
 
 	// Map of Ability Tags to Ability Classes
-	UPROPERTY()
-	TMap<FGameplayTag, UBlueprintGeneratedClass *> AbilityMap;
+	UPROPERTY(EditDefaultsOnly, Category="Ability")
+	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> AbilityMap;
 	void InitializeAbilityMap();
 
 	// Add the starting ability tags to GrantedAbilities at start

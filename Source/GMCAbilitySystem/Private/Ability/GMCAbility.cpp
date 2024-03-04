@@ -29,10 +29,10 @@ void UGMCAbility::TickTasks(float DeltaTime)
 	}
 }
 
-void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, FGMCAbilityData AbilityData)
+void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction)
 {
-	this->InitialAbilityData = AbilityData;
-	this->AbilityID = AbilityData.AbilityActivationID;
+	this->AbilityKey = InputAction;
+	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	BeginAbility();
 }
