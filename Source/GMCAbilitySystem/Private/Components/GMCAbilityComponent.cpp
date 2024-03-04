@@ -555,7 +555,7 @@ void UGMC_AbilitySystemComponent::RPCServerApplyEffect_Implementation(const FStr
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UGMC_AbilitySystemComponent, ActiveEffectsData);
+	DOREPLIFETIME_CONDITION(UGMC_AbilitySystemComponent, ActiveEffectsData, COND_OwnerOnly);
 }
 
 
