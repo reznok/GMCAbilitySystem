@@ -45,7 +45,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	GMCMovementComponent->BindGameplayTagContainer(ActiveTags,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
+		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
 	// Attributes
@@ -73,7 +73,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
-
+	
 	// TaskData Bind
 	BindInstancedStruct(TaskData,
 		EGMC_PredictionMode::ClientAuth_Input,
@@ -153,6 +153,8 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
 {
+	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
+	
 	FGMCAbilityData Data;
 	Data.AbilityTag = AbilityTag;
 	Data.ActionInput = InputAction;
@@ -167,11 +169,8 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
 	bJustTeleported = false;
-	if (HasAuthority())
-	{
-		ActionTimer += DeltaTime;
-	}
-
+	ActionTimer += DeltaTime;
+	
 	// Startup Effects
 	if (StartingEffects.Num() > 0)
 	{
@@ -196,7 +195,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 
 	// Ability Task Data
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
-	if (TaskDataFromInstance != FGMCAbilityTaskData{} && TaskDataFromInstance.TaskID >= 0)
+	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
 			if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
 			{

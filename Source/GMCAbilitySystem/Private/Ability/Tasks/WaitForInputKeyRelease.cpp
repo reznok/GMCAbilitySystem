@@ -16,9 +16,8 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 	
 	if (Ability->AbilityKey != nullptr)
 	{
-		InputReleaseBindHandle = GetEnhancedInputComponent()->BindAction(Ability->AbilityKey, ETriggerEvent::Completed, this, &UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask).GetHandle();
+		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityKey);
 	}
-	
 }
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
@@ -34,13 +33,14 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInpu
 	return nullptr;
 }
 
-void UGMCAbilityTask_WaitForInputKeyRelease::TickTask(float DeltaTime)
+void UGMCAbilityTask_WaitForInputKeyRelease::Tick(float DeltaTime)
 {
 	Super::TickTask(DeltaTime);
+	if (bTaskCompleted) {return;}
 	
-	if (bTaskCompleted)
-	{		
-		// InternalCompleted(false);
+	if(InputActionBinding != nullptr && !InputActionBinding->GetValue().Get<bool>())
+	{
+		ClientProgressTask();
 	}
 }
 
@@ -53,18 +53,14 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 		ClientProgressTask();
 	}
 	// Clean up. Calls OnDestroy.
-	
+
+	bTaskCompleted = true;
 	EndTask();
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
 {
 	Super::OnDestroy(bInOwnerFinished);
-	
-	if (InputReleaseBindHandle != -1)
-	{
-		GetEnhancedInputComponent()->RemoveBindingByHandle(InputReleaseBindHandle);
-	}
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& TaskData)

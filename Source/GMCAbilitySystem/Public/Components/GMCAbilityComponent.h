@@ -40,6 +40,7 @@ public:
 	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer);
 
 	// Bound/Synced over GMC
+	UPROPERTY(BlueprintReadOnly)
 	double ActionTimer;
 	
 	// Ability tags that the controller has 
@@ -74,7 +75,7 @@ public:
 	bool TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
 	
 	// Queue an ability to be executed
-	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability", HidePin="InputAction"))
+	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability"))
 	void QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
@@ -227,6 +228,7 @@ private:
 	TMap<int, UGMCAbility*> ActiveAbilities;
 
 	int AbilityActivationIDCounter = 0;
+	
 	int GenerateAbilityID() const {return ActionTimer * 100;}
 	
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults

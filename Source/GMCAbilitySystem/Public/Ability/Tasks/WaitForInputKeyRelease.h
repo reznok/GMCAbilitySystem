@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "EnhancedInputComponent.h"
 #include "GMCAbilityTaskBase.h"
 #include "Ability/GMCAbility.h"
 #include "LatentActions.h"
@@ -16,7 +17,7 @@ class UGMCAbilityTask_WaitForInputKeyRelease : public UGMCAbilityTaskBase
 public:
 
 	UFUNCTION()
-	virtual void TickTask(float DeltaTime) override;
+	virtual void Tick(float DeltaTime) override;
 
 	void OnTaskCompleted();
 	virtual void OnDestroy(bool bInOwnerFinished) override;
@@ -34,9 +35,7 @@ public:
 	FGMCAbilityTaskWaitForInputKeyRelease Completed;
 
 private:
-	/** The context world of this action. */
-	int InputReleaseBindHandle = -1;
-
+	FEnhancedInputActionValueBinding* InputActionBinding;
 	UEnhancedInputComponent* GetEnhancedInputComponent() const;
 
 	// Todo: Add duration back in

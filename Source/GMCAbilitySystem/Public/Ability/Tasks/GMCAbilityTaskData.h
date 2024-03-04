@@ -20,5 +20,5 @@ struct GMCABILITYSYSTEM_API FGMCAbilityTaskData
 	int TaskID{-1};
 	
 	bool operator==(const FGMCAbilityTaskData& Other) const {return AbilityID == Other.AbilityID && TaskID == Other.TaskID;};
-	bool operator!=(const FGMCAbilityTaskData& Other) const {return *this == Other;};
+	bool operator!=(const FGMCAbilityTaskData& Other) const {return AbilityID != Other.AbilityID || TaskID != Other.TaskID;};
 };

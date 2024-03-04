@@ -27,7 +27,7 @@ public:
 
 	/** GameplayAbility that created us */
 	UPROPERTY()
-	TWeakObjectPtr<UGMCAbility> Ability;
+	UGMCAbility* Ability;
 
 	UPROPERTY()
 	TWeakObjectPtr<UGMC_AbilitySystemComponent> AbilitySystemComponent;
