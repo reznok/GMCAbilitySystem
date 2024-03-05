@@ -151,26 +151,9 @@ AActor* UGMCAbility::GetOwnerActor() const
 	return OwnerAbilityComponent->GetOwner();
 }
 
-float UGMCAbility::GetOwnerAttributeValueByName(FName Attribute) const
-{
-	return GetAttributeValueByName(OwnerAbilityComponent, Attribute);
-}
-
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 {
 	return GetAttributeValueByTag(OwnerAbilityComponent, AttributeTag);
-}
-
-float UGMCAbility::GetAttributeValueByName(const UGMC_AbilitySystemComponent* AbilityComponent, const FName Attribute)
-{
-	 if (AbilityComponent == nullptr) return 0;
-	
-	 if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByName(Attribute))
-	 {
-		 return Att->Value;
-	 }
-
-	return 0;
 }
 
 float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilitySystemComponent* AbilityComponent, const FGameplayTag AttributeTag)
@@ -180,7 +163,7 @@ float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilitySystemComponent* Abi
 		return 0;
 	}
 	
-	if (const FAttribute* Att = AbilityComponent->Attributes->GetAttributeByTag(AttributeTag))
+	if (const FAttribute* Att = AbilityComponent->GetAttributeByTag(AttributeTag))
 	{
 		return Att->Value;
 	}

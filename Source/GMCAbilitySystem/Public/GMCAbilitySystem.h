@@ -21,3 +21,16 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 };
+
+//////////////////////////////////////////////////////////////////////////
+// Enum To String
+// Usage Example:
+//		FString EnumString = EnumToString( EnumValue );
+// Sourced from: https://forums.unrealengine.com/t/conversion-of-enum-to-string/337869/24?u=petergilbz
+//////////////////////////////////////////////////////////////////////////
+template< typename T >
+FString EnumToString( T EnumValue )
+{
+	static_assert( TIsUEnumClass< T >::Value, "'T' template parameter to EnumToString must be a valid UEnum" );
+	return StaticEnum< T >()->GetNameStringByValue( ( int64 ) EnumValue );
+}

@@ -76,15 +76,7 @@ public:
 
 	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	float GetOwnerAttributeValueByName(FName Attribute) const;
-
-	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	float GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const;
-
-	// Get Attribute value by Name from a passed AbilityComponent
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	static float GetAttributeValueByName(const UGMC_AbilitySystemComponent* AbilityComponent, FName Attribute);
 
 	// Get Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
@@ -150,6 +142,10 @@ private:
 
 	bool CheckActivationTags();
 
-};
+public:
+	FString ToString() const{
+		return FString::Printf(TEXT("[name: ] %s (State %s) [Tag %s] | NumTasks %d"), *GetName(), *EnumToString(AbilityState), *AbilityTag.ToString(), RunningTasks.Num());
+	}
 
+};
 

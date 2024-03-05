@@ -7,6 +7,7 @@
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "InterchangeResult.h"
+#include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Engine/ObjectLibrary.h"
 #include "Net/UnrealNetwork.h"
@@ -18,7 +19,7 @@ UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitialize
 	// Set this component to be initialized when the game starts, and to be ticked every frame.  You can turn these features
 	// off to improve performance if you don't need them.
 	PrimaryComponentTick.bCanEverTick = true;
-	// ...
+	SetIsReplicatedByDefault(true);
 }
 
 void UGMC_AbilitySystemComponent::BindReplicationData()
@@ -49,17 +50,12 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_InterpolationFunction::TargetValue);
 
 	// Attributes
-	for (const FAttribute* Attribute : Attributes->GetAllAttributes())
-	{
-		if (!Attribute->bIsGMCBound) continue;
-		
-		GMCMovementComponent->BindSinglePrecisionFloat(Attribute->Value,
-			EGMC_PredictionMode::ServerAuth_Output_ServerValidated,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
-	}
-	//
+	BindInstancedStruct(BoundAttributes,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::Periodic_Output,
+		EGMC_InterpolationFunction::TargetValue);
+	
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
@@ -90,7 +86,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-
+	
 }
 
 void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
@@ -269,14 +265,24 @@ bool UGMC_AbilitySystemComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
-	// Use BP'd Attributes if provided. Else use default attributes (which is nothing by default)
-	if (StartingAttributes)
-	{
-		Attributes = NewObject<UGMCAttributeSet>(this, StartingAttributes);
-	}
-	else if (Attributes == nullptr)
-	{
-		Attributes = NewObject<UGMCAttributeSet>();
+	BoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	UnBoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	if(AttributeDataAssets.IsEmpty()) return;
+
+	// Loop through each of the data assets inputted into the component to create new attributes.
+	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
+		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
+			FAttribute NewAttribute;
+			NewAttribute.Tag = AttributeData.Tag;
+			NewAttribute.Value = AttributeData.DefaultValue;
+			NewAttribute.bIsGMCBound = AttributeData.bShouldBind;
+			if(AttributeData.bShouldBind){
+				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+			}
+			else{
+				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+			}
+		}
 	}
 }
 
@@ -377,11 +383,6 @@ TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGa
 	return AbilityMap[AbilityTag];
 }
 
-void UGMC_AbilitySystemComponent::SetAttributes(UGMCAttributeSet* NewAttributes)
-{
-	this->Attributes = NewAttributes;
-}
-
 void UGMC_AbilitySystemComponent::InitializeEffectAssetClasses()
 {
 	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbilityEffect::StaticClass(), true, GIsEditor);
@@ -442,6 +443,10 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 
 		GrantedAbilityTags.AddTag(CDO->AbilityTag);
 	}
+}
+
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct OldStruct){
+	
 }
 
 void UGMC_AbilitySystemComponent::ApplyAbilityCost(UGMCAbility* Ability)
@@ -522,6 +527,61 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 }
 
 
+TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
+	TArray<const FAttribute*> AllAttributes;
+	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
+		AllAttributes.Add(&Attribute);
+	}
+	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
+		AllAttributes.Add(&Attribute);
+	}
+	return AllAttributes;
+}
+
+const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const{
+	TArray<const FAttribute*> AllAttributes = GetAllAttributes();
+	const FAttribute** FoundAttribute = AllAttributes.FindByPredicate([AttributeTag](const FAttribute* Attribute){
+		return Attribute->Tag.MatchesTagExact(AttributeTag);
+	});
+	return *FoundAttribute;
+}
+
+#pragma region ToStringHelpers
+
+FString UGMC_AbilitySystemComponent::GetAllAttributesString() const{
+	FString FinalString = TEXT("\n");
+	for (const FAttribute* Attribute : GetAllAttributes()){
+		FinalString += Attribute->ToString() + TEXT("\n");
+	}
+	return FinalString;
+}
+
+FString UGMC_AbilitySystemComponent::GetActiveEffectsDataString() const{
+	FString FinalString = TEXT("\n");
+	for(const FGMCAbilityEffectData& ActiveEffectData : ActiveEffectsData){
+		FinalString += ActiveEffectData.ToString() + TEXT("\n");
+	}
+	return FinalString;
+}
+
+FString UGMC_AbilitySystemComponent::GetActiveEffectsString() const{
+	FString FinalString = TEXT("\n");
+	for(const TTuple<int, UGMCAbilityEffect*> ActiveEffect : ActiveEffects){
+		FinalString += ActiveEffect.Value->ToString() + TEXT("\n");
+	}
+	return FinalString;
+}
+
+FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
+	FString FinalString = TEXT("\n");
+	for(const TTuple<int, UGMCAbility*> ActiveAbility : ActiveAbilities){
+		FinalString += ActiveAbility.Value->ToString() + TEXT("\n");
+	}
+	return FinalString;
+}
+
+#pragma endregion  ToStringHelpers
+
 void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
@@ -533,8 +593,11 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 	// Extra copying going on here? Can this be done with a reference? BPs are weird.
 	AttributeModifier = AttributeModifierContainer->AttributeModifier;
 	
-	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByTag(AttributeModifier.AttributeTag))
+	if (const FAttribute* AffectedAttribute = GetAttributeByTag(AttributeModifier.AttributeTag))
 	{
+		// If we are unbound that means we shouldn't predict.
+		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
+		
 		if (bNegateValue)
 		{
 			AffectedAttribute->Value += -AttributeModifier.Value;
@@ -566,6 +629,7 @@ void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimePr
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION(UGMC_AbilitySystemComponent, ActiveEffectsData, COND_OwnerOnly);
+	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
 }
 
 
