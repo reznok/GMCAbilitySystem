@@ -27,32 +27,22 @@ struct GMCABILITYSYSTEM_API FAttribute
 	// Whether this should be bound over GMC or not.
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
 	UPROPERTY(EditDefaultsOnly)
-	bool bIsGMCBound = true;
+	bool bIsGMCBound = false;
+
+	FString ToString() const{
+		return FString::Printf(TEXT("%s : %f (Bound? %d)"), *Tag.ToString(), Value, bIsGMCBound);
+	}
 };
 
-UCLASS(Blueprintable, BlueprintType)
-class GMCABILITYSYSTEM_API UGMCAttributeSet : public UObject
-{
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMCAttributeSet{
 	GENERATED_BODY()
-public:
-	UGMCAttributeSet();
 
-	// Get a specific attribute by name. Used mainly for Effects.
-	UFUNCTION(BlueprintCallable)
-	FAttribute GetAttributeValueByName(FName PropName);
+	UPROPERTY()
+	TArray<FAttribute> Attributes;
 
-	// Get a specific attribute by tag
-	FAttribute* GetAttributeByTag(FGameplayTag Tag);
-	
-	// Get a specific attribute by name. Used mainly for Effects.
-	FAttribute* GetAttributeByName(FName PropName);
+	void AddAttribute(FAttribute NewAttribute) {Attributes.Add(NewAttribute);}
 
-	// Set a specific attribute by name. Used mainly for Effects.
-	UFUNCTION(BlueprintCallable)
-	void SetAttributeByName(FName PropName, float NewValue);
-	
-	// Used to get the variables to bind for Replication automatically
-	TArray<FAttribute*> GetAllAttributes();
-
+	TArray<FAttribute> GetAttributes() const{return Attributes;}
 };
 

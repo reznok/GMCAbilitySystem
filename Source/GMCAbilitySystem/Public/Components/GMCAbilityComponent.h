@@ -13,7 +13,9 @@
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*, SourceAbilityComponent);
+class UGMCAttributesData;
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
+                                             SourceAbilityComponent);
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -81,12 +83,19 @@ public:
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
 
-	// Allows for BP instances of attributes. Attributes gets set to this.
 	UPROPERTY(EditDefaultsOnly)
-	TSubclassOf<UGMCAttributeSet> StartingAttributes;
-	
-	UPROPERTY(BlueprintReadOnly)
-	UGMCAttributeSet* Attributes;
+	TArray<UGMCAttributesData*> AttributeDataAssets; 
+
+	/** Struct containing attributes that are bound to the GMC */
+	UPROPERTY(BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
+	FInstancedStruct BoundAttributes;
+
+	/** Struct containing attributes that are replicated and unbound from the GMC */
+	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
+	FInstancedStruct UnBoundAttributes;
+
+	UFUNCTION()
+	void OnRep_UnBoundAttributes(FInstancedStruct OldStruct);
 
 	// Adds "AbilityCost" set in BP defaults
 	UFUNCTION(BlueprintCallable)
@@ -112,6 +121,12 @@ public:
 
 	UPROPERTY(BlueprintAssignable)
 	FOnAttributeChanged OnAttributeChanged;
+
+	/** Returns an array of pointers to all attributes */
+	TArray<const FAttribute*> GetAllAttributes() const;
+
+	/** Get an Attribute using its Tag */
+	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable)
@@ -131,6 +146,7 @@ public:
 	UPROPERTY(BlueprintReadWrite)
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
+#pragma region GMC
 	// GMC
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void BindReplicationData();
@@ -146,6 +162,23 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void PreLocalMoveExecution();
+
+#pragma endregion GMC
+
+#pragma region ToStringHelpers
+	/** Get all attributes in string format. Used in the gameplay debugger. */
+	FString GetAllAttributesString() const;
+
+	/** Get all active effect data in string format. Used in the gameplay debugger. */
+	FString GetActiveEffectsDataString() const;
+
+	/** Get all active effects in string format. Used in the gameplay debugger. */
+	FString GetActiveEffectsString() const;
+
+	/** Get all active abilities in string format. Used in the gameplay debugger. */
+	FString GetActiveAbilitiesString() const;
+
+#pragma endregion ToStringHelpers
 	
 protected:
 	virtual void BeginPlay() override;
@@ -167,11 +200,6 @@ protected:
 	// Returns a matching granted ability by class name if that ability is in the GrantedAbilities array
 	TSubclassOf<UGMCAbility> GetGrantedAbilityByTag(FGameplayTag AbilityTag);
 	
-	// Used to set the starting Attributes from code
-	// Must be called before GMCAbilityComponent runs its BindReplicationData step
-	void SetAttributes(UGMCAttributeSet* NewAttributes);
-
-
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;

@@ -21,6 +21,10 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 		{
 			DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
 			DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
+			DataPack.Attributes = AbilityComponent->GetAllAttributesString();
+			DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
+			DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
+			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
 		}
 	}
 }
@@ -31,21 +35,54 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 	if (!DataPack.ActorName.IsEmpty())
 	{
 		CanvasContext.Printf(TEXT("{yellow}Actor name: {white}%s"), *DataPack.ActorName);
+		const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>();
 
 		// Abilities
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Granted Abilities: {white}%s"), *DataPack.GrantedAbilities);
 		// Show client-side data
-		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
+		if (AbilityComponent)
 		{
 			CanvasContext.Printf(TEXT("{green}[client] {yellow}Granted Abilities: {white}%s"), *AbilityComponent->GetGrantedAbilities().ToStringSimple());
+		}
+
+		// Active Abilities
+		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Abilities: {white}%s"), *DataPack.ActiveAbilities);
+		// Show client-side data
+		if (AbilityComponent)
+		{
+			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Abilities: {white}%s"), *AbilityComponent->GetActiveAbilitiesString());
 		}
 
 		// Tags
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Tags: {white}%s"), *DataPack.ActiveTags);
 		// Show client-side data
-		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
+		if (AbilityComponent)
 		{
 			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Tags: {white}%s"), *AbilityComponent->GetActiveTags().ToStringSimple());
+		}
+
+		// Attributes
+		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Attributes: {white}%s"), *DataPack.Attributes);
+		// Show client-side data
+		if (AbilityComponent)
+		{
+			CanvasContext.Printf(TEXT("{green}[client] {yellow}Attributes: {white}%s"), *AbilityComponent->GetAllAttributesString());
+		}
+
+		// Active Effects
+		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Effects: {white}%s"), *DataPack.ActiveEffects);
+		// Show client-side data
+		if (AbilityComponent)
+		{
+			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {white}%s"), *AbilityComponent->GetActiveEffectsString());
+		}
+
+		// Active Effects Data
+		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Effects Data: {white}%s"), *DataPack.ActiveEffectData);
+		// Show client-side data
+		if (AbilityComponent)
+		{
+			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {white}%s"), *AbilityComponent->GetActiveEffectsDataString());
 		}
 		
 	}
@@ -61,4 +98,8 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::FRepData::Serialize(FArchive& A
 	Ar << ActorName;
 	Ar << GrantedAbilities;
 	Ar << ActiveTags;
+	Ar << Attributes;
+	Ar << ActiveEffects;
+	Ar << ActiveEffectData;
+	Ar << ActiveAbilities;
 }

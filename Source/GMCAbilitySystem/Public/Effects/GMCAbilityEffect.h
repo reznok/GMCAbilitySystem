@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "UObject/Object.h"
+#include "GMCAbilitySystem.h"
 #include "GMCAbilityEffect.generated.h"
 
 class UGMC_AbilitySystemComponent;
@@ -147,6 +148,10 @@ struct FGMCAbilityEffectData
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
 				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
 	}
+
+	FString ToString() const{
+		return FString::Printf(TEXT("[id: %d] [Tag %s] (Duration %f)"), EffectID, *EffectTag.ToString(), Duration);
+	}
 };
 
 /**
@@ -216,5 +221,10 @@ private:
 
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
 	void StartEffect();
+
+public:
+	FString ToString() const{
+		return FString::Printf(TEXT("[name: ] %s (State %s) | Started? %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, *EffectData.ToString());
+	}
 };
 

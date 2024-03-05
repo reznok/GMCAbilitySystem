@@ -26,6 +26,10 @@ protected:
 		FString ActorName;
 		FString GrantedAbilities;
 		FString ActiveTags;
+		FString Attributes;
+		FString ActiveEffects;
+		FString ActiveEffectData;
+		FString ActiveAbilities;
         
 		void Serialize(FArchive& Ar);
 	};
