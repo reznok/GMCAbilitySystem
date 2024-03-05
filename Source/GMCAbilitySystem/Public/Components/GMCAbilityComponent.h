@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "GameplayTasksComponent.h"
 #include "GMCAttributes.h"
-#include "Ability/GMCAbility.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Ability/GMCAbilityData.h"
 #include "Ability/Tasks/GMCAbilityTaskData.h"
@@ -14,6 +13,7 @@
 #include "GMCAbilityComponent.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*, SourceAbilityComponent);
+
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -29,6 +29,7 @@ struct FEffectStatePrediction
 	uint8 State;
 };
 
+class UGMCAbility;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"))
 class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
@@ -59,6 +60,9 @@ public:
 	// Remove an ability from the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
 	void RemoveGrantedAbilityByTag(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintPure, meta=(Categories="Ability"))
+	bool HasGrantedAbilityTag(FGameplayTag GameplayTag) const;
 
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)

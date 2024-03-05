@@ -3,6 +3,7 @@
 #include "GMCAbilityData.h"
 #include "GMCAbilitySystem.h"
 #include "GameplayTaskOwnerInterface.h"
+#include "GMCAbilityComponent.h"
 #include "InstancedStruct.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
@@ -20,6 +21,7 @@ enum class EAbilityState : uint8
 // Forward Declarations
 class UGMC_AbilitySystemComponent;
 class UGMCAbilityTaskBase;
+class UGMC_MovementUtilityCmp;
 
 UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwnerInterface
@@ -102,14 +104,17 @@ public:
 
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
+
+	UFUNCTION(BlueprintPure)
+	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
 	UPROPERTY()
 	UInputAction* AbilityKey;
 	
 	void ProgressTask(int TaskID, FInstancedStruct TaskData);
 
-	UFUNCTION(BlueprintCallable)
-	bool HasAuthority();
+	// UFUNCTION(BlueprintCallable)
+	// bool HasAuthority();
 
 	UFUNCTION(BlueprintCallable, BlueprintPure)
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};

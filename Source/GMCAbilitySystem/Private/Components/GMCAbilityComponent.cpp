@@ -109,6 +109,11 @@ void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(FGameplayTag Ability
 	}
 }
 
+bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(FGameplayTag GameplayTag) const
+{
+	return GrantedAbilityTags.HasTag(GameplayTag);
+}
+
 void UGMC_AbilitySystemComponent::AddActiveTag(FGameplayTag AbilityTag)
 {
 	ActiveTags.AddTag(AbilityTag);
