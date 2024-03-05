@@ -16,6 +16,8 @@ class UGMCAttributesData;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
                                              SourceAbilityComponent);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
+
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -86,8 +88,8 @@ public:
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
-
-	UPROPERTY(EditDefaultsOnly)
+	// A UGMCAttributesData asset that defines the default attributes for this component
+	UPROPERTY(EditDefaultsOnly, DisplayName="Attributes")
 	TArray<UGMCAttributesData*> AttributeDataAssets; 
 
 	/** Struct containing attributes that are bound to the GMC */
@@ -157,7 +159,9 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
-
+	UPROPERTY(BlueprintAssignable)
+	FOnAncillaryTick OnAncillaryTick;
+	
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
 
@@ -195,8 +199,8 @@ protected:
 	// Effect tags that are granted to the player (bound)
 	FGameplayTagContainer ActiveTags;
 
-	UPROPERTY(EditAnywhere)
-	TArray<TSubclassOf<UGMCAbility>> StartingAbilities;
+	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
+	FGameplayTagContainer StartingAbilities;
 
 	UPROPERTY(EditAnywhere)
 	TArray<TSubclassOf<UGMCAbilityEffect>> StartingEffects;

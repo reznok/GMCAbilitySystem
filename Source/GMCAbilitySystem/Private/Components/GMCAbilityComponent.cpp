@@ -7,6 +7,7 @@
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "InterchangeResult.h"
+#include "Ability/GMCAbility.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Engine/ObjectLibrary.h"
@@ -86,7 +87,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-	
+	OnAncillaryTick.Broadcast(DeltaTime);
 }
 
 void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
@@ -376,7 +377,7 @@ TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGa
 
 	if (!AbilityMap.Contains(AbilityTag))
 	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s"), *AbilityTag.ToString());
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s | Check The Component's AbilityMap"), *AbilityTag.ToString());
 		return nullptr;
 	}
 
@@ -429,19 +430,9 @@ void UGMC_AbilitySystemComponent::InitializeAbilityMap()
 
 void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 {
-	for (const TSubclassOf<UGMCAbility> Ability : StartingAbilities)
+	for (FGameplayTag Tag : StartingAbilities)
 	{
-		if (Ability == nullptr) return;
-		
-		const UGMCAbility* CDO = Ability->GetDefaultObject<UGMCAbility>();
-
-		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Starting Ability Missing Tag: %s"), *Ability->GetName());
-			continue;
-		}
-
-		GrantedAbilityTags.AddTag(CDO->AbilityTag);
+		GrantedAbilityTags.AddTag(Tag);
 	}
 }
 
