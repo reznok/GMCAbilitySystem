@@ -2,6 +2,7 @@
 #include "GameplayTagContainer.h"
 #include "GMCAbilityData.h"
 #include "GMCAbilitySystem.h"
+#include "GameplayTaskOwnerInterface.h"
 #include "InstancedStruct.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"

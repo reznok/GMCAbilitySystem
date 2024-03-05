@@ -135,6 +135,10 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		// Generated ID is based on ActionTimer so it always lines up on client/server
 		// Also helps when dealing with replays
 		const int AbilityID = GenerateAbilityID();
+
+		// Replays may try to create duplicate abilities
+		if (ActiveAbilities.Contains(AbilityID)) return false;
+		
 		//UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
 		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
@@ -307,6 +311,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime, bool bIsRep
 
 void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 {
+
 	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
 		Ability.Value->Tick(DeltaTime);
