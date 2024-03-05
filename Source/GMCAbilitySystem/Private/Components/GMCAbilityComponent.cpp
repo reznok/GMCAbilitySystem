@@ -178,7 +178,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 	ActionTimer += DeltaTime;
 	
 	// Startup Effects
-	if (StartingEffects.Num() > 0)
+	// Only applied on server. There's large desync if client tries to predict this, so just let server apply
+	// and reconcile.
+	if (HasAuthority() && StartingEffects.Num() > 0)
 	{
 		for (const TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
 		{
@@ -251,15 +253,17 @@ bool UGMC_AbilitySystemComponent::CanAffordAbilityCost(UGMCAbility* Ability)
 {
 	if (Ability->AbilityCost == nullptr) return true;
 	
-	// UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-	// for (FGMCAttributeModifier AttributeModifier : AbilityEffect->Modifiers)
-	// {
-	// 	if (const FAttribute* AffectedAttribute = Attributes->GetAttributeByName(AttributeModifier.AttributeName))
-	// 	{
-	// 		// If current - proposed is less than 0, cannot afford. Cost values are negative, so these are added.
-	// 		if (AffectedAttribute->Value + AttributeModifier.Value < 0) return false;
-	// 	}
-	// }
+	UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
+	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
+	{
+		for (const FAttribute* Attribute : GetAllAttributes())
+		{
+			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
+			{
+				if (Attribute->Value + AttributeModifier.Value < 0) return false;
+			}
+		}
+	}
 
 	return true;
 }

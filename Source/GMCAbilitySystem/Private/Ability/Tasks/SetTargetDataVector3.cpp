@@ -25,7 +25,7 @@ void UGMCAbilityTask_SetTargetDataVector3::Activate()
 void UGMCAbilityTask_SetTargetDataVector3::ProgressTask(FInstancedStruct& TaskData)
 {
 	Super::ProgressTask(TaskData);
-	FGMCAbilityTaskTargetDataVector3 Data = TaskData.Get<FGMCAbilityTaskTargetDataVector3>();
+	const FGMCAbilityTaskTargetDataVector3 Data = TaskData.Get<FGMCAbilityTaskTargetDataVector3>();
 	
 	Completed.Broadcast(Data.Target);
 	EndTask();
