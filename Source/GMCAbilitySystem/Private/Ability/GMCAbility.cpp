@@ -58,6 +58,7 @@ bool UGMCAbility::HasAuthority()
 	return OwnerAbilityComponent->GetOwner()->GetLocalRole() == ROLE_Authority;
 }
 
+
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const
 {
 	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent; }

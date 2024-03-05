@@ -16,7 +16,7 @@ void UGMCAbilityTask_SetTargetDataVector3::Activate()
 {
 	Super::Activate();
 
-	if (!Ability->HasAuthority())
+	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
 	{
 		ClientProgressTask();
 	}

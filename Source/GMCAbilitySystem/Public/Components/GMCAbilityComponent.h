@@ -91,7 +91,6 @@ public:
 	// Adds "AbilityCost" set in BP defaults
 	UFUNCTION(BlueprintCallable)
 	void ApplyAbilityCost(UGMCAbility* Ability);
-	
 
 	/**
 	 * Applies an effect to the Ability Component

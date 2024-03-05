@@ -48,13 +48,13 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 {
 	Completed.Broadcast();
 
-	if (!AbilitySystemComponent->HasAuthority())
+	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
 	{
 		ClientProgressTask();
 	}
-	// Clean up. Calls OnDestroy.
-
+	
 	bTaskCompleted = true;
+	// Clean up. Calls OnDestroy.
 	EndTask();
 }
 
