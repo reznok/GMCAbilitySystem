@@ -9,6 +9,7 @@ void UGMCAbilityTaskBase::Activate()
 {
 	Super::Activate();
 	RegisterTask(this);
+	LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;
 }
 
 void UGMCAbilityTaskBase::SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent)
@@ -22,9 +23,38 @@ void UGMCAbilityTaskBase::RegisterTask(UGMCAbilityTaskBase* Task)
 	Ability->RegisterTask(TaskID, Task);
 }
 
+void UGMCAbilityTaskBase::Tick(float DeltaTime)
+{
+	if (!AbilitySystemComponent->HasAuthority())
+	{
+		if (ClientLastHeartbeatSentTime + HeartbeatInterval < AbilitySystemComponent->ActionTimer)
+		{
+			ClientHeartbeat();
+			ClientLastHeartbeatSentTime = AbilitySystemComponent->ActionTimer;
+		}
+	}
+	else if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
+	{
+		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout, Cancelling Ability: %s"), *Ability->GetName());
+		Ability->EndAbility();
+	}
+
+}
+
 void UGMCAbilityTaskBase::ClientProgressTask()
 {
 	FGMCAbilityTaskData TaskData;
+	TaskData.TaskType = EGMCAbilityTaskDataType::Progress;
+	TaskData.AbilityID = Ability->GetAbilityID();
+	TaskData.TaskID = TaskID;
+	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
+	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
+}
+
+void UGMCAbilityTaskBase::ClientHeartbeat() const
+{
+	FGMCAbilityTaskData TaskData;
+	TaskData.TaskType = EGMCAbilityTaskDataType::Heartbeat;
 	TaskData.AbilityID = Ability->GetAbilityID();
 	TaskData.TaskID = TaskID;
 	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);

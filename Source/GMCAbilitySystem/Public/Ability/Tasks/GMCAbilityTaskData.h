@@ -6,6 +6,14 @@
 #include "UObject/Object.h"
 #include "GMCAbilityTaskData.generated.h"
 
+UENUM()
+enum EGMCAbilityTaskDataType : uint8
+{
+	None,
+	Heartbeat,
+	Progress
+};
+
 
 USTRUCT()
 struct GMCABILITYSYSTEM_API FGMCAbilityTaskData
@@ -18,7 +26,10 @@ struct GMCABILITYSYSTEM_API FGMCAbilityTaskData
 	// Task to continue ability execution on
 	UPROPERTY()
 	int TaskID{-1};
+
+	UPROPERTY()
+	TEnumAsByte<EGMCAbilityTaskDataType> TaskType{EGMCAbilityTaskDataType::None};
 	
-	bool operator==(const FGMCAbilityTaskData& Other) const {return AbilityID == Other.AbilityID && TaskID == Other.TaskID;};
-	bool operator!=(const FGMCAbilityTaskData& Other) const {return AbilityID != Other.AbilityID || TaskID != Other.TaskID;};
+	bool operator==(const FGMCAbilityTaskData& Other) const {return AbilityID == Other.AbilityID && TaskID == Other.TaskID && TaskType == Other.TaskType;};
+	bool operator!=(const FGMCAbilityTaskData& Other) const {return AbilityID != Other.AbilityID || TaskID != Other.TaskID || TaskType != Other.TaskType;};
 };

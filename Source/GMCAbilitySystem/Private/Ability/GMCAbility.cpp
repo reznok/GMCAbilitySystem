@@ -72,11 +72,19 @@ void UGMCAbility::RemoveAbilityCost(){
 	}
 }
 
-void UGMCAbility::ProgressTask(int Task, FInstancedStruct TaskData)
+void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 {
-	if (RunningTasks.Contains(Task))
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	if (RunningTasks.Contains(TaskID))
 	{
-		RunningTasks[Task]->ProgressTask(TaskData);
+		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Progress)
+		{
+			RunningTasks[TaskID]->ProgressTask(TaskData);
+		}
+		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Heartbeat)
+		{
+			RunningTasks[TaskID]->Heartbeat();
+		}
 	}
 }
 

@@ -33,7 +33,7 @@ public:
 	TWeakObjectPtr<UGMC_AbilitySystemComponent> AbilitySystemComponent;
 
 	// Tick called by AbilityComponent, different from TickTask
-	virtual void Tick(float DeltaTime){};
+	virtual void Tick(float DeltaTime);
 
 	/** Helper function for instantiating and initializing a new task */
 	template <class T>
@@ -42,23 +42,13 @@ public:
 		check(ThisAbility);
 
 		T* MyObj = NewObject<T>();
-		//MyObj->InitTask(*ThisAbility, ThisAbility->GetGameplayTaskDefaultPriority());
 		MyObj->InitTask(*ThisAbility, 0);
 
 		// UGMCAbilityTaskBase::DebugRecordAbilityTaskCreatedByAbility(ThisAbility);
-
 		MyObj->InstanceName = InstanceName;
 		return MyObj;
 	}
-
-	/** Called when the ability task is waiting on remote player data. IF the remote player ends the ability prematurely, and a task with this set is still running, the ability is killed. */
-	// void SetWaitingOnRemotePlayerData();
-	// void ClearWaitingOnRemotePlayerData();
-	// virtual bool IsWaitingOnRemotePlayerdata() const override;
 	
-	
-	//virtual void InternalCompleted(bool Forced);
-	//virtual void InternalClientCompleted();
 
 	// Called when client requests to progress task. Task must make sure this is handled properly/securely
 	virtual void ProgressTask(FInstancedStruct& TaskData){};
@@ -67,11 +57,23 @@ public:
 	// Task must make sure this is handled properly
 	virtual void ClientProgressTask();
 	
-	//void CompleteTask(bool Forced) {InternalCompleted(Forced);};
+	void Heartbeat(){LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;};
 
 protected:
 	bool bTaskCompleted;
 
 	/** Task Owner that created us */
 	TWeakObjectPtr<AActor> TaskOwner;
+
+private:
+	void ClientHeartbeat() const;
+
+	// How often client sends heartbeats to server
+	float HeartbeatInterval = .1f;
+
+	// Max time between heartbeats before server cancels task
+	float HeartbeatMaxInterval = .5f;
+	
+	float ClientLastHeartbeatSentTime;
+	float LastHeartbeatReceivedTime;
 };

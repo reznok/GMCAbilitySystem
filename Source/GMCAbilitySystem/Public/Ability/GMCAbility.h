@@ -117,7 +117,7 @@ public:
 	UInputAction* AbilityKey;
 
 	// Pass data into the Task
-	void ProgressTask(int TaskID, FInstancedStruct TaskData);
+	void HandleTaskData(int TaskID, FInstancedStruct TaskData);
 
 	// UFUNCTION(BlueprintCallable)
 	// bool HasAuthority();

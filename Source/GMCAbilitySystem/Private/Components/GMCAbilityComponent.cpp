@@ -214,7 +214,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 	{
 			if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
 			{
-				ActiveAbilities[TaskDataFromInstance.AbilityID]->ProgressTask(TaskDataFromInstance.TaskID, TaskData);
+				ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
 			}
 	}
 	

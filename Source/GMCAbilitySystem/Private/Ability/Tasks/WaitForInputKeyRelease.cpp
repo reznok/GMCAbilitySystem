@@ -35,7 +35,7 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInpu
 
 void UGMCAbilityTask_WaitForInputKeyRelease::Tick(float DeltaTime)
 {
-	Super::TickTask(DeltaTime);
+	Super::Tick(DeltaTime);
 	if (bTaskCompleted) {return;}
 	
 	if(InputActionBinding != nullptr && !InputActionBinding->GetValue().Get<bool>())
@@ -72,6 +72,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& Task
 void UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask()
 {
 	FGMCAbilityTaskData TaskData;
+	TaskData.TaskType = EGMCAbilityTaskDataType::Progress;
 	TaskData.AbilityID = Ability->GetAbilityID();
 	TaskData.TaskID = TaskID;
 	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
