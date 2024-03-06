@@ -429,7 +429,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	if (Effect->EffectData.EffectID == 0)
 	{
 		// Todo: Need a better way to generate EffectIDs
-		int NewEffectID = static_cast<int>(ActionTimer * 1000);
+		int NewEffectID = static_cast<int>(ActionTimer * 100);
 		while (ActiveEffects.Contains(NewEffectID))
 		{
 			NewEffectID++;
