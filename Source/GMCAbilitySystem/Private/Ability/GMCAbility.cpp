@@ -143,7 +143,8 @@ void UGMCAbility::BeginAbility()
 {
 	// Check Activation Tags
 	if (!CheckActivationTags()){
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Activation Stopped By Tags"));
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *AbilityTag.ToString());
+		EndAbility();
 		return;
 	}
 	
