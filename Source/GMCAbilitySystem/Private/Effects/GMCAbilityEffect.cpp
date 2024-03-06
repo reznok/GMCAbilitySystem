@@ -41,6 +41,46 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 }
 
+
+void UGMCAbilityEffect::StartEffect()
+{
+	bHasStarted = true;
+
+	// Ensure tag requirements are met before applying the effect
+	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
+		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
+	{
+		EndEffect();
+		return;
+	}
+	
+	AddTagsToOwner();
+	AddAbilitiesToOwner();
+
+	// Duration and Instant applies immediately.
+	if (EffectData.Period == 0)
+	{
+		for (const FGMCAttributeModifier Modifier : EffectData.Modifiers)
+		{
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier);
+		}
+	}
+
+	// Tick period at start
+	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
+	{
+		PeriodTick();
+	}
+				
+	// Instant effects instantly end
+	if (EffectData.bIsInstant)
+	{
+		EndEffect();
+	}
+
+	UpdateState(EEffectState::Started, true);
+}
+
 void UGMCAbilityEffect::EndEffect()
 {
 	bCompleted = true;
@@ -79,8 +119,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 
 
 	// If there's a period, check to see if it's time to tick
-	if (!DoesOwnerHaveTagFromContainer(EffectData.PausePeriodicEffect) &&
-		EffectData.Period > 0 && CurrentState == EEffectState::Started)
+	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EEffectState::Started)
 	{
 		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
 		if (Mod < PrevPeriodMod)
@@ -113,6 +152,11 @@ void UGMCAbilityEffect::UpdateState(EEffectState State, bool Force)
 	}
 
 	CurrentState = State;
+}
+
+bool UGMCAbilityEffect::IsPeriodPaused()
+{
+	return DoesOwnerHaveTagFromContainer(EffectData.PausePeriodicEffect);
 }
 
 void UGMCAbilityEffect::AddTagsToOwner()
@@ -175,45 +219,6 @@ bool UGMCAbilityEffect::DuplicateEffectAlreadyApplied()
 	}
 
 	return false;
-}
-
-void UGMCAbilityEffect::StartEffect()
-{
-	bHasStarted = true;
-
-	// Ensure tag requirements are met before applying the effect
-	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
-		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
-	{
-		EndEffect();
-		return;
-	}
-	
-	AddTagsToOwner();
-	AddAbilitiesToOwner();
-
-	// Duration and Instant applies immediately.
-	if (EffectData.Period == 0)
-	{
-		for (const FGMCAttributeModifier Modifier : EffectData.Modifiers)
-		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier);
-		}
-	}
-
-	// Tick period at start
-	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
-	{
-		PeriodTick();
-	}
-				
-	// Instant effects instantly end
-	if (EffectData.bIsInstant)
-	{
-		EndEffect();
-	}
-
-	UpdateState(EEffectState::Started, true);
 }
 
 void UGMCAbilityEffect::CheckState()

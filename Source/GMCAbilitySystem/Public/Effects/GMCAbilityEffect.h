@@ -154,7 +154,7 @@ struct FGMCAbilityEffectData
 	}
 
 	FString ToString() const{
-		return FString::Printf(TEXT("[id: %d] [Tag %s] (Duration %f)"), EffectID, *EffectTag.ToString(), Duration);
+		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %f)"), EffectID, *EffectTag.ToString(), Duration);
 	}
 };
 
@@ -187,6 +187,8 @@ public:
 	void PeriodTick();
 	
 	void UpdateState(EEffectState State, bool Force=false);
+
+	bool IsPeriodPaused();
 	
 	bool bCompleted;
 
@@ -220,9 +222,10 @@ private:
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
 	void StartEffect();
 
+
 public:
-	FString ToString() const{
-		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, *EffectData.ToString());
+	FString ToString() {
+		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
 	}
 };
 
