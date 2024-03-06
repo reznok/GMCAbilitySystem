@@ -465,6 +465,35 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	Effect->EndEffect();
 }
 
+int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove){
+	if(NumToRemove < -1 || !InEffectTag.IsValid()) return 0;
+
+	int32 NumRemoved = 0;
+	// Using this iterator allows us to remove while iterating
+	for(const TTuple<int, UGMCAbilityEffect*> Effect : ActiveEffects)
+	{
+		if(NumRemoved == NumToRemove){
+			break;
+		}
+		if(Effect.Value->EffectData.EffectTag.IsValid() && Effect.Value->EffectData.EffectTag.MatchesTagExact(InEffectTag)){
+			Effect.Value->EndEffect();
+			NumRemoved++;
+		}
+	}
+	return NumRemoved;
+}
+
+int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
+	if(!InEffectTag.IsValid()) return -1;
+	int32 Count = 0;
+	for (const TTuple<int, UGMCAbilityEffect*> Effect : ActiveEffects){
+		if(Effect.Value->EffectData.EffectTag.IsValid() && Effect.Value->EffectData.EffectTag.MatchesTagExact(InEffectTag)){
+			Count++;
+		}
+	}
+	return Count;
+}
+
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
@@ -543,7 +572,7 @@ FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
-	UGMCAttributeModifierContainer* AttributeModifierContainer = DuplicateObject(UGMCAttributeModifierContainer::StaticClass()->GetDefaultObject<UGMCAttributeModifierContainer>(), this);
+	UGMCAttributeModifierContainer* AttributeModifierContainer = NewObject<UGMCAttributeModifierContainer>(this);
 	AttributeModifierContainer->AttributeModifier = AttributeModifier;
 
 	// Broadcast the event to allow modifications to happen before application

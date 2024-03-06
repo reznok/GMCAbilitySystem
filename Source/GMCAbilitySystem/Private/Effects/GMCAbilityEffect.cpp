@@ -88,7 +88,6 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		PrevPeriodMod = Mod;
 	}
 	
-	
 	CheckState();
 }
 

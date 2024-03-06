@@ -130,6 +130,20 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
 
+	/**
+	 * Removes an instanced effect if it exists. If NumToRemove == -1, remove all. Returns the number of removed instances.
+	 * If the inputted count is higher than the number of active corresponding effects, remove all we can.
+	 */
+	UFUNCTION(BlueprintCallable)
+	int32 RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove=-1);
+
+	/**
+	 * Gets the number of active effects with the inputted tag.
+	 * Returns -1 if tag is invalid.
+	 */
+	UFUNCTION(BlueprintCallable)
+	int32 GetNumEffectByTag(FGameplayTag InEffectTag);
+
 	//// Event Delegates
 	// Called before an attribute is about to be changed
 	UPROPERTY(BlueprintAssignable)
