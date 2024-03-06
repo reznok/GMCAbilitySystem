@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTasksComponent.h"
-#include "GMCAttributes.h"
+#include "Attributes/GMCAttributes.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Ability/GMCAbilityData.h"
 #include "Ability/Tasks/GMCAbilityTaskData.h"
@@ -101,11 +101,7 @@ public:
 	FInstancedStruct UnBoundAttributes;
 
 	UFUNCTION()
-	void OnRep_UnBoundAttributes(FInstancedStruct OldStruct);
-
-	// Adds "AbilityCost" set in BP defaults
-	UFUNCTION(BlueprintCallable)
-	void ApplyAbilityCost(UGMCAbility* Ability);
+	void OnRep_UnBoundAttributes(FInstancedStruct OldStruct){};
 
 	/**
 	 * Applies an effect to the Ability Component
@@ -140,11 +136,6 @@ public:
 
 	UPROPERTY(BlueprintReadWrite)
 	bool bJustTeleported;
-
-	// Tell client an effect was applied by server
-	// Either client predicted it already and can discard the update, or it will apply
-	UFUNCTION(Client, Reliable)
-	void RPCServerApplyEffect(const FString& EffectClassName, FGMCAbilityEffectData EffectInitializationData);
 
 	UFUNCTION(BlueprintCallable)
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
@@ -190,8 +181,6 @@ public:
 	
 protected:
 	virtual void BeginPlay() override;
-	
-	bool CanAffordAbilityCost(UGMCAbility* Ability);
 
 	// Abilities that are granted to the player (bound)
 	FGameplayTagContainer GrantedAbilityTags;
@@ -232,17 +221,10 @@ protected:
 	}
 
 private:
-
-	// Cache of all Effect Asset Data
-	// Todo: Convert to using a tag system like abilities
-	UPROPERTY()
-	TArray<UBlueprintGeneratedClass *> EffectBPClasses;
-	void InitializeEffectAssetClasses();
-
+	
 	// Map of Ability Tags to Ability Classes
-	UPROPERTY(EditDefaultsOnly, Category="Ability")
+	UPROPERTY(EditDefaultsOnly)
 	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> AbilityMap;
-	void InitializeAbilityMap();
 
 	// Add the starting ability tags to GrantedAbilities at start
 	void InitializeStartingAbilities();

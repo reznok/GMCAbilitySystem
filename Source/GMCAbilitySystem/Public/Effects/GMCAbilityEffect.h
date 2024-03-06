@@ -224,7 +224,7 @@ private:
 
 public:
 	FString ToString() const{
-		return FString::Printf(TEXT("[name: ] %s (State %s) | Started? %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, *EffectData.ToString());
+		return FString::Printf(TEXT("[name: ] %s (State %s) | Started: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, *EffectData.ToString());
 	}
 };
 

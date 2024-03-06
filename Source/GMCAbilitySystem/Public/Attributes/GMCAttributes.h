@@ -30,7 +30,7 @@ struct GMCABILITYSYSTEM_API FAttribute
 	bool bIsGMCBound = false;
 
 	FString ToString() const{
-		return FString::Printf(TEXT("%s : %f (Bound? %d)"), *Tag.ToString(), Value, bIsGMCBound);
+		return FString::Printf(TEXT("%s : %f (Bound: %d)"), *Tag.ToString(), Value, bIsGMCBound);
 	}
 };
 

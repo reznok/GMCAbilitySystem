@@ -37,12 +37,33 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	BeginAbility();
 }
 
+bool UGMCAbility::CanAffordAbilityCost() const
+{
+	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return true;
+	
+	UGMCAbilityEffect* AbilityEffect = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
+	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
+	{
+		for (const FAttribute* Attribute : OwnerAbilityComponent->GetAllAttributes())
+		{
+			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
+			{
+				if (Attribute->Value + AttributeModifier.Value < 0) return false;
+			}
+		}
+	}
+
+	return true;
+}
+
 void UGMCAbility::CommitAbilityCost()
 {
-	if (OwnerAbilityComponent)
-	{
-		OwnerAbilityComponent->ApplyAbilityCost(this);
-	}
+	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return;
+	
+	const UGMCAbilityEffect* EffectCDO = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+	FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
+	EffectData.OwnerAbilityComponent = OwnerAbilityComponent;
+	OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
 }
 
 void UGMCAbility::ProgressTask(int Task, FInstancedStruct TaskData)

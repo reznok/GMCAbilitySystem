@@ -54,19 +54,19 @@ public:
 	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction = nullptr);
 	
 	// Called by AbilityComponent
-	void Tick(float DeltaTime);
+	virtual void Tick(float DeltaTime);
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void TickEvent(float DeltaTime);
 	
 	UFUNCTION()
-	void BeginAbility();
+	virtual void BeginAbility();
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
-	void EndAbility();
+	virtual void EndAbility();
 
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
@@ -84,15 +84,19 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
-	
-	UPROPERTY(EditAnywhere, Category="Ability", meta=(Categories="Ability"))
+
+	// Only used for identification, not mandatory to be set for activation.
+	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
 	FGameplayTag AbilityTag;
 	
 	UPROPERTY(EditAnywhere)
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
+	UFUNCTION(BlueprintPure)
+	virtual bool CanAffordAbilityCost() const;
+	
 	UFUNCTION(BlueprintCallable)
-	void CommitAbilityCost();
+	virtual void CommitAbilityCost();
 
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;

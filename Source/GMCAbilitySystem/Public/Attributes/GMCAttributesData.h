@@ -13,15 +13,16 @@ struct FAttributeData{
 	GENERATED_BODY()
 	
 	/** i.e. Attribute.Health */
-	UPROPERTY(EditDefaultsOnly)
-	FGameplayTag Tag;
+	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
+	FGameplayTag AttributeTag;
 
 	UPROPERTY(EditDefaultsOnly)
 	float DefaultValue = 0.f;
 
-	/** Should the variable be bound to the GMC? Otherwise it will be replicated normally. */
+	/** Should the variable be bound to the GMC? If False, it will be replicated normally and CANNOT be used for
+	 * prediction. */
 	UPROPERTY(EditDefaultsOnly)
-	bool bShouldBind = false;
+	bool bGMCBound = true;
 };
 
 /**

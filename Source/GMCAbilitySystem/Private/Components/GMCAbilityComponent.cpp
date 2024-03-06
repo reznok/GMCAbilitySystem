@@ -145,9 +145,6 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		
 		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
 		
-		// Check to make sure there's enough resource to use
-		if (!CanAffordAbilityCost(Ability)) return false;
-
 		Ability->Execute(this, AbilityID, InputAction);
 		ActiveAbilities.Add(AbilityID, Ability);
 		
@@ -243,29 +240,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 void UGMC_AbilitySystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	InitializeAbilityMap();
-	InitializeEffectAssetClasses();
 	InitializeStartingAbilities();
-}
-
-
-bool UGMC_AbilitySystemComponent::CanAffordAbilityCost(UGMCAbility* Ability)
-{
-	if (Ability->AbilityCost == nullptr) return true;
-	
-	UGMCAbilityEffect* AbilityEffect = Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
-	{
-		for (const FAttribute* Attribute : GetAllAttributes())
-		{
-			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
-			{
-				if (Attribute->Value + AttributeModifier.Value < 0) return false;
-			}
-		}
-	}
-
-	return true;
 }
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
@@ -278,10 +253,10 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
 		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
 			FAttribute NewAttribute;
-			NewAttribute.Tag = AttributeData.Tag;
+			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.Value = AttributeData.DefaultValue;
-			NewAttribute.bIsGMCBound = AttributeData.bShouldBind;
-			if(AttributeData.bShouldBind){
+			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
+			if(AttributeData.bGMCBound){
 				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
 			else{
@@ -388,70 +363,11 @@ TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGa
 	return AbilityMap[AbilityTag];
 }
 
-void UGMC_AbilitySystemComponent::InitializeEffectAssetClasses()
-{
-	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbilityEffect::StaticClass(), true, GIsEditor);
-	Library->bRecursivePaths = true;
-	Library->LoadBlueprintsFromPath("/Game");
-	Library->GetObjects<UBlueprintGeneratedClass>(EffectBPClasses);
-}
-
-void UGMC_AbilitySystemComponent::InitializeAbilityMap()
-{
-	return;
-	// This doesn't seem to work when abilities are contained inside plugins
-	// Works super well if they're in the main game content
-	// Forcing people to manually define the map for now
-	UObjectLibrary* Library = UObjectLibrary::CreateLibrary(UGMCAbility::StaticClass(), true, GIsEditor);
-	Library->bRecursivePaths = true;
-	Library->LoadBlueprintsFromPath("/Game");
-	TArray<UBlueprintGeneratedClass *> AbilityBPClasses;
-	Library->GetObjects<UBlueprintGeneratedClass>(AbilityBPClasses);
-
-	for (UBlueprintGeneratedClass* AbilityBPClass : AbilityBPClasses)
-	{
-		UGMCAbility* CDO = AbilityBPClass->GetDefaultObject<UGMCAbility>();
-
-		// Skip the BP generated SKELs
-		if (CDO->GetName().Contains("SKEL")) continue;
-
-		// Check for missing tags and if SKEL is present (BP generated)
-		if (CDO->AbilityTag == FGameplayTag::EmptyTag)
-		{
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Class Missing Tag: %s"), *AbilityBPClass->GetName());
-			continue;
-		}
-
-		if (AbilityMap.Contains(CDO->AbilityTag))
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Duplicate Ability Tag: %s"), *CDO->AbilityTag.ToString());
-			continue;
-		}
-		
-		AbilityMap.Add(CDO->AbilityTag, AbilityBPClass);
-	}
-}
-
 void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 {
 	for (FGameplayTag Tag : StartingAbilities)
 	{
 		GrantedAbilityTags.AddTag(Tag);
-	}
-}
-
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct OldStruct){
-	
-}
-
-void UGMC_AbilitySystemComponent::ApplyAbilityCost(UGMCAbility* Ability)
-{
-	if (Ability->AbilityCost != nullptr)
-	{
-		const UGMCAbilityEffect* EffectCDO = DuplicateObject(Ability->AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
-		FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
-		EffectData.OwnerAbilityComponent = this;
-		ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
 	}
 }
 
@@ -602,21 +518,6 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 			AffectedAttribute->Value += AttributeModifier.Value;
 		}
 	}
-}
-
-void UGMC_AbilitySystemComponent::RPCServerApplyEffect_Implementation(const FString& EffectClassName, FGMCAbilityEffectData EffectInitializationData)
-{
-	for (int32 i = 0; i < EffectBPClasses.Num(); ++i)
-	{
-		if (const UBlueprintGeneratedClass * BlueprintClass = EffectBPClasses[i]; EffectClassName == BlueprintClass->GetName())
-		{
-			UGMCAbilityEffect* Effect = DuplicateObject(BlueprintClass->GetDefaultObject<UGMCAbilityEffect>(), this);
-			ApplyAbilityEffect(Effect, EffectInitializationData);
-			// UE_LOG(LogTemp, Warning, TEXT("[GMCABILITY] Successfully Found Effect Class From Server: %s"), *EffectClassName);
-			return;
-		}
-	}
-	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[GMCABILITY] Received Invalid Effect Class Name From Server: %s"), *EffectClassName);
 }
 
 // ReplicatedProps
