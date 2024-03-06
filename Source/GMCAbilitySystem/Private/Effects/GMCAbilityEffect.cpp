@@ -82,12 +82,12 @@ void UGMCAbilityEffect::Tick(float DeltaTime, bool bIsReplayingPrediction)
 	// that the client will tick the effect at the correct times
 	if (EffectData.Period > 0 && CurrentState == EEffectState::Started)
 	{
-		constexpr int Period_Precision = 10e7;
+		constexpr int64 Period_Precision = 10e7;
 		
 		// This precision may need to be altered for very low periods
 		// BaseTime cannot be lower than the Period or it will not work
-		const int BaseTime = FMath::RoundToInt((OwnerAbilityComponent->ActionTimer - EffectData.StartTime) * Period_Precision) + (EffectData.Period * Period_Precision);
-		const int Mod = (BaseTime) % static_cast<int>(EffectData.Period * Period_Precision);
+		const int64 BaseTime = FMath::RoundToInt((OwnerAbilityComponent->ActionTimer - EffectData.StartTime) * Period_Precision) + (EffectData.Period * Period_Precision);
+		const int64 Mod = (BaseTime) % static_cast<int64>(EffectData.Period * Period_Precision);
 		
 		// ActionTimer goes all over the place during replays, so we need to check if we're replaying a prediction
 		if (Mod < PrevPeriodMod && !bIsReplayingPrediction)
