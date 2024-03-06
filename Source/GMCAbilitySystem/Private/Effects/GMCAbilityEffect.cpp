@@ -71,14 +71,16 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
-	if( !CheckMustHaveTags() || !CheckMustNotHaveTags() )
+	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
+		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
 	}
 
 
 	// If there's a period, check to see if it's time to tick
-	if (EffectData.Period > 0 && CurrentState == EEffectState::Started)
+	if (!DoesOwnerHaveTagFromContainer(EffectData.PausePeriodicEffect) &&
+		EffectData.Period > 0 && CurrentState == EEffectState::Started)
 	{
 		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
 		if (Mod < PrevPeriodMod)
@@ -145,28 +147,16 @@ void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
 	}
 }
 
-bool UGMCAbilityEffect::CheckMustHaveTags()
+bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const
 {
-	for (const FGameplayTag Tag : EffectData.MustHaveTags)
-	{
-		if (!OwnerAbilityComponent->HasActiveTag(Tag))
-		{
-			return false;
-		}
-	}
-	return true;
-}
-
-bool UGMCAbilityEffect::CheckMustNotHaveTags()
-{
-	for (const FGameplayTag Tag : EffectData.MustNotHaveTags)
+	for (const FGameplayTag Tag : TagContainer)
 	{
 		if (OwnerAbilityComponent->HasActiveTag(Tag))
 		{
-			return false;
+			return true;
 		}
 	}
-	return true;
+	return false;
 }
 
 bool UGMCAbilityEffect::DuplicateEffectAlreadyApplied()
@@ -192,7 +182,8 @@ void UGMCAbilityEffect::StartEffect()
 	bHasStarted = true;
 
 	// Ensure tag requirements are met before applying the effect
-	if( !CheckMustHaveTags() || !CheckMustNotHaveTags() || DuplicateEffectAlreadyApplied() )
+	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
+		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
 		return;

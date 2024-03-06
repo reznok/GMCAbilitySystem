@@ -134,6 +134,10 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FGameplayTagContainer GrantedAbilities;
 
+	// If tag is present, periodic effect will not tick. Duration is not affected.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FGameplayTagContainer PausePeriodicEffect;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TArray<FGMCAttributeModifier> Modifiers;
 	
@@ -208,8 +212,9 @@ private:
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();
 
-	bool CheckMustHaveTags();
-	bool CheckMustNotHaveTags();
+	// Does the owner have any of the tags from the container?
+	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
+	
 	bool DuplicateEffectAlreadyApplied();
 
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
