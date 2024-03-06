@@ -167,7 +167,17 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAc
 void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
 {
 	QueuedTaskData.Push(InTaskData);
-}	
+}
+
+void UGMC_AbilitySystemComponent::MatchTagToBool(FGameplayTag InTag, bool MatchedBool){
+	if(!InTag.IsValid()) return;
+	if(MatchedBool){
+		AddActiveTag(InTag);
+	}
+	else{
+		RemoveActiveTag(InTag);
+	}
+}
 
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
 {
@@ -321,7 +331,7 @@ void UGMC_AbilitySystemComponent::OnRep_ActiveEffectsData()
 			FGMCAbilityEffectData EffectData = ActiveEffectData;
 			ApplyAbilityEffect(EffectCDO, EffectData);
 			ProcessedEffectIDs.Add(EffectData.EffectID, true);
-		// 	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Replicated Effect: %d"), ActiveEffectData.EffectID);
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Replicated Effect: %d"), ActiveEffectData.EffectID);
 		}
 		
 		ProcessedEffectIDs[ActiveEffectData.EffectID] = true;
@@ -468,11 +478,30 @@ TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 }
 
 const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const{
+	if(!AttributeTag.IsValid()){
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Tried to get an attribute with an invalid tag!"))
+		return nullptr;
+	}
 	TArray<const FAttribute*> AllAttributes = GetAllAttributes();
 	const FAttribute** FoundAttribute = AllAttributes.FindByPredicate([AttributeTag](const FAttribute* Attribute){
 		return Attribute->Tag.MatchesTagExact(AttributeTag);
 	});
-	return *FoundAttribute;
+	if(FoundAttribute && *FoundAttribute){
+		return *FoundAttribute;
+	}
+	return nullptr;
+}
+
+float UGMC_AbilitySystemComponent::GetDefaultAttributeValueByTag(FGameplayTag AttributeTag) const{
+	if(!AttributeTag.IsValid()){return -1.0f;}
+	for(UGMCAttributesData* DataAsset : AttributeDataAssets){
+		for(FAttributeData DefaultAttribute : DataAsset->AttributeData){
+			if(DefaultAttribute.AttributeTag.IsValid() && AttributeTag.MatchesTagExact(DefaultAttribute.AttributeTag)){
+				return DefaultAttribute.DefaultValue;
+			}
+		}
+	}
+	return -1.0f;
 }
 
 #pragma region ToStringHelpers

@@ -89,6 +89,14 @@ public:
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
+	/**
+	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
+	 * Call this function on Prediction Tick.
+	 * A good example of this is something like a State.InAir tag.
+	 */
+	UFUNCTION(BlueprintCallable)
+	void MatchTagToBool(FGameplayTag InTag, bool MatchedBool);
+
 	// A UGMCAttributesData asset that defines the default attributes for this component
 	UPROPERTY(EditDefaultsOnly, DisplayName="Attributes")
 	TArray<UGMCAttributesData*> AttributeDataAssets; 
@@ -141,6 +149,10 @@ public:
 
 	/** Get an Attribute using its Tag */
 	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
+
+	/** Get the default value of an attribute from the data assets. */
+	UFUNCTION(BlueprintCallable)
+	float GetDefaultAttributeValueByTag(FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable)
