@@ -175,20 +175,16 @@ public:
 	
 	void EndEffect();
 	
-	virtual void Tick(float DeltaTime, bool bIsReplayingPrediction);
+	virtual void Tick(float DeltaTime);
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
-
-	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Periodic Tick"), Category="GMCAbilitySystem")
-	void PeriodTickEvent();
+	
+	void PeriodTick();
 	
 	void UpdateState(EEffectState State, bool Force=false);
 	
-	bool CompletedAndServerConfirmed();
-	
 	bool bCompleted;
-	bool bServerConfirmed;
 
 protected:
 	UPROPERTY(BlueprintReadOnly)
@@ -200,11 +196,8 @@ protected:
 private:
 	bool bHasStarted;
 
-	TArray<double> PeriodTickTimes;
-	float PeriodTimer = 0;
-
 	// Used for calculating when to tick Period effects
-	int PrevPeriodMod = 0;
+	float PrevPeriodMod = 0;
 	
 	void CheckState();
 

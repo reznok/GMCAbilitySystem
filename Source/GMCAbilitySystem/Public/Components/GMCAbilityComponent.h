@@ -278,7 +278,7 @@ private:
 	void CleanupStaleAbilities();
 
 	// Tick Predicted and Active Effects
-	void TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction);
+	void TickActiveEffects(float DeltaTime);
 
 	// Tick active abilities, primarily the Tasks inside them
 	void TickActiveAbilities(float DeltaTime);

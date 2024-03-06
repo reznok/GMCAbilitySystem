@@ -43,7 +43,6 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 
 void UGMCAbilityEffect::EndEffect()
 {
-	float time = OwnerAbilityComponent->ActionTimer;
 	bCompleted = true;
 
 	if (CurrentState != EEffectState::Ended)
@@ -66,7 +65,7 @@ void UGMCAbilityEffect::EndEffect()
 	RemoveAbilitiesFromOwner();
 }
 
-void UGMCAbilityEffect::Tick(float DeltaTime, bool bIsReplayingPrediction)
+void UGMCAbilityEffect::Tick(float DeltaTime)
 {
 	if (bCompleted) return;
 	TickEvent(DeltaTime);
@@ -77,25 +76,18 @@ void UGMCAbilityEffect::Tick(float DeltaTime, bool bIsReplayingPrediction)
 		EndEffect();
 	}
 
+
 	// If there's a period, check to see if it's time to tick
-	// This mess is to ensure that if the server sends a non predicted Period effect to the client
-	// that the client will tick the effect at the correct times
 	if (EffectData.Period > 0 && CurrentState == EEffectState::Started)
 	{
-		constexpr int Period_Precision = 10e7;
-		
-		// This precision may need to be altered for very low periods
-		// BaseTime cannot be lower than the Period or it will not work
-		const int BaseTime = FMath::RoundToInt((OwnerAbilityComponent->ActionTimer - EffectData.StartTime) * Period_Precision) + (EffectData.Period * Period_Precision);
-		const int Mod = (BaseTime) % static_cast<int>(EffectData.Period * Period_Precision);
-		
-		// ActionTimer goes all over the place during replays, so we need to check if we're replaying a prediction
-		if (Mod < PrevPeriodMod && !bIsReplayingPrediction)
+		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
+		if (Mod < PrevPeriodMod)
 		{
-			PeriodTickEvent();
+			PeriodTick();
 		}
 		PrevPeriodMod = Mod;
 	}
+	
 	
 	CheckState();
 }
@@ -104,7 +96,7 @@ void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
 {
 }
 
-void UGMCAbilityEffect::PeriodTickEvent_Implementation()
+void UGMCAbilityEffect::PeriodTick()
 {
 	for (const FGMCAttributeModifier AttributeModifier : EffectData.Modifiers)
 	{
@@ -222,7 +214,7 @@ void UGMCAbilityEffect::StartEffect()
 	// Tick period at start
 	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
 	{
-		PeriodTickEvent();
+		PeriodTick();
 	}
 				
 	// Instant effects instantly end
@@ -232,11 +224,6 @@ void UGMCAbilityEffect::StartEffect()
 	}
 
 	UpdateState(EEffectState::Started, true);
-}
-
-bool UGMCAbilityEffect::CompletedAndServerConfirmed()
-{
-	return bCompleted && bServerConfirmed;
 }
 
 void UGMCAbilityEffect::CheckState()
@@ -260,6 +247,4 @@ void UGMCAbilityEffect::CheckState()
 			break;
 	default: break;
 	}
-
-	int foo = KINDA_SMALL_NUMBER;
 }

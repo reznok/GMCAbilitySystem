@@ -196,7 +196,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 		StartingEffects.Empty();
 	}
 	
-	TickActiveEffects(DeltaTime, bIsReplayingPrediction);
+	TickActiveEffects(DeltaTime);
 	TickActiveAbilities(DeltaTime);
 	
 	// Abilities
@@ -288,7 +288,7 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime, bool bIsReplayingPrediction)
+void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
 	CheckRemovedEffects();
 	
@@ -298,7 +298,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime, bool bIsRep
 	// Tick Effects
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
-		Effect.Value->Tick(DeltaTime, bIsReplayingPrediction);
+		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
 	}
 	
