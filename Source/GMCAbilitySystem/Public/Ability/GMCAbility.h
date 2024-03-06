@@ -101,6 +101,10 @@ public:
 	UFUNCTION(BlueprintCallable)
 	virtual void CommitAbilityCost();
 
+	// Remove the ability cost effect (if applicable)
+	UFUNCTION(BlueprintCallable)
+	virtual void RemoveAbilityCost();
+
 	// GMC_AbilitySystemComponent that owns this ability
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
@@ -151,6 +155,9 @@ private:
 	TArray<TObjectPtr<UGameplayTask>>	ActiveTasks;
 
 	bool CheckActivationTags();
+
+	UPROPERTY()
+	UGMCAbilityEffect* AbilityCostInstance = nullptr;
 
 public:
 	FString ToString() const{

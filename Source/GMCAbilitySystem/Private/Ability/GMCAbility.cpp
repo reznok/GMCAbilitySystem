@@ -63,7 +63,13 @@ void UGMCAbility::CommitAbilityCost()
 	const UGMCAbilityEffect* EffectCDO = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
 	FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
 	EffectData.OwnerAbilityComponent = OwnerAbilityComponent;
-	OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
+	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
+}
+
+void UGMCAbility::RemoveAbilityCost(){
+	if(AbilityCostInstance){
+		OwnerAbilityComponent->RemoveActiveAbilityEffect(AbilityCostInstance);
+	}
 }
 
 void UGMCAbility::ProgressTask(int Task, FInstancedStruct TaskData)
