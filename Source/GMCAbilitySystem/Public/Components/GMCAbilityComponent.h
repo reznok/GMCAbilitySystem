@@ -13,9 +13,10 @@
 #include "GMCAbilityComponent.generated.h"
 
 class UGMCAttributesData;
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPreAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
                                              SourceAbilityComponent);
-
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAttributeChanged, FGameplayTag, AttributeTag, float, OldValue, float, NewValue);
+				
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 
@@ -101,7 +102,7 @@ public:
 	FInstancedStruct UnBoundAttributes;
 
 	UFUNCTION()
-	void OnRep_UnBoundAttributes(FInstancedStruct OldStruct){};
+	void OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes);
 
 	/**
 	 * Applies an effect to the Ability Component
@@ -121,8 +122,19 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
 
+	//// Event Delegates
+	// Called before an attribute is about to be changed
+	UPROPERTY(BlueprintAssignable)
+	FOnPreAttributeChanged OnPreAttributeChanged;
+
+	// Called after an attribute has been changed
 	UPROPERTY(BlueprintAssignable)
 	FOnAttributeChanged OnAttributeChanged;
+
+	// Called during the Ancillary Tick
+	UPROPERTY(BlueprintAssignable)
+	FOnAncillaryTick OnAncillaryTick;
+	////
 
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;
@@ -150,9 +162,7 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
-	UPROPERTY(BlueprintAssignable)
-	FOnAncillaryTick OnAncillaryTick;
-	
+
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
 

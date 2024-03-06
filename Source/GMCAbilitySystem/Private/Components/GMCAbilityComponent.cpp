@@ -371,6 +371,24 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes)
+{
+	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Get<FGMCAttributeSet>().Attributes;
+	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Get<FGMCAttributeSet>().Attributes;
+
+	TMap<FGameplayTag, float> OldValues;
+	
+	for (const FAttribute& Attribute : OldAttributes){
+		OldValues.Add(Attribute.Tag, Attribute.Value);
+	}
+
+	for (const FAttribute& Attribute : CurrentAttributes){
+		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
+			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+		}
+	}
+}
+
 //BP Version
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
 {
@@ -498,7 +516,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 	// Provide an opportunity to modify the attribute modifier before applying it
 	UGMCAttributeModifierContainer* AttributeModifierContainer = DuplicateObject(UGMCAttributeModifierContainer::StaticClass()->GetDefaultObject<UGMCAttributeModifierContainer>(), this);
 	AttributeModifierContainer->AttributeModifier = AttributeModifier;
-	OnAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
+
+	// Broadcast the event to allow modifications to happen before application
+	OnPreAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
 
 	// Apply the modified attribute modifier. If no changes were made, it's just the same as the original
 	// Extra copying going on here? Can this be done with a reference? BPs are weird.
@@ -508,6 +528,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 	{
 		// If we are unbound that means we shouldn't predict.
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
+		float OldValue = AffectedAttribute->Value;
 		
 		if (bNegateValue)
 		{
@@ -517,6 +538,8 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		{
 			AffectedAttribute->Value += AttributeModifier.Value;
 		}
+
+		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 	}
 }
 

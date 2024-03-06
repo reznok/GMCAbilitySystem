@@ -88,25 +88,31 @@ public:
 	// Only used for identification, not mandatory to be set for activation.
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
 	FGameplayTag AbilityTag;
-	
+
+	// An Effect that modifies attributes when the ability is activated
 	UPROPERTY(EditAnywhere)
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
+	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
 	UFUNCTION(BlueprintPure)
 	virtual bool CanAffordAbilityCost() const;
-	
+
+	// Apply the effects in AbilityCost
 	UFUNCTION(BlueprintCallable)
 	virtual void CommitAbilityCost();
 
+	// GMC_AbilitySystemComponent that owns this ability
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
+	// The GMC Movement Component on the same actor as OwnerAbilityComponent
 	UFUNCTION(BlueprintPure)
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
 	UPROPERTY()
 	UInputAction* AbilityKey;
-	
+
+	// Pass data into the Task
 	void ProgressTask(int TaskID, FInstancedStruct TaskData);
 
 	// UFUNCTION(BlueprintCallable)
@@ -116,12 +122,12 @@ public:
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
 
 	// Tags
-	// Tags that the owner must have to activate ability
+	// Tags that the owner must have to activate the ability. BeginAbility will not be called if the owner does not have these tags.
 	UPROPERTY(EditDefaultsOnly)
 	FGameplayTagContainer ActivationRequiredTags;
 
 	UPROPERTY(EditDefaultsOnly)
-	// Tags that the owner must not have to activate ability
+	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
 	
 	
