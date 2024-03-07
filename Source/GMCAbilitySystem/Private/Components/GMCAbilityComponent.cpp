@@ -568,6 +568,16 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0;
 }
 
+bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue)
+{
+	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
+	{
+		Att->Value = NewValue;
+		return true;
+	}
+	return false;
+}
+
 float UGMC_AbilitySystemComponent::GetDefaultAttributeValueByTag(FGameplayTag AttributeTag) const{
 	if(!AttributeTag.IsValid()){return -1.0f;}
 	for(UGMCAttributesData* DataAsset : AttributeDataAssets){

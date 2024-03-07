@@ -165,9 +165,14 @@ public:
 	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
 
 	// Get Attribute value by Tag
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem")
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
+	// Set Attribute value by Tag
+	// Only recommend doing this in OnAttributeChanged
+	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue);
+	
 	/** Get the default value of an attribute from the data assets. */
 	UFUNCTION(BlueprintCallable)
 	float GetDefaultAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
