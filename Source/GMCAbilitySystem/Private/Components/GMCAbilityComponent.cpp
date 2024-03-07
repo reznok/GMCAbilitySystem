@@ -210,7 +210,7 @@ void UGMC_AbilitySystemComponent::MatchTagToBool(FGameplayTag InTag, bool Matche
 	}
 }
 
-void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction)
+void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	bJustTeleported = false;
 	ActionTimer += DeltaTime;

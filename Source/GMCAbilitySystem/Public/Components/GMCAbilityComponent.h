@@ -214,7 +214,7 @@ public:
 
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
-	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
+	virtual void GenPredictionTick(float DeltaTime);
 
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenSimulationTick(float DeltaTime);
