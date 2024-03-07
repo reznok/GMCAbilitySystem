@@ -169,7 +169,7 @@ public:
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
 	// Set Attribute value by Tag
-	// Only recommend doing this in OnAttributeChanged
+	// Will NOT trigger an "OnAttributeChanged" Event
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue);
 	
