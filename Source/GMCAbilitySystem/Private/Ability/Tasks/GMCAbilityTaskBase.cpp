@@ -25,7 +25,7 @@ void UGMCAbilityTaskBase::RegisterTask(UGMCAbilityTaskBase* Task)
 
 void UGMCAbilityTaskBase::Tick(float DeltaTime)
 {
-	if (!AbilitySystemComponent->HasAuthority())
+	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
 	{
 		if (ClientLastHeartbeatSentTime + HeartbeatInterval < AbilitySystemComponent->ActionTimer)
 		{

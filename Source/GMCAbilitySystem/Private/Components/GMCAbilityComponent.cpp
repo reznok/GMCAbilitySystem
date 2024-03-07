@@ -302,7 +302,9 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
 
 		// Check for predicted effects that have not been server confirmed
-		if (ProcessedEffectIDs.Contains(Effect.Key) && !ProcessedEffectIDs[Effect.Key] && Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+		if (!HasAuthority() && 
+			ProcessedEffectIDs.Contains(Effect.Key) &&
+			!ProcessedEffectIDs[Effect.Key] && Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Not Confirmed By Server: %d, Removing..."), Effect.Key);
 			Effect.Value->EndEffect();
