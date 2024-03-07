@@ -57,7 +57,10 @@ public:
 	// Task must make sure this is handled properly
 	virtual void ClientProgressTask();
 	
-	void Heartbeat(){LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;};
+	void Heartbeat()
+	{
+		LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;
+	};
 
 protected:
 	bool bTaskCompleted;
@@ -66,13 +69,11 @@ protected:
 	TWeakObjectPtr<AActor> TaskOwner;
 
 private:
-	void ClientHeartbeat() const;
-
 	// How often client sends heartbeats to server
-	float HeartbeatInterval = .1f;
+	float HeartbeatInterval = .5f;
 
 	// Max time between heartbeats before server cancels task
-	float HeartbeatMaxInterval = .5f;
+	float HeartbeatMaxInterval = 1.f;
 	
 	float ClientLastHeartbeatSentTime;
 	float LastHeartbeatReceivedTime;

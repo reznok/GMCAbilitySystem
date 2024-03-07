@@ -92,10 +92,14 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 		{
 			RunningTasks[TaskID]->ProgressTask(TaskData);
 		}
-		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Heartbeat)
-		{
-			RunningTasks[TaskID]->Heartbeat();
-		}
+	}
+}
+
+void UGMCAbility::HandleTaskHeartbeat(int TaskID)
+{
+	if (RunningTasks.Contains(TaskID))
+	{
+		RunningTasks[TaskID]->Heartbeat();
 	}
 }
 

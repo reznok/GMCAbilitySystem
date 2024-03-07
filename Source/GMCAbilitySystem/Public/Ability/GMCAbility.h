@@ -120,6 +120,8 @@ public:
 	// Pass data into the Task
 	void HandleTaskData(int TaskID, FInstancedStruct TaskData);
 
+	void HandleTaskHeartbeat(int TaskID);
+
 	// UFUNCTION(BlueprintCallable)
 	// bool HasAuthority();
 
@@ -162,7 +164,7 @@ private:
 
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()
-	TArray<TObjectPtr<UGameplayTask>>	ActiveTasks;
+	TArray<TObjectPtr<UGameplayTask>> ActiveTasks;
 
 	bool CheckActivationTags();
 

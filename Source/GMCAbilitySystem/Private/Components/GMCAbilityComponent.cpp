@@ -157,7 +157,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		Ability->Execute(this, AbilityID, InputAction);
 		ActiveAbilities.Add(AbilityID, Ability);
 		
-		if (HasAuthority()) {ConfirmAbilityActivation(AbilityID);}		
+		if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}		
 		return true;
 	}
 
@@ -315,7 +315,7 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		// If the contained ability is in the Ended state, delete it
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
-			ClientEndAbility(It.Value()->GetAbilityID());
+			RPCClientEndAbility(It.Value()->GetAbilityID());
 			It.RemoveCurrent();
 		}
 	}
@@ -348,7 +348,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	for (const int EffectID : CompletedActiveEffects)
 	{
 		// Notify client. Redundant.
-		if (HasAuthority()) {ClientEndEffect(EffectID);}
+		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
 		
 		ActiveEffects.Remove(EffectID);
 		ActiveEffectsData.RemoveAll([EffectID](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == EffectID;});
@@ -412,7 +412,15 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 	}
 }
 
-void UGMC_AbilitySystemComponent::ClientEndEffect_Implementation(int EffectID)
+void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID, int TaskID)
+{
+	if (ActiveAbilities.Contains(AbilityID) && ActiveAbilities[AbilityID] != nullptr)
+	{
+		ActiveAbilities[AbilityID]->HandleTaskHeartbeat(TaskID);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RPCClientEndEffect_Implementation(int EffectID)
 {
 	if (ActiveEffects.Contains(EffectID))
 	{
@@ -421,7 +429,7 @@ void UGMC_AbilitySystemComponent::ClientEndEffect_Implementation(int EffectID)
 	}
 }
 
-void UGMC_AbilitySystemComponent::ClientEndAbility_Implementation(int AbilityID)
+void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int AbilityID)
 {
 	if (ActiveAbilities.Contains(AbilityID))
 	{
@@ -430,7 +438,7 @@ void UGMC_AbilitySystemComponent::ClientEndAbility_Implementation(int AbilityID)
 	}
 }
 
-void UGMC_AbilitySystemComponent::ConfirmAbilityActivation_Implementation(int AbilityID)
+void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int AbilityID)
 {
 	if (ActiveAbilities.Contains(AbilityID))
 	{

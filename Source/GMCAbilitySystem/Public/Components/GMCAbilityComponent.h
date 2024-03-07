@@ -201,6 +201,9 @@ public:
 	UPROPERTY(BlueprintReadWrite)
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
+	UFUNCTION(Server, Reliable)
+	void RPCTaskHeartbeat(int AbilityID, int TaskID);
+
 #pragma region GMC
 	// GMC
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
@@ -351,18 +354,18 @@ private:
 	// Let the client know that the server has activated this ability as well
 	// Needed for the client to cancel mis-predicted abilities
 	UFUNCTION(Client, Reliable)
-	void ConfirmAbilityActivation(int AbilityID);
+	void RPCConfirmAbilityActivation(int AbilityID);
 
 	// Let the client know that the server has ended an ability
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
 	UFUNCTION(Client, Reliable)
-	void ClientEndAbility(int AbilityID);
+	void RPCClientEndAbility(int AbilityID);
 	
 	// Let the client know that the server has ended an effect
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
 	UFUNCTION(Client, Reliable)
-	void ClientEndEffect(int EffectID);
-	
+	void RPCClientEndEffect(int EffectID);
+		
 };

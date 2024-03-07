@@ -29,7 +29,7 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 	{
 		if (ClientLastHeartbeatSentTime + HeartbeatInterval < AbilitySystemComponent->ActionTimer)
 		{
-			ClientHeartbeat();
+			AbilitySystemComponent->RPCTaskHeartbeat(Ability->GetAbilityID(), TaskID);
 			ClientLastHeartbeatSentTime = AbilitySystemComponent->ActionTimer;
 		}
 	}
@@ -50,14 +50,3 @@ void UGMCAbilityTaskBase::ClientProgressTask()
 	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
 	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
 }
-
-void UGMCAbilityTaskBase::ClientHeartbeat() const
-{
-	FGMCAbilityTaskData TaskData;
-	TaskData.TaskType = EGMCAbilityTaskDataType::Heartbeat;
-	TaskData.AbilityID = Ability->GetAbilityID();
-	TaskData.TaskID = TaskID;
-	const FInstancedStruct TaskDataInstance = FInstancedStruct::Make(TaskData);
-	Ability->OwnerAbilityComponent->QueueTaskData(TaskDataInstance);
-}
-
