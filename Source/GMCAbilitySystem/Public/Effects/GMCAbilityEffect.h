@@ -192,6 +192,10 @@ public:
 	
 	bool bCompleted;
 
+	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
+	// confirmed this effect within a time range, the effect will be cancelled.
+	float ClientEffectApplicationTime;
+
 protected:
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* SourceAbilityComponent;

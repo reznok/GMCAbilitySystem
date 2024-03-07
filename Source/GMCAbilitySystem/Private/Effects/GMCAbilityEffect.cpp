@@ -14,6 +14,14 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	OwnerAbilityComponent = EffectData.OwnerAbilityComponent;
 	SourceAbilityComponent = EffectData.SourceAbilityComponent;
 
+	if (OwnerAbilityComponent == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OwnerAbilityComponent is null in UGMCAbilityEffect::InitializeEffect"));
+		return;
+	}
+	
+	ClientEffectApplicationTime = OwnerAbilityComponent->ActionTimer;
+
 	// If server sends times, use those
 	// Only used in the case of a non predicted effect
 	if (InitializationData.StartTime != 0)
@@ -83,8 +91,10 @@ void UGMCAbilityEffect::StartEffect()
 
 void UGMCAbilityEffect::EndEffect()
 {
+	// Prevent EndEffect from being called multiple times
+	if (bCompleted) return;
+	
 	bCompleted = true;
-
 	if (CurrentState != EEffectState::Ended)
 	{
 		UpdateState(EEffectState::Ended, true);
