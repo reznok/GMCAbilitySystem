@@ -127,6 +127,17 @@ bool UGMC_AbilitySystemComponent::HasActiveTag(FGameplayTag GameplayTag) const
 	return ActiveTags.HasTag(GameplayTag);
 }
 
+TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGameplayTag ParentTag){
+	TArray<FGameplayTag> MatchedTags;
+	if(!ParentTag.IsValid()) return MatchedTags;
+	for(FGameplayTag Tag : ActiveTags){
+		if(Tag.MatchesTag(ParentTag)){
+			MatchedTags.Add(Tag);
+		}
+	}
+	return MatchedTags;
+}
+
 bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
