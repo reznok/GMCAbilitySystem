@@ -86,7 +86,7 @@ void UGMCAbility::RemoveAbilityCost(){
 void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 {
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
-	if (RunningTasks.Contains(TaskID))
+	if (RunningTasks.Contains(TaskID) && RunningTasks[TaskID] != nullptr)
 	{
 		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Progress)
 		{

@@ -304,7 +304,7 @@ private:
 	TArray<FGMCAbilityEffectData> ActiveEffectsData;
 
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
-	float ClientEffectApplicationTimeout = .5f;
+	float ClientEffectApplicationTimeout = .75f;
 
 	UFUNCTION()
 	void OnRep_ActiveEffectsData();

@@ -157,7 +157,7 @@ private:
 	float ClientStartTime;
 	
 	// How long to wait for server to confirm ability before cancelling on client
-	float ServerConfirmTimeout = 0.5f;
+	float ServerConfirmTimeout = 0.75f;
 
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()
