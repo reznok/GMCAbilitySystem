@@ -189,6 +189,8 @@ void UGMCAbility::BeginAbility()
 		EndAbility();
 		return;
 	}
+
+	OwnerAbilityComponent->SetCooldownForAbility(AbilityTag, CooldownTime);
 	
 	// Initialize Ability
 	AbilityState = EAbilityState::Initialized;

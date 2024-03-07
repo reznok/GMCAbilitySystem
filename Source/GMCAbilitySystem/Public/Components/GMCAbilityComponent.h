@@ -205,6 +205,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
 
+
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
 	virtual void GenPredictionTick(float DeltaTime, bool bIsReplayingPrediction = false);
 
@@ -314,6 +315,9 @@ private:
 
 	// Tick active abilities, primarily the Tasks inside them
 	void TickActiveAbilities(float DeltaTime);
+
+	// Tick ability cooldowns
+	void TickActiveCooldowns(float DeltaTime);
 
 	// Active Effects with a duration affecting this component
 	// Can be just normally replicated since if the client doesn't have them already

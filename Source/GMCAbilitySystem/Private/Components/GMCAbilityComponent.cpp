@@ -146,9 +146,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		Ability->Execute(this, AbilityID, InputAction);
 		ActiveAbilities.Add(AbilityID, Ability);
 		
-		if (HasAuthority()) {ConfirmAbilityActivation(AbilityID);}
-		SetCooldownForAbility(Ability->AbilityTag, Ability->CooldownTime);
-		
+		if (HasAuthority()) {ConfirmAbilityActivation(AbilityID);}		
 		return true;
 	}
 
@@ -220,6 +218,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime, bool bIsRep
 	
 	TickActiveEffects(DeltaTime);
 	TickActiveAbilities(DeltaTime);
+	TickActiveCooldowns(DeltaTime);
 	
 	// Abilities
 	CleanupStaleAbilities();
@@ -350,6 +349,18 @@ void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
 		Ability.Value->Tick(DeltaTime);
+	}
+}
+
+void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
+{
+	for (auto It = ActiveCooldowns.CreateIterator(); It; ++It)
+	{
+		It.Value() -= DeltaTime;
+		if (It.Value() <= 0)
+		{
+			It.RemoveCurrent();
+		}
 	}
 }
 
