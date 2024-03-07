@@ -543,7 +543,8 @@ TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	return AllAttributes;
 }
 
-const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const{
+const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const
+{
 	if(!AttributeTag.IsValid()){
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Tried to get an attribute with an invalid tag!"))
 		return nullptr;
@@ -556,6 +557,15 @@ const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag At
 		return *FoundAttribute;
 	}
 	return nullptr;
+}
+
+float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag AttributeTag) const
+{
+	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
+	{
+		return Att->Value;
+	}
+	return 0;
 }
 
 float UGMC_AbilitySystemComponent::GetDefaultAttributeValueByTag(FGameplayTag AttributeTag) const{

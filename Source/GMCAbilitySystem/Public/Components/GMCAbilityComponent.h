@@ -164,9 +164,13 @@ public:
 	/** Get an Attribute using its Tag */
 	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
 
+	// Get Attribute value by Tag
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
+
 	/** Get the default value of an attribute from the data assets. */
 	UFUNCTION(BlueprintCallable)
-	float GetDefaultAttributeValueByTag(FGameplayTag AttributeTag) const;
+	float GetDefaultAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable)

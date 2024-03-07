@@ -78,10 +78,6 @@ public:
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	float GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const;
 
-	// Get Attribute value by Name from a passed AbilityComponent
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	static float GetAttributeValueByTag(const UGMC_AbilitySystemComponent* AbilityComponent, FGameplayTag AttributeTag);
-
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
 

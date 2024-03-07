@@ -205,23 +205,9 @@ AActor* UGMCAbility::GetOwnerActor() const
 
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 {
-	return GetAttributeValueByTag(OwnerAbilityComponent, AttributeTag);
+	return OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag);
 }
 
-float UGMCAbility::GetAttributeValueByTag(const UGMC_AbilitySystemComponent* AbilityComponent, const FGameplayTag AttributeTag)
-{
-	if (AbilityComponent == nullptr || AttributeTag == FGameplayTag::EmptyTag)
-	{
-		return 0;
-	}
-	
-	if (const FAttribute* Att = AbilityComponent->GetAttributeByTag(AttributeTag))
-	{
-		return Att->Value;
-	}
-
-	return 0;
-}
 
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
