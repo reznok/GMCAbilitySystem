@@ -279,8 +279,7 @@ private:
 
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
-
-	int AbilityActivationIDCounter = 0;
+	
 	
 	int GenerateAbilityID() const {return ActionTimer * 100;}
 	
@@ -303,6 +302,9 @@ private:
 
 	UPROPERTY(ReplicatedUsing = OnRep_ActiveEffectsData)
 	TArray<FGMCAbilityEffectData> ActiveEffectsData;
+
+	// Max time a client will predict an effect without it being confirmed by the server before cancelling
+	float ClientEffectApplicationTimeout = .5f;
 
 	UFUNCTION()
 	void OnRep_ActiveEffectsData();

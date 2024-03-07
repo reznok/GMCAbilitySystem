@@ -292,7 +292,6 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
 	CheckRemovedEffects();
 	
-	TArray<UGMCAbilityEffect*> CompletedPredictedEffects;
 	TArray<int> CompletedActiveEffects;
 
 	// Tick Effects
@@ -300,6 +299,14 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	{
 		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
+
+		// Check for predicted effects that have not been server confirmed
+		if (ProcessedEffectIDs.Contains(Effect.Key) && !ProcessedEffectIDs[Effect.Key] && Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Not Confirmed By Server: %d, Removing..."), Effect.Key);
+			Effect.Value->EndEffect();
+			CompletedActiveEffects.Push(Effect.Key);
+		}
 	}
 	
 	// Clean expired effects
@@ -431,13 +438,13 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	if (Effect->EffectData.EffectID == 0)
 	{
 		// Todo: Need a better way to generate EffectIDs
-		int NewEffectID = static_cast<int>(ActionTimer * 1000);
+		int NewEffectID = static_cast<int>(ActionTimer * 100);
 		while (ActiveEffects.Contains(NewEffectID))
 		{
 			NewEffectID++;
 		}
 		Effect->EffectData.EffectID = NewEffectID;
-		// UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
 	}
 
 	// This is Replicated, so only server needs to manage it
