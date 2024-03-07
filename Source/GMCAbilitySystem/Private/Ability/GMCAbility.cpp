@@ -41,7 +41,7 @@ void UGMCAbility::TickTasks(float DeltaTime)
 
 void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction)
 {
-	this->AbilityKey = InputAction;
+	this->AbilityInputAction = InputAction;
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
@@ -169,11 +169,23 @@ bool UGMCAbility::CheckActivationTags()
 	return true;
 }
 
+bool UGMCAbility::IsOnCooldown() const
+{
+	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
+}
+
 void UGMCAbility::BeginAbility()
 {
 	// Check Activation Tags
 	if (!CheckActivationTags()){
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *AbilityTag.ToString());
+		EndAbility();
+		return;
+	}
+
+	if (!IsOnCooldown())
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
 		EndAbility();
 		return;
 	}

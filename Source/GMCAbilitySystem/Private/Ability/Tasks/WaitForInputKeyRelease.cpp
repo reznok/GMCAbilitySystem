@@ -14,9 +14,9 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 {
 	Super::Activate();
 	
-	if (Ability->AbilityKey != nullptr)
+	if (Ability->AbilityInputAction != nullptr)
 	{
-		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityKey);
+		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityInputAction);
 	}
 }
 

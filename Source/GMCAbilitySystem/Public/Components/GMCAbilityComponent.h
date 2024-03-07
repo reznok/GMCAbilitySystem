@@ -89,6 +89,13 @@ public:
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
+	// Set an ability cooldown
+	// If it's already on cooldown, subsequent calls will overwrite it
+	UFUNCTION(BlueprintCallable)
+	void SetCooldownForAbility(FGameplayTag AbilityTag, float CooldownTime);
+
+	UFUNCTION(BlueprintPure)
+	float GetCooldownForAbility(FGameplayTag AbilityTag) const;
 	/**
 	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
 	 * Call this function on Prediction Tick.
@@ -288,6 +295,9 @@ private:
 
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
+
+	UPROPERTY()
+	TMap<FGameplayTag, float> ActiveCooldowns;
 	
 	
 	int GenerateAbilityID() const {return ActionTimer * 100;}
@@ -313,7 +323,7 @@ private:
 	TArray<FGMCAbilityEffectData> ActiveEffectsData;
 
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
-	float ClientEffectApplicationTimeout = .75f;
+	float ClientEffectApplicationTimeout = 1.f;
 
 	UFUNCTION()
 	void OnRep_ActiveEffectsData();

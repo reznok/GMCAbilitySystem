@@ -15,6 +15,7 @@ Plugins/Developer/*
 
 # Exclude personal Devlog
 Devlog/*
+Config/*
 
 Content/StarterContent/*
 

@@ -147,6 +147,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		ActiveAbilities.Add(AbilityID, Ability);
 		
 		if (HasAuthority()) {ConfirmAbilityActivation(AbilityID);}
+		SetCooldownForAbility(Ability->AbilityTag, Ability->CooldownTime);
 		
 		return true;
 	}
@@ -167,6 +168,27 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAc
 void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
 {
 	QueuedTaskData.Push(InTaskData);
+}
+
+void UGMC_AbilitySystemComponent::SetCooldownForAbility(FGameplayTag AbilityTag, float CooldownTime)
+{
+	if (AbilityTag == FGameplayTag::EmptyTag) return;
+	
+	if (ActiveCooldowns.Contains(AbilityTag))
+	{
+		ActiveCooldowns[AbilityTag] = CooldownTime;
+		return;
+	}
+	ActiveCooldowns.Add(AbilityTag, CooldownTime);
+}
+
+float UGMC_AbilitySystemComponent::GetCooldownForAbility(FGameplayTag AbilityTag) const
+{
+	if (ActiveCooldowns.Contains(AbilityTag))
+	{
+		return ActiveCooldowns[AbilityTag];
+	}
+	return 0.f;
 }
 
 void UGMC_AbilitySystemComponent::MatchTagToBool(FGameplayTag InTag, bool MatchedBool){

@@ -81,13 +81,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem|Ability")
 	void SetOwnerJustTeleported(bool bValue);
 
-	// Only used for identification, not mandatory to be set for activation.
+	// Tag to identify this ability. Required for setting cooldowns.
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
 	FGameplayTag AbilityTag;
 
 	// An Effect that modifies attributes when the ability is activated
 	UPROPERTY(EditAnywhere)
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
+
+	// How long in seconds ability should go on cooldown when activated
+	// Requires AbilityTag to be set
+	UPROPERTY(EditAnywhere)
+	float CooldownTime;
 
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
 	UFUNCTION(BlueprintPure)
@@ -109,8 +114,8 @@ public:
 	UFUNCTION(BlueprintPure)
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
-	UPROPERTY()
-	UInputAction* AbilityKey;
+	UPROPERTY(BlueprintReadOnly)
+	UInputAction* AbilityInputAction;
 
 	// Pass data into the Task
 	void HandleTaskData(int TaskID, FInstancedStruct TaskData);
@@ -153,7 +158,7 @@ private:
 	float ClientStartTime;
 	
 	// How long to wait for server to confirm ability before cancelling on client
-	float ServerConfirmTimeout = 0.75f;
+	float ServerConfirmTimeout = 1.f;
 
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()
@@ -163,6 +168,8 @@ private:
 
 	UPROPERTY()
 	UGMCAbilityEffect* AbilityCostInstance = nullptr;
+
+	bool IsOnCooldown() const;
 
 public:
 	FString ToString() const{
