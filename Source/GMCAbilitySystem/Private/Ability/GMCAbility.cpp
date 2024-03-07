@@ -41,7 +41,11 @@ void UGMCAbility::TickTasks(float DeltaTime)
 
 void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction)
 {
+<<<<<<< HEAD
 	this->AbilityInputAction = InputAction;
+=======
+	this->AbilityInputAction  = InputAction;
+>>>>>>> 278dcad... tagtargetdata task, parent tag helper function, update input action var on ability
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;

@@ -80,6 +80,10 @@ public:
 	UFUNCTION(BlueprintPure)
 	bool HasActiveTag(FGameplayTag GameplayTag) const;
 
+	/** Get all active tags that match a given parent tag */
+	UFUNCTION(BlueprintCallable)
+	TArray<FGameplayTag> GetActiveTagsByParentTag(FGameplayTag ParentTag);
+
 	// Do not call directly, go through QueueAbility
 	bool TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
 	

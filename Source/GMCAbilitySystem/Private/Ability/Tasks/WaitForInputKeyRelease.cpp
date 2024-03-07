@@ -14,7 +14,11 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 {
 	Super::Activate();
 	
+<<<<<<< HEAD
 	if (Ability->AbilityInputAction != nullptr)
+=======
+	if (Ability->AbilityInputAction  != nullptr)
+>>>>>>> 278dcad... tagtargetdata task, parent tag helper function, update input action var on ability
 	{
 		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityInputAction);
 	}
