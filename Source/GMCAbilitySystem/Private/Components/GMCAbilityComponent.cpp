@@ -371,7 +371,7 @@ void UGMC_AbilitySystemComponent::ClientEndEffect_Implementation(int EffectID)
 	if (ActiveEffects.Contains(EffectID))
 	{
 		ActiveEffects[EffectID]->EndEffect();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPC Server Ended Effect: %d"), EffectID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Effect: %d"), EffectID);
 	}
 }
 
@@ -380,7 +380,7 @@ void UGMC_AbilitySystemComponent::ClientEndAbility_Implementation(int AbilityID)
 	if (ActiveAbilities.Contains(AbilityID))
 	{
 		ActiveAbilities[AbilityID]->EndAbility();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPC Server Ended Ability: %d"), AbilityID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Ability: %d"), AbilityID);
 	}
 }
 
@@ -389,7 +389,7 @@ void UGMC_AbilitySystemComponent::ConfirmAbilityActivation_Implementation(int Ab
 	if (ActiveAbilities.Contains(AbilityID))
 	{
 		ActiveAbilities[AbilityID]->ServerConfirm();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Server Confirmed Ability Activation: %d"), AbilityID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Ability Activation: %d"), AbilityID);
 	}
 }
 
