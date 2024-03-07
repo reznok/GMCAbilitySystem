@@ -7,6 +7,7 @@
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "Ability/GMCAbility.h"
+#include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/UnrealNetwork.h"
@@ -283,6 +284,7 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializeStartingAbilities();
+	InitializeAbilityMap();
 }
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
@@ -462,6 +464,11 @@ TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGa
 	}
 
 	return AbilityMap[AbilityTag];
+}
+
+void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
+	if(!StartingAbilityMap) return;
+	AbilityMap.Append(StartingAbilityMap.Get()->GetAbilityMap());
 }
 
 void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
