@@ -183,7 +183,7 @@ void UGMCAbility::BeginAbility()
 		return;
 	}
 
-	if (!IsOnCooldown())
+	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
 		EndAbility();
