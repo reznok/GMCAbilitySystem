@@ -16,6 +16,16 @@ UWorld* UGMCAbility::GetWorld() const
 
 void UGMCAbility::Tick(float DeltaTime)
 {
+	if (!OwnerAbilityComponent->HasAuthority())
+	{
+		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Ability Not Confirmed By Server: %d, Removing..."), AbilityID);
+			EndAbility();
+			return;
+		}
+	}
+	
 	TickTasks(DeltaTime);
 	TickEvent(DeltaTime);
 }
@@ -34,6 +44,7 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	this->AbilityKey = InputAction;
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
+	this->ClientStartTime = InAbilityComponent->ActionTimer;
 	BeginAbility();
 }
 
@@ -86,6 +97,11 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 			RunningTasks[TaskID]->Heartbeat();
 		}
 	}
+}
+
+void UGMCAbility::ServerConfirm()
+{
+	bServerConfirmed = true;
 }
 
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const

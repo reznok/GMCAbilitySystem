@@ -146,6 +146,8 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UI
 		Ability->Execute(this, AbilityID, InputAction);
 		ActiveAbilities.Add(AbilityID, Ability);
 		
+		if (HasAuthority()) {ConfirmAbilityActivation(AbilityID);}
+		
 		return true;
 	}
 
@@ -281,6 +283,7 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		// If the contained ability is in the Ended state, delete it
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
+			ClientEndAbility(It.Value()->GetAbilityID());
 			It.RemoveCurrent();
 		}
 	}
@@ -310,6 +313,9 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// Clean expired effects
 	for (const int EffectID : CompletedActiveEffects)
 	{
+		// Notify client. Redundant.
+		if (HasAuthority()) {ClientEndEffect(EffectID);}
+		
 		ActiveEffects.Remove(EffectID);
 		ActiveEffectsData.RemoveAll([EffectID](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == EffectID;});
 	}
@@ -317,7 +323,6 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 {
-
 	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
 		Ability.Value->Tick(DeltaTime);
@@ -358,6 +363,33 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 		{
 			RemoveActiveAbilityEffect(Effect.Value);
 		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::ClientEndEffect_Implementation(int EffectID)
+{
+	if (ActiveEffects.Contains(EffectID))
+	{
+		ActiveEffects[EffectID]->EndEffect();
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPC Server Ended Effect: %d"), EffectID);
+	}
+}
+
+void UGMC_AbilitySystemComponent::ClientEndAbility_Implementation(int AbilityID)
+{
+	if (ActiveAbilities.Contains(AbilityID))
+	{
+		ActiveAbilities[AbilityID]->EndAbility();
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPC Server Ended Ability: %d"), AbilityID);
+	}
+}
+
+void UGMC_AbilitySystemComponent::ConfirmAbilityActivation_Implementation(int AbilityID)
+{
+	if (ActiveAbilities.Contains(AbilityID))
+	{
+		ActiveAbilities[AbilityID]->ServerConfirm();
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Server Confirmed Ability Activation: %d"), AbilityID);
 	}
 }
 
@@ -442,7 +474,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 			NewEffectID++;
 		}
 		Effect->EffectData.EffectID = NewEffectID;
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Generated Effect ID: %d"), Effect->EffectData.EffectID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), Effect->EffectData.EffectID);
 	}
 
 	// This is Replicated, so only server needs to manage it

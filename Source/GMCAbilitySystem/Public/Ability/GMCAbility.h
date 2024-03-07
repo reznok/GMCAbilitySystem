@@ -133,7 +133,9 @@ public:
 	UPROPERTY(EditDefaultsOnly)
 	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
-	
+
+	UFUNCTION()
+	void ServerConfirm();
 	
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
@@ -149,6 +151,13 @@ private:
 
 	int AbilityID = -1;
 	int TaskIDCounter = -1;
+
+	bool bServerConfirmed = false;
+
+	float ClientStartTime;
+	
+	// How long to wait for server to confirm ability before cancelling on client
+	float ServerConfirmTimeout = 0.5f;
 
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()

@@ -316,8 +316,26 @@ private:
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
 	// Effect IDs that have been processed and don't need to be remade when ActiveEffectsData is replicated
-	// Maybe this is a bad way to do it
+	// This need to be persisted for a while
+	// This never empties out so it'll infinitely grow, probably a better way to accomplish this
 	UPROPERTY()
 	TMap<int /*ID*/, bool /*bServerConfirmed*/> ProcessedEffectIDs;
+
+	// Let the client know that the server has activated this ability as well
+	// Needed for the client to cancel mis-predicted abilities
+	UFUNCTION(Client, Reliable)
+	void ConfirmAbilityActivation(int AbilityID);
+
+	// Let the client know that the server has ended an ability
+	// In most cases, the client should have predicted this already,
+	// this is just for redundancy
+	UFUNCTION(Client, Reliable)
+	void ClientEndAbility(int AbilityID);
+	
+	// Let the client know that the server has ended an effect
+	// In most cases, the client should have predicted this already,
+	// this is just for redundancy
+	UFUNCTION(Client, Reliable)
+	void ClientEndEffect(int EffectID);
 	
 };
