@@ -18,6 +18,10 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 	{
 		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityInputAction);
 	}
+	else
+	{
+		ClientProgressTask();
+	}
 }
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
@@ -38,7 +42,9 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (bTaskCompleted) {return;}
 	
-	if(InputActionBinding != nullptr && !InputActionBinding->GetValue().Get<bool>())
+	if (AbilitySystemComponent->GetNetMode() == NM_DedicatedServer) return;
+	
+	if(InputActionBinding == nullptr || !InputActionBinding->GetValue().Get<bool>())
 	{
 		ClientProgressTask();
 	}
@@ -46,16 +52,9 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Tick(float DeltaTime)
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 {
-	Completed.Broadcast();
-
-	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
-	{
-		ClientProgressTask();
-	}
-	
-	bTaskCompleted = true;
-	// Clean up. Calls OnDestroy.
 	EndTask();
+	Completed.Broadcast();
+	bTaskCompleted = true;
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
