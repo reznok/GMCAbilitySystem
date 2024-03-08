@@ -12,6 +12,7 @@
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
 
+class UGMCAbilityMapData;
 class UGMCAttributesData;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPreAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
                                              SourceAbilityComponent);
@@ -280,11 +281,17 @@ protected:
 		return BindingIndex;
 	}
 
-private:
-	
 	// Map of Ability Tags to Ability Classes
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(BlueprintReadWrite)
 	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> AbilityMap;
+
+private:
+
+	UPROPERTY(EditDefaultsOnly)
+	TObjectPtr<UGMCAbilityMapData> StartingAbilityMap;
+
+	// Get the map from the data asset and apply that to the component's map
+	void InitializeAbilityMap();
 
 	// Add the starting ability tags to GrantedAbilities at start
 	void InitializeStartingAbilities();
