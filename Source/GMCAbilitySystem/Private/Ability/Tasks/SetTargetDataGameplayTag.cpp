@@ -1,14 +1,14 @@
 ﻿#include "..\..\..\Public\Ability\Tasks\SetTargetDataGameplayTag.h"
 #include "GMCAbilityComponent.h"
 
-UGMCAbilityTask_SetTargetDataTag* UGMCAbilityTask_SetTargetDataTag::SetTargetDataTag(UGMCAbility* OwningAbility, FGameplayTag InTag){
-	UGMCAbilityTask_SetTargetDataTag* Task = NewAbilityTask<UGMCAbilityTask_SetTargetDataTag>(OwningAbility);
+UGMCAbilityTask_SetTargetDataGameplayTag* UGMCAbilityTask_SetTargetDataGameplayTag::SetTargetDataGameplayTag(UGMCAbility* OwningAbility, FGameplayTag InTag){
+	UGMCAbilityTask_SetTargetDataGameplayTag* Task = NewAbilityTask<UGMCAbilityTask_SetTargetDataGameplayTag>(OwningAbility);
 	Task->Ability = OwningAbility;
 	Task->Target = InTag;
 	return Task;
 }
 
-void UGMCAbilityTask_SetTargetDataTag::Activate(){
+void UGMCAbilityTask_SetTargetDataGameplayTag::Activate(){
 	Super::Activate();
 
 	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
@@ -17,18 +17,18 @@ void UGMCAbilityTask_SetTargetDataTag::Activate(){
 	}
 }
 
-void UGMCAbilityTask_SetTargetDataTag::ProgressTask(FInstancedStruct& TaskData){
+void UGMCAbilityTask_SetTargetDataGameplayTag::ProgressTask(FInstancedStruct& TaskData){
 	Super::ProgressTask(TaskData);
-	const FGMCAbilityTaskTargetDataTag Data = TaskData.Get<FGMCAbilityTaskTargetDataTag>();
+	const FGMCAbilityTaskTargetDataGameplayTag Data = TaskData.Get<FGMCAbilityTaskTargetDataGameplayTag>();
 	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }
 
-void UGMCAbilityTask_SetTargetDataTag::ClientProgressTask(){
+void UGMCAbilityTask_SetTargetDataGameplayTag::ClientProgressTask(){
 	Super::ClientProgressTask();
 
-	FGMCAbilityTaskTargetDataTag TaskData;
+	FGMCAbilityTaskTargetDataGameplayTag TaskData;
 	TaskData.TaskType = EGMCAbilityTaskDataType::Progress;
 	TaskData.AbilityID = Ability->GetAbilityID();
 	TaskData.TaskID = TaskID;

@@ -9,11 +9,11 @@
 #include "LatentActions.h"
 #include "SetTargetDataGameplayTag.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FUGMCAbilityTaskTargetDataTagAsyncActionPin, FGameplayTag, Target);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FUGMCAbilityTaskTargetDataGameplayTagAsyncActionPin, FGameplayTag, Target);
 
 
 USTRUCT(BlueprintType)
-struct FGMCAbilityTaskTargetDataTag : public FGMCAbilityTaskData
+struct FGMCAbilityTaskTargetDataGameplayTag : public FGMCAbilityTaskData
 {
 	GENERATED_BODY()
 	
@@ -25,13 +25,13 @@ struct FGMCAbilityTaskTargetDataTag : public FGMCAbilityTaskData
  * 
  */
 UCLASS()
-class GMCABILITYSYSTEM_API UGMCAbilityTask_SetTargetDataTag : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_SetTargetDataGameplayTag : public UGMCAbilityTaskBase
 {
 	GENERATED_BODY()
 
 public:
 	UPROPERTY(BlueprintAssignable)
-	FUGMCAbilityTaskTargetDataTagAsyncActionPin	Completed;
+	FUGMCAbilityTaskTargetDataGameplayTagAsyncActionPin	Completed;
 	
 	UPROPERTY(BlueprintReadWrite)
 	FGameplayTag Target;
@@ -40,7 +40,7 @@ public:
 	virtual void ClientProgressTask() override;
  
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Set Target Data (Gameplay Tag)",Category = "GMCAbilitySystem/Tasks")
-	static UGMCAbilityTask_SetTargetDataTag* SetTargetDataTag(UGMCAbility* OwningAbility, FGameplayTag InTag);
+	static UGMCAbilityTask_SetTargetDataGameplayTag* SetTargetDataGameplayTag(UGMCAbility* OwningAbility, FGameplayTag InTag);
  
 	//Overriding BP async action base
 	virtual void Activate() override;
