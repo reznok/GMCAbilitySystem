@@ -36,6 +36,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 	{
 		CanvasContext.Printf(TEXT("{yellow}Actor name: {white}%s"), *DataPack.ActorName);
 		const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>();
+		if (AbilityComponent == nullptr) return;
 
 		// Abilities
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Granted Abilities: {white}%s"), *DataPack.GrantedAbilities);
