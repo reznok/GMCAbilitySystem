@@ -317,7 +317,11 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		// If the contained ability is in the Ended state, delete it
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
-			RPCClientEndAbility(It.Value()->GetAbilityID());
+			if (HasAuthority() && !GMCMovementComponent->IsLocallyControlledServerPawn())
+			{
+				// Fail safe to tell client server has ended the ability
+				RPCClientEndAbility(It.Value()->GetAbilityID());
+			};
 			It.RemoveCurrent();
 		}
 	}
