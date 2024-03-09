@@ -298,8 +298,10 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
-			NewAttribute.Value = AttributeData.DefaultValue;
+			NewAttribute.BaseValue = AttributeData.DefaultValue;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
+			NewAttribute.CalculateValue();
+			
 			if(AttributeData.bGMCBound){
 				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
@@ -620,6 +622,7 @@ const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag At
 	const FAttribute** FoundAttribute = AllAttributes.FindByPredicate([AttributeTag](const FAttribute* Attribute){
 		return Attribute->Tag.MatchesTagExact(AttributeTag);
 	});
+	
 	if(FoundAttribute && *FoundAttribute){
 		return *FoundAttribute;
 	}
@@ -714,12 +717,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		
 		if (bNegateValue)
 		{
-			AffectedAttribute->Value += -AttributeModifier.Value;
+			AttributeModifier.Value = -AttributeModifier.Value;
 		}
-		else
-		{
-			AffectedAttribute->Value += AttributeModifier.Value;
-		}
+		AffectedAttribute->ApplyModifier(AttributeModifier);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 	}
