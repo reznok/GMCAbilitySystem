@@ -56,7 +56,7 @@ public:
 	// Called by AbilityComponent
 	virtual void Tick(float DeltaTime);
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
 	void TickEvent(float DeltaTime);
 	
 	UFUNCTION()
