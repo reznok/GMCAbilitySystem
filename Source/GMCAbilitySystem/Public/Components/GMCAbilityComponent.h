@@ -187,7 +187,7 @@ public:
 	
 	/** Get the default value of an attribute from the data assets. */
 	UFUNCTION(BlueprintCallable)
-	float GetDefaultAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
+	float GetBaseAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable)
