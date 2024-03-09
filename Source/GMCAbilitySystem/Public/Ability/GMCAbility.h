@@ -62,7 +62,7 @@ public:
 	UFUNCTION()
 	virtual void BeginAbility();
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
