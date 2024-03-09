@@ -94,10 +94,26 @@ public:
 	UPROPERTY(EditAnywhere)
 	float CooldownTime;
 
+	// If true, the ability will apply the Cooldown when activated
+	// If false, the ability will NOT apply the Cooldown when the ability begins
+	// You can still apply the cooldown manually with CommitAbilityCooldown or CommitAbilityCostAndCooldown
+	UPROPERTY(EditAnywhere)
+	bool bApplyCooldownAtAbilityBegin{true};
+
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
 	UFUNCTION(BlueprintPure)
 	virtual bool CanAffordAbilityCost() const;
 
+	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
+	// Warning : Will apply CooldownTime regardless of already being on cooldown
+	UFUNCTION(BlueprintCallable)
+	virtual void CommitAbilityCostAndCooldown();
+	
+	// (Re-)Apply the CooldownTime of this ability
+	// Warning : Will apply CooldownTime regardless of already being on cooldown
+	UFUNCTION(BlueprintCallable)
+	virtual void CommitAbilityCooldown();
+	
 	// Apply the effects in AbilityCost
 	UFUNCTION(BlueprintCallable)
 	virtual void CommitAbilityCost();
