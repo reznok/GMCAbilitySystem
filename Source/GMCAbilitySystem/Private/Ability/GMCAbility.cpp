@@ -67,6 +67,18 @@ bool UGMCAbility::CanAffordAbilityCost() const
 	return true;
 }
 
+void UGMCAbility::CommitAbilityCostAndCooldown()
+{
+	CommitAbilityCost();
+	CommitAbilityCooldown();
+}
+
+void UGMCAbility::CommitAbilityCooldown()
+{
+	if (CooldownTime <= 0.f || OwnerAbilityComponent == nullptr) return;
+	OwnerAbilityComponent->SetCooldownForAbility(AbilityTag, CooldownTime);
+}
+
 void UGMCAbility::CommitAbilityCost()
 {
 	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return;

@@ -98,6 +98,16 @@ public:
 	UFUNCTION(BlueprintPure)
 	virtual bool CanAffordAbilityCost() const;
 
+	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
+	// Warning : Will apply CooldownTime regardless of already being on cooldown
+	UFUNCTION(BlueprintCallable)
+	virtual void CommitAbilityCostAndCooldown();
+	
+	// (Re-)Apply the CooldownTime of this ability
+	// Warning : Will apply CooldownTime regardless of already being on cooldown
+	UFUNCTION(BlueprintCallable)
+	virtual void CommitAbilityCooldown();
+	
 	// Apply the effects in AbilityCost
 	UFUNCTION(BlueprintCallable)
 	virtual void CommitAbilityCost();
