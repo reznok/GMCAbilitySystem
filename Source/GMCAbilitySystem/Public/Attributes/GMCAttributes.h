@@ -1,28 +1,70 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
+#include "Effects/GMCAbilityEffect.h"
 #include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FAttribute
 {
 	GENERATED_BODY()
-	
-	FAttribute()
+	FAttribute(){};
+
+	void Init() const
 	{
-		Value = 0;
+		CalculateValue();
 	}
 
-	FAttribute(float Value)
+	// Starting Value of the attribute. Modifiers use this for calculations.
+	mutable float AdditiveModifier{0};
+	mutable float MultiplyModifier{1};
+	mutable float DivisionModifier{1};
+
+	void ApplyModifier(const FGMCAttributeModifier& Modifier) const
 	{
-		this->Value = Value;
+		switch(Modifier.ModifierType)
+		{
+		case EModifierType::Add:
+			AdditiveModifier += Modifier.Value;
+			break;
+		case EModifierType::Multiply:
+			MultiplyModifier += Modifier.Value;
+			break;
+		case EModifierType::Divide:
+			DivisionModifier += Modifier.Value;
+			break;
+		default:
+			break;
+		}
+		
+		CalculateValue();
+	}
+
+	void CalculateValue() const
+	{
+		// Prevent divide by 0 and negative divisors
+		float LocalDivisionModifier = DivisionModifier;
+		if (LocalDivisionModifier <= 0){
+			LocalDivisionModifier = 1;
+		}
+
+		// Prevent negative multipliers
+		float LocalMultiplyModifier = MultiplyModifier;
+		if (LocalMultiplyModifier < 0){
+			LocalMultiplyModifier = 0;
+		}
+		
+		Value = (AdditiveModifier + (BaseValue * LocalMultiplyModifier)) / LocalDivisionModifier;
 	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
-	mutable float Value;
+	mutable float Value{0};
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	mutable float BaseValue{0};
 
 	// Attribute.* 
 	UPROPERTY(EditDefaultsOnly, Category="Attribute", meta = (Categories="Attribute"))
-	FGameplayTag Tag;
+	FGameplayTag Tag{FGameplayTag::EmptyTag};
 
 	// Whether this should be bound over GMC or not.
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
