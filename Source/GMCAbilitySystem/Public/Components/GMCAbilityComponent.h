@@ -7,10 +7,12 @@
 #include "Attributes/GMCAttributes.h"
 #include "GMCMovementUtilityComponent.h"
 #include "Ability/GMCAbilityData.h"
+#include "Ability/GMCAbilityMapData.h"
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityComponent.generated.h"
+
 
 class UGMCAbilityMapData;
 class UGMCAttributesData;
@@ -59,6 +61,12 @@ public:
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
 
+	UFUNCTION(BlueprintCallable)
+	void AddAbilityMapData(UGMCAbilityMapData* AbilityMapData);
+
+	UFUNCTION(BlueprintCallable)
+	void RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData);
+		
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
 	void GrantAbilityByTag(FGameplayTag AbilityTag);
@@ -85,12 +93,15 @@ public:
 	UFUNCTION(BlueprintCallable)
 	TArray<FGameplayTag> GetActiveTagsByParentTag(FGameplayTag ParentTag);
 
-	// Do not call directly, go through QueueAbility
-	bool TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
+	// Do not call directly on client, go through QueueAbility
+	void TryActivateAbilitiesByInputTag(FGameplayTag InputTag, UInputAction* InputAction = nullptr);
+	
+	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
+	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, UInputAction* InputAction = nullptr);
 	
 	// Queue an ability to be executed
 	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability"))
-	void QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction = nullptr);
+	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, UInputAction* InputAction = nullptr);
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
@@ -255,8 +266,8 @@ protected:
 	UPROPERTY(EditAnywhere)
 	TArray<TSubclassOf<UGMCAbilityEffect>> StartingEffects;
 	
-	// Returns a matching granted ability by class name if that ability is in the GrantedAbilities array
-	TSubclassOf<UGMCAbility> GetGrantedAbilityByTag(FGameplayTag AbilityTag);
+	// Returns the matching abilities in the AbilityMap if they have been granted
+	TArray<TSubclassOf<UGMCAbility>> GetGrantedAbilitiesByTag(FGameplayTag AbilityTag);
 	
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
@@ -281,17 +292,20 @@ protected:
 		return BindingIndex;
 	}
 
-	// Map of Ability Tags to Ability Classes
-	UPROPERTY(BlueprintReadWrite)
-	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> AbilityMap;
 
 private:
 
+	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly)
-	TObjectPtr<UGMCAbilityMapData> StartingAbilityMap;
-
+	TArray<TObjectPtr<UGMCAbilityMapData>> AbilityMaps;
+	
+	// Map of Ability Tags to Ability Classes
+	TMap<FGameplayTag, FAbilityMapData> AbilityMap;
+	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();
+	void AddAbilityMapData(const FAbilityMapData& AbilityMapData);
+	void RemoveAbilityMapData(const FAbilityMapData& AbilityMapData);
 
 	// Add the starting ability tags to GrantedAbilities at start
 	void InitializeStartingAbilities();

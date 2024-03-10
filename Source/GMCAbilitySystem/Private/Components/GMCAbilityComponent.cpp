@@ -64,7 +64,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	GMCMovementComponent->BindGameplayTag(AbilityData.AbilityTag,
+	GMCMovementComponent->BindGameplayTag(AbilityData.InputTag,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
@@ -87,6 +87,22 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
+}
+
+void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
+{
+	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	{
+		AddAbilityMapData(Data);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData)
+{
+	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	{
+		RemoveAbilityMapData(Data);
+	}
 }
 
 void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
@@ -139,38 +155,44 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGame
 	return MatchedTags;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag InputTag, UInputAction* InputAction)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
-	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(AbilityTag))
+	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
-		// Generated ID is based on ActionTimer so it always lines up on client/server
-		// Also helps when dealing with replays
-		const int AbilityID = GenerateAbilityID();
-
-		// Replays may try to create duplicate abilities
-		if (ActiveAbilities.Contains(AbilityID)) return false;
-		
-		//UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
-		
-		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
-		
-		Ability->Execute(this, AbilityID, InputAction);
-		ActiveAbilities.Add(AbilityID, Ability);
-		
-		if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}		
-		return true;
+		TryActivateAbility(ActivatedAbility, InputAction);
 	}
-
-	return false;
 }
 
-void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, UInputAction* InputAction)
+{
+	// Generated ID is based on ActionTimer so it always lines up on client/server
+	// Also helps when dealing with replays
+	int AbilityID = GenerateAbilityID();
+
+	// If multiple abilities are activated on the same frame, add 1 to the ID
+	while (ActiveAbilities.Contains(AbilityID)){
+		AbilityID += 1;
+	}
+	
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Ability Activation ID: %d"), HasAuthority(), AbilityID);
+	
+	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
+	
+	Ability->Execute(this, AbilityID, InputAction);
+	ActiveAbilities.Add(AbilityID, Ability);
+	
+	if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}
+	
+	return true;
+}
+
+void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, UInputAction* InputAction)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
 	
 	FGMCAbilityData Data;
-	Data.AbilityTag = AbilityTag;
+	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
 	QueuedAbilities.Push(Data);
 }
@@ -236,9 +258,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	CleanupStaleAbilities();
 
 	// Was an ability used?
-	if (AbilityData.AbilityTag != FGameplayTag::EmptyTag)
+	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbility(AbilityData.AbilityTag, AbilityData.ActionInput);
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput);
 	}
 
 	// Ability Task Data
@@ -451,30 +473,66 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 	if (ActiveAbilities.Contains(AbilityID))
 	{
 		ActiveAbilities[AbilityID]->ServerConfirm();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Ability Activation: %d"), AbilityID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Long-Running Ability Activation: %d"), AbilityID);
 	}
 }
 
-TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
+TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitiesByTag(FGameplayTag AbilityTag)
 {
 	if (!GrantedAbilityTags.HasTag(AbilityTag))
 	{
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Granted: %s"), *AbilityTag.ToString());
-		return nullptr;
+		return {};
 	}
 
 	if (!AbilityMap.Contains(AbilityTag))
 	{
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s | Check The Component's AbilityMap"), *AbilityTag.ToString());
-		return nullptr;
+		return {};
 	}
 
-	return AbilityMap[AbilityTag];
+	return AbilityMap[AbilityTag].Abilities;
 }
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
-	if(!StartingAbilityMap) return;
-	AbilityMap.Append(StartingAbilityMap.Get()->GetAbilityMap());
+	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
+	{
+		for (const FAbilityMapData Data : StartingAbilityMap->GetAbilityMapData())
+		{
+			AddAbilityMapData(Data);
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::AddAbilityMapData(const FAbilityMapData& AbilityMapData)
+{
+	if (AbilityMap.Contains(AbilityMapData.InputTag))
+	{
+		AbilityMap[AbilityMapData.InputTag] = AbilityMapData;
+	}
+	else
+	{
+		AbilityMap.Add(AbilityMapData.InputTag, AbilityMapData);
+	}
+	
+	if (AbilityMapData.bGrantedByDefault)
+	{
+		GrantedAbilityTags.AddTag(AbilityMapData.InputTag);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RemoveAbilityMapData(const FAbilityMapData& AbilityMapData)
+{
+	if (AbilityMap.Contains(AbilityMapData.InputTag))
+	{
+		AbilityMap.Remove(AbilityMapData.InputTag);
+	}
+	{
+		if (GrantedAbilityTags.HasTag(AbilityMapData.InputTag))
+		{
+			GrantedAbilityTags.RemoveTag(AbilityMapData.InputTag);
+		}
+	}
 }
 
 void UGMC_AbilitySystemComponent::InitializeStartingAbilities()

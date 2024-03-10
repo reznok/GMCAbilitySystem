@@ -21,14 +21,14 @@ struct FGMCAbilityData
 	
 	// Ability ID to cast
 	UPROPERTY()
-	FGameplayTag AbilityTag = FGameplayTag::EmptyTag;
+	FGameplayTag InputTag = FGameplayTag::EmptyTag;
 
 	// The input used to start the ability on the client
 	// Needed for things like "WaitForKeyRelease"
 	UPROPERTY()
 	UInputAction* ActionInput;
 
-	bool operator==(const FGMCAbilityData& Other) const { return AbilityActivationID == Other.AbilityActivationID && AbilityTag == Other.AbilityTag;}
+	bool operator==(const FGMCAbilityData& Other) const { return AbilityActivationID == Other.AbilityActivationID && InputTag == Other.InputTag;}
 	bool operator!=(const FGMCAbilityData& Other) const { return *this == Other;}
 
 };
