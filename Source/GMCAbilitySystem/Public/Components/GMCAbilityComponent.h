@@ -193,8 +193,9 @@ public:
 
 	// Set Attribute value by Tag
 	// Will NOT trigger an "OnAttributeChanged" Event
+	// bResetModifiers: Will reset all modifiers on the attribute to the base value. DO NOT USE if you have any active effects that modify this attribute.
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
-	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue);
+	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue, bool bResetModifiers = false);
 	
 	/** Get the default value of an attribute from the data assets. */
 	UFUNCTION(BlueprintCallable)

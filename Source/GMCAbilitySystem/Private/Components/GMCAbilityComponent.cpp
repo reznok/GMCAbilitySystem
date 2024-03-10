@@ -257,6 +257,8 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	// Abilities
 	CleanupStaleAbilities();
 
+	
+	
 	// Was an ability used?
 	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
@@ -267,10 +269,10 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
-			if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
-			{
-				ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
-			}
+		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
+		{
+			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
 	}
 	
 	AbilityData = FGMCAbilityData{};
@@ -696,11 +698,17 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0;
 }
 
-bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue)
+bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue, bool bResetModifiers)
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
 		Att->Value = NewValue;
+
+		if (bResetModifiers)
+		{
+			Att->ResetModifiers();
+		}
+		
 		return true;
 	}
 	return false;

@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "GMCAbilityTaskBase.h"
-#include "WorldTime.h"
 #include "WaitDelay.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGMCAbilityTaskWaitDelayOutputPin);

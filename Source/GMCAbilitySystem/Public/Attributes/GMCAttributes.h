@@ -55,6 +55,14 @@ struct GMCABILITYSYSTEM_API FAttribute
 		
 		Value = (AdditiveModifier + (BaseValue * LocalMultiplyModifier)) / LocalDivisionModifier;
 	}
+
+	// Reset the modifiers to the base value. May cause jank if there's effects going on.
+	void ResetModifiers() const
+	{
+		AdditiveModifier = 0;
+		MultiplyModifier = 1;
+		DivisionModifier = 1;
+	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	mutable float Value{0};
