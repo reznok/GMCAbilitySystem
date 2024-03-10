@@ -15,8 +15,13 @@ struct GMCABILITYSYSTEM_API FAttribute
 	}
 
 	// Starting Value of the attribute. Modifiers use this for calculations.
+	UPROPERTY()
 	mutable float AdditiveModifier{0};
+
+	UPROPERTY()
 	mutable float MultiplyModifier{1};
+
+	UPROPERTY()
 	mutable float DivisionModifier{1};
 
 	void ApplyModifier(const FGMCAttributeModifier& Modifier) const
