@@ -220,11 +220,10 @@ void UGMCAbility::BeginAbility()
 
 void UGMCAbility::EndAbility()
 {
-	// RunningTasks.Empty();
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
 		if (Task.Value == nullptr) continue;
-		Task.Value->EndTask();
+		Task.Value->EndTaskGMAS();
 	}
 	
 	AbilityState = EAbilityState::Ended;

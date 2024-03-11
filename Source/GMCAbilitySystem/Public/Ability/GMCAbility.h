@@ -37,6 +37,10 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	EAbilityState AbilityState;
 
+	// Data used to execute this ability
+	UPROPERTY(BlueprintReadOnly)
+	FGMCAbilityData AbilityData;
+
 	// Assign a new, incrementing, Task ID
 	UFUNCTION()
 	int GetNextTaskID(){TaskIDCounter += 1;

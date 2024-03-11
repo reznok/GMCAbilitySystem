@@ -171,6 +171,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	int AbilityID = GenerateAbilityID();
 
 	// If multiple abilities are activated on the same frame, add 1 to the ID
+	// This should never actually happen as abilities get queued
 	while (ActiveAbilities.Contains(AbilityID)){
 		AbilityID += 1;
 	}
@@ -178,6 +179,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Ability Activation ID: %d"), HasAuthority(), AbilityID);
 	
 	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
+	Ability->AbilityData = AbilityData;
 	
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
