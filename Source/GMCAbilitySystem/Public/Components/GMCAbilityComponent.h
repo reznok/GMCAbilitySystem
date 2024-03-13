@@ -46,7 +46,7 @@ class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksCo
 
 public:
 	// Sets default values for this component's properties
-	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer);
+	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly)
@@ -94,14 +94,14 @@ public:
 	TArray<FGameplayTag> GetActiveTagsByParentTag(FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	void TryActivateAbilitiesByInputTag(FGameplayTag InputTag, UInputAction* InputAction = nullptr);
+	void TryActivateAbilitiesByInputTag(FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
-	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, UInputAction* InputAction = nullptr);
+	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr);
 	
 	// Queue an ability to be executed
 	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability"))
-	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, UInputAction* InputAction = nullptr);
+	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
