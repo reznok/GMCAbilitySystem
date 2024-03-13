@@ -22,6 +22,45 @@ UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitialize
 	SetIsReplicatedByDefault(true);
 }
 
+FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
+	const FGameplayTagFilteredMulticastDelegate::FDelegate& Delegate)
+{
+	TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>* MatchedPair = nullptr;
+
+	for (auto& SearchPair : FilteredTagDelegates)
+	{
+		if (SearchPair.Key == Tags)
+		{
+			MatchedPair = &SearchPair;
+		}
+	}
+
+	if (!MatchedPair)
+	{
+		MatchedPair = new(FilteredTagDelegates) TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>(Tags, FGameplayTagFilteredMulticastDelegate());
+	}
+
+	return MatchedPair->Value.Add(Delegate);
+}
+
+void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
+	FDelegateHandle Handle)
+{
+	for (int32 Index = 0; Index < FilteredTagDelegates.Num(); Index++)
+	{
+		TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>& SearchPair = FilteredTagDelegates[Index];
+		if (SearchPair.Key == Tags)
+		{
+			SearchPair.Value.Remove(Handle);
+			if (!SearchPair.Value.IsBound())
+			{
+				FilteredTagDelegates.RemoveAt(Index);
+			}
+			break;
+		}
+	}
+}
+
 void UGMC_AbilitySystemComponent::BindReplicationData()
 {
 	// Attribute Binds
@@ -87,6 +126,55 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
+
+
+	// Only bother checking changes in tags if we actually have delegates which care.
+	if (OnActiveTagsChanged.IsBound() || !FilteredTagDelegates.IsEmpty())
+	{
+		if (GetActiveTags() != PreviousActiveTags)
+		{
+			FGameplayTagContainer AllTags = GetActiveTags();
+			AllTags.AppendTags(PreviousActiveTags);
+		
+			FGameplayTagContainer AddedTags;
+			FGameplayTagContainer RemovedTags;
+			for (const FGameplayTag& Tag : AllTags)
+			{
+				if (GetActiveTags().HasTagExact(Tag) && !PreviousActiveTags.HasTagExact(Tag))
+				{
+					AddedTags.AddTagFast(Tag);
+				}
+				else if (!GetActiveTags().HasTagExact(Tag) && PreviousActiveTags.HasTagExact(Tag))
+				{
+					RemovedTags.AddTagFast(Tag);
+				}
+			}
+			
+			// Let any general 'active tag changed' delegates know about our changes.
+			OnActiveTagsChanged.Broadcast(AddedTags, RemovedTags);
+
+			// If we have filtered tag delegates, call them if appropriate.
+			if (!FilteredTagDelegates.IsEmpty())
+			{
+				for (const auto& FilteredBinding : FilteredTagDelegates)
+				{
+					FGameplayTagContainer AddedMatches = AddedTags.Filter(FilteredBinding.Key);
+					FGameplayTagContainer RemovedMatches = RemovedTags.Filter(FilteredBinding.Key);
+
+					if (!AddedMatches.IsEmpty() || !RemovedMatches.IsEmpty())
+					{
+						FilteredBinding.Value.Broadcast(AddedMatches, RemovedMatches);
+					}
+					
+				}
+			}
+		
+			PreviousActiveTags = GetActiveTags();
+		}
+		
+	}
+	
+
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)

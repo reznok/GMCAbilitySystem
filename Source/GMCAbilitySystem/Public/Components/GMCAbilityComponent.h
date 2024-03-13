@@ -22,6 +22,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAttributeChanged, FGameplayTag
 				
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, FGameplayTagContainer, FGameplayTagContainer);
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -181,6 +183,12 @@ public:
 	FOnAncillaryTick OnAncillaryTick;
 	////
 
+	// Called when the set of active tags changes.
+	UPROPERTY(BlueprintAssignable)
+	FOnActiveTagsChanged OnActiveTagsChanged;
+
+	FGameplayTagContainer PreviousActiveTags;
+
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;
 
@@ -216,6 +224,22 @@ public:
 
 	UFUNCTION(Server, Reliable)
 	void RPCTaskHeartbeat(int AbilityID, int TaskID);
+
+	/**
+	 * Adds a filtered delegate to be called if any tag matching the filter is added or removed. Tag matching is not
+	 * exact, so parent tags can be provided.
+	 * @param Tags A list of tags we care about.
+	 * @param Delegate A delegate to call if a tag matching the filter is added or removed.
+	 * @return A delegate handle, suitable for passing to RemoveFilteredTagChangeDelegate.
+	 */
+	FDelegateHandle AddFilteredTagChangeDelegate(const FGameplayTagContainer& Tags, const FGameplayTagFilteredMulticastDelegate::FDelegate& Delegate);
+
+	/**
+	 * Removes a previously-added filtered delegate on tag changes.
+	 * @param Tags A list of tags the delegate was bound to
+	 * @param Handle The handle of the delegate to unbind
+	 */
+	void RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags, FDelegateHandle Handle);
 
 #pragma region GMC
 	// GMC
@@ -302,6 +326,9 @@ private:
 	
 	// Map of Ability Tags to Ability Classes
 	TMap<FGameplayTag, FAbilityMapData> AbilityMap;
+
+	// List of filtered tag delegates to call when tags change.
+	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
 	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();
