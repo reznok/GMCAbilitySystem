@@ -197,7 +197,7 @@ public:
 	
 	void UpdateState(EEffectState State, bool Force=false);
 
-	bool IsPeriodPaused();
+	virtual bool IsPeriodPaused();
 	
 	bool bCompleted;
 
@@ -212,7 +212,6 @@ protected:
 	UPROPERTY(BlueprintReadOnly)
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
-private:
 	bool bHasStarted;
 
 	// Used for calculating when to tick Period effects
