@@ -26,7 +26,7 @@ struct FGMCAbilityData
 	// The input used to start the ability on the client
 	// Needed for things like "WaitForKeyRelease"
 	UPROPERTY(BlueprintReadOnly)
-	UInputAction* ActionInput;
+	TObjectPtr<const UInputAction> ActionInput;
 
 	bool operator==(const FGMCAbilityData& Other) const { return AbilityActivationID == Other.AbilityActivationID && InputTag == Other.InputTag;}
 	bool operator!=(const FGMCAbilityData& Other) const { return *this == Other;}

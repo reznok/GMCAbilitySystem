@@ -55,7 +55,7 @@ public:
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
 	
-	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction = nullptr);
+	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
 	
 	// Called by AbilityComponent
 	virtual void Tick(float DeltaTime);
@@ -135,7 +135,7 @@ public:
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
 	UPROPERTY(BlueprintReadOnly)
-	UInputAction* AbilityInputAction;
+	TObjectPtr<const UInputAction> AbilityInputAction;
 
 	// Pass data into the Task
 	void HandleTaskData(int TaskID, FInstancedStruct TaskData);
