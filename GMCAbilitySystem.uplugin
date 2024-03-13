@@ -33,6 +33,10 @@
 		{
 			"Name": "GMC",
 			"Enabled": true
+		},
+		{
+			"Name": "StructUtils",
+			"Enabled": true
 		}
 	]
 }
