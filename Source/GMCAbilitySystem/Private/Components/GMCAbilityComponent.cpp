@@ -91,7 +91,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
-	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
 	{
 		AddAbilityMapData(Data);
 	}
@@ -99,7 +99,7 @@ void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityM
 
 void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
-	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
 	{
 		RemoveAbilityMapData(Data);
 	}
@@ -501,7 +501,7 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
 	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
 	{
-		for (const FAbilityMapData Data : StartingAbilityMap->GetAbilityMapData())
+		for (const FAbilityMapData& Data : StartingAbilityMap->GetAbilityMapData())
 		{
 			AddAbilityMapData(Data);
 		}
