@@ -39,7 +39,7 @@ void UGMCAbility::TickTasks(float DeltaTime)
 	}
 }
 
-void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction)
+void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction)
 {
 	this->AbilityInputAction = InputAction;
 	this->AbilityID = InAbilityID;

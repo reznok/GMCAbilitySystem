@@ -23,15 +23,16 @@
 		{
 			"Name": "GMCAbilitySystemTypesInclude",
 			"Type": "Runtime",
-			"LoadingPhase": "Default",
-			"WhitelistPlatforms": [
-				"Win64"
-			]
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
 		{
 			"Name": "GMC",
+			"Enabled": true
+		},
+		{
+			"Name": "StructUtils",
 			"Enabled": true
 		}
 	]

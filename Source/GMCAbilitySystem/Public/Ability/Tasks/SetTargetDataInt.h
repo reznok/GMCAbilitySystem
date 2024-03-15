@@ -18,7 +18,7 @@ struct FGMCAbilityTaskTargetDataInt : public FGMCAbilityTaskData
 };
 
 UCLASS()
-class UGMCAbilityTask_SetTargetDataInt : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_SetTargetDataInt : public UGMCAbilityTaskBase
 {
 	GENERATED_BODY()
 	

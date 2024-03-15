@@ -91,7 +91,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
-	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
 	{
 		AddAbilityMapData(Data);
 	}
@@ -99,7 +99,7 @@ void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityM
 
 void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
-	for (const FAbilityMapData Data : AbilityMapData->GetAbilityMapData())
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
 	{
 		RemoveAbilityMapData(Data);
 	}
@@ -155,7 +155,7 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGame
 	return MatchedTags;
 }
 
-void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag InputTag, UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag InputTag, const UInputAction* InputAction)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
 	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
@@ -164,7 +164,7 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	}
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, UInputAction* InputAction)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
 {
 	// Generated ID is based on ActionTimer so it always lines up on client/server
 	// Also helps when dealing with replays
@@ -189,7 +189,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	return true;
 }
 
-void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
 	
@@ -501,7 +501,7 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
 	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
 	{
-		for (const FAbilityMapData Data : StartingAbilityMap->GetAbilityMapData())
+		for (const FAbilityMapData& Data : StartingAbilityMap->GetAbilityMapData())
 		{
 			AddAbilityMapData(Data);
 		}
