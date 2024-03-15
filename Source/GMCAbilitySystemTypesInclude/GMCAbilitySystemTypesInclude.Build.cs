@@ -17,7 +17,6 @@ public class GMCAbilitySystemTypesInclude : ModuleRules
 			);
 		
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
-		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/SyncTypes"));
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Include"));
 		
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));

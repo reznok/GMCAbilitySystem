@@ -5,6 +5,8 @@
 
 #include "Components/GMCAbilityComponent.h"
 
+#if WITH_GAMEPLAY_DEBUGGER
+
 FGameplayDebuggerCategory_GMCAbilitySystem::FGameplayDebuggerCategory_GMCAbilitySystem()
 {
 	SetDataPackReplication<FRepData>(&DataPack);
@@ -104,3 +106,5 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::FRepData::Serialize(FArchive& A
 	Ar << ActiveEffectData;
 	Ar << ActiveAbilities;
 }
+
+#endif

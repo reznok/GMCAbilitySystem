@@ -4,7 +4,7 @@
 
 #if WITH_GAMEPLAY_DEBUGGER
 	#include "GameplayDebugger.h"
-	#include "Debug\GameplayDebuggerCategory_GMCAbilitySystem.h"
+	#include "Debug/GameplayDebuggerCategory_GMCAbilitySystem.h"
 #endif // WITH_GAMEPLAY_DEBUGGER
 
 #include "CoreMinimal.h"
@@ -13,7 +13,7 @@
 DECLARE_LOG_CATEGORY_EXTERN(LogGMCAbilitySystem, Log, All);
 
 
-GMCABILITYSYSTEM_API class FGMCAbilitySystemModule : public IModuleInterface
+ class GMCABILITYSYSTEM_API FGMCAbilitySystemModule : public IModuleInterface
 {
 public:
 
