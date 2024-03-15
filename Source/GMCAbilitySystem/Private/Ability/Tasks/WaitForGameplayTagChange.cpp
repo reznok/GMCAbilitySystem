@@ -4,7 +4,7 @@
 #include "Ability/Tasks/WaitForGameplayTagChange.h"
 
 UGMCAbilityTask_WaitForGameplayTagChange* UGMCAbilityTask_WaitForGameplayTagChange::WaitForGameplayTagChange(
-	UGMCAbility* OwningAbility, FGameplayTagContainer WatchedTags, EGMCWaitForGameplayTagChangeType ChangeType)
+	UGMCAbility* OwningAbility, const FGameplayTagContainer& WatchedTags, EGMCWaitForGameplayTagChangeType ChangeType)
 {
 	UGMCAbilityTask_WaitForGameplayTagChange* Task = NewAbilityTask<UGMCAbilityTask_WaitForGameplayTagChange>(OwningAbility);
 	Task->Tags = WatchedTags;
@@ -19,8 +19,8 @@ void UGMCAbilityTask_WaitForGameplayTagChange::Activate()
 	Ability->OwnerAbilityComponent->AddFilteredTagChangeDelegate(Tags, FGameplayTagFilteredMulticastDelegate::FDelegate::CreateUObject(this, &UGMCAbilityTask_WaitForGameplayTagChange::OnGameplayTagChanged));
 }
 
-void UGMCAbilityTask_WaitForGameplayTagChange::OnGameplayTagChanged(FGameplayTagContainer AddedTags,
-	FGameplayTagContainer RemovedTags)
+void UGMCAbilityTask_WaitForGameplayTagChange::OnGameplayTagChanged(const FGameplayTagContainer& AddedTags,
+	const FGameplayTagContainer& RemovedTags)
 {
 	FGameplayTagContainer MatchedTags;
 	
