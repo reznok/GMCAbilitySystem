@@ -46,7 +46,7 @@ FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const 
 void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
 	FDelegateHandle Handle)
 {
-	for (int32 Index = 0; Index < FilteredTagDelegates.Num(); Index++)
+	for (int32 Index = FilteredTagDelegates.Num() - 1; Index >= 0; --Index)
 	{
 		TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>& SearchPair = FilteredTagDelegates[Index];
 		if (SearchPair.Key == Tags)
