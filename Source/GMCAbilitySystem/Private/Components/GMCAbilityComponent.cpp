@@ -195,7 +195,7 @@ void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* Abili
 
 void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
 {
-	if (!GrantedAbilityTags.HasTag(AbilityTag))
+	if (!GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
 		GrantedAbilityTags.AddTag(AbilityTag);
 	}
@@ -203,7 +203,7 @@ void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
 
 void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
 {
-	if (GrantedAbilityTags.HasTag(AbilityTag))
+	if (GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
 		GrantedAbilityTags.RemoveTag(AbilityTag);
 	}
@@ -211,7 +211,7 @@ void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(FGameplayTag Ability
 
 bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(FGameplayTag GameplayTag) const
 {
-	return GrantedAbilityTags.HasTag(GameplayTag);
+	return GrantedAbilityTags.HasTagExact(GameplayTag);
 }
 
 void UGMC_AbilitySystemComponent::AddActiveTag(FGameplayTag AbilityTag)
@@ -221,7 +221,7 @@ void UGMC_AbilitySystemComponent::AddActiveTag(FGameplayTag AbilityTag)
 
 void UGMC_AbilitySystemComponent::RemoveActiveTag(FGameplayTag AbilityTag)
 {
-	if (ActiveTags.HasTag(AbilityTag))
+	if (ActiveTags.HasTagExact(AbilityTag))
 	{
 		ActiveTags.RemoveTag(AbilityTag);
 	}
@@ -229,7 +229,7 @@ void UGMC_AbilitySystemComponent::RemoveActiveTag(FGameplayTag AbilityTag)
 
 bool UGMC_AbilitySystemComponent::HasActiveTag(FGameplayTag GameplayTag) const
 {
-	return ActiveTags.HasTag(GameplayTag);
+	return ActiveTags.HasTagExact(GameplayTag);
 }
 
 TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGameplayTag ParentTag){
