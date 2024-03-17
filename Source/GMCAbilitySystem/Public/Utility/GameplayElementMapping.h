@@ -62,6 +62,7 @@ public:
 	void Initialize(UObject* Owner, UGMC_AbilitySystemComponent* AbilitySystemComponent);
 
 	void ApplyCurrentTags();
+	void ApplyCurrentAttributes();
 
 #if WITH_EDITOR
 	EDataValidationResult IsDataValid(const UObject* ContainingAsset, FDataValidationContext& Context) const;
@@ -70,13 +71,18 @@ public:
 
 protected:
 
+	bool SetValueForMappedProperty(FProperty* Property, float PropValue);
 	bool SetValueForMappedProperty(FProperty* Property, FGameplayTagContainer& MatchedTags);
 	
 	void Unregister();
 
 	void GameplayTagChangedCallback(const FGameplayTagContainer& AddedTags, const FGameplayTagContainer& RemovedTags);
 
+	void GameplayAttributeChangedCallback(const FGameplayTag& AttributeTag, const float OldValue, const float NewValue);
+
 	bool IsPropertyTypeValid(const FProperty* Property) const;
+
+	FDelegateHandle AttributeHandle;
 	
 	TWeakObjectPtr<UObject> CachedOwner;
 	TWeakObjectPtr<UGMC_AbilitySystemComponent> CachedAbilityComponent;

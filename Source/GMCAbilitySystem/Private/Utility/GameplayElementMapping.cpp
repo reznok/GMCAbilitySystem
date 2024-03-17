@@ -57,29 +57,21 @@ EDataValidationResult FGMCGameplayElementTagPropertyMap::IsDataValid(const UObje
 
 	return (Context.GetNumErrors() > 0 ? EDataValidationResult::Invalid : EDataValidationResult::Valid);
 }
+#endif
 
-bool FGMCGameplayElementTagPropertyMap::SetValueForMappedProperty(FProperty* Property, FGameplayTagContainer& MatchedTags)
+bool FGMCGameplayElementTagPropertyMap::SetValueForMappedProperty(FProperty* Property, float Value)
 {
 	UObject* Owner = CachedOwner.Get();
 
-	// We take the matched tags in case we someday want to change this to also support setting an array of matched tags
-	// on a property, or something similar.
-	const int32 Value = MatchedTags.Num();
-	
-	if (!Property || !Owner)
-	{
-		return false;
-	}
-
 	if (const FBoolProperty* BoolProperty = Cast<FBoolProperty>(Property))
 	{
-		BoolProperty->SetPropertyValue_InContainer(Owner, Value > 0);
+		BoolProperty->SetPropertyValue_InContainer(Owner, Value > 0.f);
 		return true;
 	}
 
 	if (const FIntProperty* IntProperty = Cast<FIntProperty>(Property))
 	{
-		IntProperty->SetPropertyValue_InContainer(Owner, Value);
+		IntProperty->SetPropertyValue_InContainer(Owner, FMath::RoundToInt(Value));
 		return true;
 	}
 
@@ -95,9 +87,13 @@ bool FGMCGameplayElementTagPropertyMap::SetValueForMappedProperty(FProperty* Pro
 		return true;
 	}
 
-	return false;
+	return false;	
 }
-#endif
+
+bool FGMCGameplayElementTagPropertyMap::SetValueForMappedProperty(FProperty* Property, FGameplayTagContainer& MatchedTags)
+{
+	return SetValueForMappedProperty(Property, MatchedTags.Num());
+}
 
 void FGMCGameplayElementTagPropertyMap::Initialize(UObject* Owner, UGMC_AbilitySystemComponent* AbilitySystemComponent)
 {
@@ -129,18 +125,21 @@ void FGMCGameplayElementTagPropertyMap::Initialize(UObject* Owner, UGMC_AbilityS
 	CachedOwner = Owner;
 	CachedAbilityComponent = AbilitySystemComponent;
 
-	FGameplayTagFilteredMulticastDelegate::FDelegate Delegate = FGameplayTagFilteredMulticastDelegate::FDelegate::CreateRaw(this, &FGMCGameplayElementTagPropertyMap::GameplayTagChangedCallback);
+	const FGameplayAttributeChangedNative::FDelegate AttrDelegate = FGameplayAttributeChangedNative::FDelegate::CreateRaw(this, &FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback);
+	AttributeHandle = AbilitySystemComponent->AddAttributeChangeDelegate(AttrDelegate);
 
+	const FGameplayTagFilteredMulticastDelegate::FDelegate TagDelegate = FGameplayTagFilteredMulticastDelegate::FDelegate::CreateRaw(this, &FGMCGameplayElementTagPropertyMap::GameplayTagChangedCallback);
+	
 	for (int Index = PropertyMappings.Num() - 1; Index >= 0; --Index)
 	{
 		auto& Mapping = PropertyMappings[Index];
 		if (Mapping.TagsToMap.IsValid())
 		{
-			FProperty* Property = OwnerClass->FindPropertyByName(Mapping.PropertyName);
-			if (Property && IsPropertyTypeValid(Property))
+			if (FProperty* Property = OwnerClass->FindPropertyByName(Mapping.PropertyName); Property && IsPropertyTypeValid(Property))
 			{
+				
 				Mapping.PropertyToMap = Property;
-				Mapping.DelegateHandle = AbilitySystemComponent->AddFilteredTagChangeDelegate(Mapping.TagsToMap, Delegate);
+				Mapping.DelegateHandle = AbilitySystemComponent->AddFilteredTagChangeDelegate(Mapping.TagsToMap, TagDelegate);
 				continue;
 			}
 		}
@@ -152,6 +151,7 @@ void FGMCGameplayElementTagPropertyMap::Initialize(UObject* Owner, UGMC_AbilityS
 	}
 
 	ApplyCurrentTags();
+	ApplyCurrentAttributes();
 }
 
 void FGMCGameplayElementTagPropertyMap::ApplyCurrentTags()
@@ -184,6 +184,37 @@ void FGMCGameplayElementTagPropertyMap::ApplyCurrentTags()
 	}
 }
 
+void FGMCGameplayElementTagPropertyMap::ApplyCurrentAttributes()
+{
+	UObject* Owner = CachedOwner.Get();
+	UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get();
+
+	if (!Owner)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("FGMCGameplayElementTagPropertyMap::ApplyCurrentTags() called with invalid owner."));
+		return;
+	}
+
+	if (!AbilityComponent)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("FGMCGameplayElementTagPropertyMap::ApplyCurrentTags() called with invalid ability component."));
+		return;
+	}
+
+	for (auto& Mapping : PropertyMappings)
+	{
+		FProperty *Property = Mapping.PropertyToMap.Get();
+		if (Mapping.TagsToMap.IsValid() && Property && Mapping.TagsToMap.Num() == 1)
+		{
+			FGameplayTag Attribute = Mapping.TagsToMap.First();
+			if (const FAttribute* Attr = AbilityComponent->GetAttributeByTag(Attribute))
+			{
+				SetValueForMappedProperty(Property, Attr->Value);
+			}
+		}
+	}
+}
+
 void FGMCGameplayElementTagPropertyMap::Unregister()
 {
 	if (UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get())
@@ -196,6 +227,12 @@ void FGMCGameplayElementTagPropertyMap::Unregister()
 			}
 			Mapping.PropertyToMap = nullptr;
 			Mapping.DelegateHandle.Reset();
+		}
+
+		if (AttributeHandle.IsValid())
+		{
+			AbilityComponent->RemoveAttributeChangeDelegate(AttributeHandle);
+			AttributeHandle.Reset();
 		}
 	}
 
@@ -223,6 +260,28 @@ void FGMCGameplayElementTagPropertyMap::GameplayTagChangedCallback(const FGamepl
 		{
 			FGameplayTagContainer Matched = AbilityComponent->GetActiveTags().Filter(Mapping.TagsToMap);
 			SetValueForMappedProperty(Mapping.PropertyToMap.Get(), Matched);
+		}
+	}
+}
+
+void FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback(const FGameplayTag& AttributeTag,
+	const float OldValue, const float NewValue)
+{
+	UObject* Owner = CachedOwner.Get();
+	const UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get();
+
+	if (!Owner || !AbilityComponent)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("FGMCGameplayElementTagPropertyMap: Received callback on uninitialized map!"));
+		return;
+	}
+
+	for (auto& Mapping : PropertyMappings)
+	{
+		if (Mapping.TagsToMap.IsValid() && Mapping.TagsToMap.Num() == 1)
+		{
+			if (AttributeTag.MatchesTag(Mapping.TagsToMap.First()))
+				SetValueForMappedProperty(Mapping.PropertyToMap.Get(), NewValue);
 		}
 	}
 }

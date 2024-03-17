@@ -24,6 +24,9 @@ public:
 protected:
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ability System")
+	AGMC_Pawn* GMCPawn;
+	
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ability System")
 	UGMC_AbilitySystemComponent* AbilitySystemComponent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Ability System")

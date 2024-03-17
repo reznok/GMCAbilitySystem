@@ -19,6 +19,7 @@ class UGMCAttributesData;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPreAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
                                              SourceAbilityComponent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAttributeChanged, FGameplayTag, AttributeTag, float, OldValue, float, NewValue);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FGameplayAttributeChangedNative, const FGameplayTag&, const float, const float);
 				
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
@@ -241,6 +242,19 @@ public:
 	 */
 	void RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags, FDelegateHandle Handle);
 
+	/**
+	 * Adds a native (e.g. suitable for use in structs) delegate binding for attribute changes.
+	 * @param Delegate The delegate to call on attribute changes.
+	 * @return A handle to use when removing this delegate.
+	 */
+	FDelegateHandle AddAttributeChangeDelegate(const FGameplayAttributeChangedNative::FDelegate& Delegate);
+
+	/**
+	 * Removes a native (e.g. suitable for use in structs) delegate for attribute changes.
+	 * @param Handle The delegate handle to be removed.
+	 */
+	void RemoveAttributeChangeDelegate(FDelegateHandle Handle);
+
 #pragma region GMC
 	// GMC
 	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
@@ -329,6 +343,8 @@ private:
 
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
+
+	FGameplayAttributeChangedNative NativeAttributeChangeDelegate;
 	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();
