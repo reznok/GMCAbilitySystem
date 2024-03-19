@@ -61,6 +61,17 @@ void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGamepla
 	}
 }
 
+FDelegateHandle UGMC_AbilitySystemComponent::AddAttributeChangeDelegate(
+	const FGameplayAttributeChangedNative::FDelegate& Delegate)
+{
+	return NativeAttributeChangeDelegate.Add(Delegate);
+}
+
+void UGMC_AbilitySystemComponent::RemoveAttributeChangeDelegate(FDelegateHandle Handle)
+{
+	NativeAttributeChangeDelegate.Remove(Handle);
+}
+
 void UGMC_AbilitySystemComponent::BindReplicationData()
 {
 	// Attribute Binds
@@ -649,6 +660,7 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct Previ
 	for (const FAttribute& Attribute : CurrentAttributes){
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 		}
 	}
 }
@@ -878,6 +890,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		AffectedAttribute->ApplyModifier(AttributeModifier);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 	}
 }
 
