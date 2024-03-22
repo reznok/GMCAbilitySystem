@@ -21,11 +21,6 @@
 			"LoadingPhase": "Default"
 		},
 		{
-			"Name": "GMCAbilitySystemTypesInclude",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
 			"Name": "GMCAbilitySystemEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
