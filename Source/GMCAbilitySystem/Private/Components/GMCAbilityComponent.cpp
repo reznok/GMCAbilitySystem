@@ -763,11 +763,26 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
-		AllAttributes.Add(&Attribute);
+	if (UnBoundAttributes.IsValid())
+	{
+		for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
+			AllAttributes.Add(&Attribute);
+		}
 	}
-	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
-		AllAttributes.Add(&Attribute);
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing unbound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	}
+
+	if (BoundAttributes.IsValid())
+	{
+		for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
+			AllAttributes.Add(&Attribute);
+		}
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing bound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
 	}
 	return AllAttributes;
 }
