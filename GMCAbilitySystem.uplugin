@@ -19,14 +19,6 @@
 			"Name": "GMCAbilitySystem",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "GMCAbilitySystemTypesInclude",
-			"Type": "Runtime",
-			"LoadingPhase": "Default",
-			"WhitelistPlatforms": [
-				"Win64"
-			]
 		}
 	],
 	"Plugins": [
