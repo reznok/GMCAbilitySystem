@@ -63,25 +63,25 @@ bool FGMCGameplayElementTagPropertyMap::SetValueForMappedProperty(FProperty* Pro
 {
 	UObject* Owner = CachedOwner.Get();
 
-	if (const FBoolProperty* BoolProperty = Cast<FBoolProperty>(Property))
+	if (const FBoolProperty* BoolProperty = static_cast<FBoolProperty*>(Property))
 	{
 		BoolProperty->SetPropertyValue_InContainer(Owner, Value > 0.f);
 		return true;
 	}
 
-	if (const FIntProperty* IntProperty = Cast<FIntProperty>(Property))
+	if (const FIntProperty* IntProperty = static_cast<FIntProperty*>(Property))
 	{
 		IntProperty->SetPropertyValue_InContainer(Owner, FMath::RoundToInt(Value));
 		return true;
 	}
 
-	if (const FFloatProperty* FloatProperty = Cast<FFloatProperty>(Property))
+	if (const FFloatProperty* FloatProperty = static_cast<FFloatProperty*>(Property))
 	{
 		FloatProperty->SetPropertyValue_InContainer(Owner, Value);
 		return true;
 	}
 
-	if (const FDoubleProperty* DoubleProperty = Cast<FDoubleProperty>(Property))
+	if (const FDoubleProperty* DoubleProperty = static_cast<FDoubleProperty*>(Property))
 	{
 		DoubleProperty->SetPropertyValue_InContainer(Owner, Value);
 		return true;
