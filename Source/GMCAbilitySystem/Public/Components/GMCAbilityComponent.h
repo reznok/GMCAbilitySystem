@@ -312,26 +312,6 @@ protected:
 	FGMCAbilityData AbilityData;
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
-	// FInstancedStruct GMC Binding
-	UFUNCTION(BlueprintCallable)
-	int32 BindInstancedStruct(
-	  UPARAM(Ref) FInstancedStruct& VariableToBind,
-	  EGMC_PredictionMode PredictionMode,
-	  EGMC_CombineMode CombineMode,
-	  EGMC_SimulationMode SimulationMode,
-	  EGMC_InterpolationFunction Interpolation
-	)
-	{
-		int32 BindingIndex = -1;
-				GMCMovementComponent->AliasData.InstancedStruct.BindMember(
-				  VariableToBind,
-				  TranslateToSyncSettings(PredictionMode, CombineMode, SimulationMode, Interpolation),
-				  BindingIndex
-				);
-		return BindingIndex;
-	}
-
-
 private:
 
 	// Array of data objects to initialize the component's ability map
