@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "GMCPawn.h"
 #include "Animation/AnimInstance.h"
 #include "Utility/GameplayElementMapping.h"
 #include "GMCAbilityAnimInstance.generated.h"
@@ -24,6 +25,11 @@ public:
 	
 protected:
 
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Ability System")
+	TSubclassOf<AGMC_Pawn> EditorPreviewClass { AGMC_Pawn::StaticClass() };
+#endif
+	
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ability System")
 	AGMC_Pawn* GMCPawn;
 	
