@@ -4,6 +4,8 @@
 
 void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 {
+	Super::NativeInitializeAnimation();
+	
 	// A subclass may have already set these before calling us, so check if we need to do the work.
 	if (!AbilitySystemComponent || !GMCPawn)
 	{
@@ -15,10 +17,17 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 		}
 		
 #if WITH_EDITOR
-		if (!GetWorld()->IsGameWorld() && !IsValid(AbilitySystemComponent) && GMCPawn)
+		if (!GetWorld()->IsGameWorld() && !IsValid(AbilitySystemComponent) || !IsValid(GMCPawn))
 		{
 			// Create a default for in-editor preview.
-			AbilitySystemComponent = GMCPawn->CreateDefaultSubobject<UGMC_AbilitySystemComponent>(TEXT("AbilityComponent"));
+			if (!IsValid(GMCPawn))
+			{
+				GMCPawn = GetMutableDefault<AGMC_Pawn>();
+			}
+			if (!IsValid(AbilitySystemComponent))
+			{
+				AbilitySystemComponent = NewObject<UGMC_AbilitySystemComponent>();
+			}
 		}
 #endif
 	}
@@ -27,8 +36,28 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 	{
 		TagPropertyMap.Initialize(this, AbilitySystemComponent);
 	}
-	
-	// As the super call will trigger the blueprint initialize event, we want to do it *after* we've set our
-	// Ability System Component.
-	Super::NativeInitializeAnimation();
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("%s: unable to find a GMC Ability System Component on %s after initializing animation blueprint. Will make a last-ditch effort in BeginPlay."),
+			*GetClass()->GetName(), *GetOwningActor()->GetName())
+	}
 }
+
+void UGMCAbilityAnimInstance::NativeBeginPlay()
+{
+	// One last sanity-check, in case folks are adding things at runtime.
+	if (GMCPawn && !AbilitySystemComponent)
+	{
+		AbilitySystemComponent = Cast<UGMC_AbilitySystemComponent>(GMCPawn->GetComponentByClass(UGMC_AbilitySystemComponent::StaticClass()));
+		if (!AbilitySystemComponent)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("%s: last-ditch effort to find a GMC Ability System Component on %s failed!"), *GetClass()->GetPathName(), *GMCPawn->GetName());
+			return;
+		}
+
+		TagPropertyMap.Initialize(this, AbilitySystemComponent);
+	}
+
+	Super::NativeBeginPlay();
+}
+

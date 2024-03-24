@@ -17,6 +17,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityAnimInstance : public UAnimInstance
 	GENERATED_BODY()
 
 public:
+	virtual void NativeBeginPlay() override;
 	virtual void NativeInitializeAnimation() override;
 
 	UGMC_AbilitySystemComponent* GetAbilitySystemComponent() const { return AbilitySystemComponent; }
