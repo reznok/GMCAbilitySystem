@@ -64,6 +64,8 @@ public:
 	void ApplyCurrentTags();
 	void ApplyCurrentAttributes();
 
+	bool IsInitialized() const;
+
 #if WITH_EDITOR
 	EDataValidationResult IsDataValid(const UObject* ContainingAsset, FDataValidationContext& Context) const;
 #endif
@@ -89,5 +91,4 @@ protected:
 
 	UPROPERTY(EditAnywhere)
 	TArray<FGMCGameplayElementTagPropertyMapping> PropertyMappings;
-	
 };

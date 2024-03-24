@@ -410,6 +410,7 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 	Super::BeginPlay();
 	InitializeStartingAbilities();
 	InitializeAbilityMap();
+	SetStartingTags();
 }
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
@@ -435,6 +436,11 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			}
 		}
 	}
+}
+
+void UGMC_AbilitySystemComponent::SetStartingTags()
+{
+	ActiveTags.AppendTags(StartingTags);
 }
 
 void UGMC_AbilitySystemComponent::CleanupStaleAbilities()

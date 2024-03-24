@@ -12,12 +12,14 @@ class UGMC_AbilitySystemComponent;
  * set to the owner's ability system (if present), and a "Tag Property Map" allows any valid gameplay tag to be
  * mapped automatically to properties.
  */
-UCLASS()
+UCLASS(ClassGroup="Animation", meta=(DisplayName="GMAS Animation Blueprint"))
 class GMCABILITYSYSTEM_API UGMCAbilityAnimInstance : public UAnimInstance
 {
 	GENERATED_BODY()
 
 public:
+	UGMCAbilityAnimInstance(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+	
 	virtual void NativeBeginPlay() override;
 	virtual void NativeInitializeAnimation() override;
 
@@ -30,12 +32,14 @@ protected:
 	TSubclassOf<AGMC_Pawn> EditorPreviewClass { AGMC_Pawn::StaticClass() };
 #endif
 	
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ability System")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, AdvancedDisplay, Category="Ability System", meta=(EditConditionHides))
 	AGMC_Pawn* GMCPawn;
 	
-	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Ability System")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, AdvancedDisplay, Category="Ability System", meta=(EditConditionHides))
 	UGMC_AbilitySystemComponent* AbilitySystemComponent;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Ability System")
 	FGMCGameplayElementTagPropertyMap TagPropertyMap;
+
+	friend UGMC_AbilitySystemComponent;
 };
