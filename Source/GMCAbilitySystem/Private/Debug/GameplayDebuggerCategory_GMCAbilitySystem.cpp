@@ -17,16 +17,23 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 {
 	if (OwnerPC)
 	{
-		DataPack.ActorName = OwnerPC->GetPawn()->GetName();
-
-		if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
+		if (OwnerPC->GetPawn())
 		{
-			DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
-			DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
-			DataPack.Attributes = AbilityComponent->GetAllAttributesString();
-			DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
-			DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
-			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
+			DataPack.ActorName = OwnerPC->GetPawn()->GetName();
+
+			if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
+			{
+				DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
+				DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
+				DataPack.Attributes = AbilityComponent->GetAllAttributesString();
+				DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
+				DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
+				DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
+			}
+		}
+		else
+		{
+			DataPack.ActorName = TEXT("Spectator or missing pawn");
 		}
 	}
 }
@@ -37,7 +44,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 	if (!DataPack.ActorName.IsEmpty())
 	{
 		CanvasContext.Printf(TEXT("{yellow}Actor name: {white}%s"), *DataPack.ActorName);
-		const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>();
+		const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn() ? OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>() : nullptr;
 		if (AbilityComponent == nullptr) return;
 
 		// Abilities
