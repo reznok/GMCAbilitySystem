@@ -1,5 +1,15 @@
 ﻿#include "Animation/GMCAbilityAnimInstance.h"
 #include "GMCAbilityComponent.h"
+#include "Utility/GMASUtilities.h"
+
+UGMCAbilityAnimInstance::UGMCAbilityAnimInstance(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
+{
+#if WITH_EDITOR
+	// Hide instance-only variables which we do not need cluttering everything up.
+	UGMASUtilities::ClearPropertyFlagsSafe(StaticClass(), TEXT("GMCPawn"), CPF_SimpleDisplay | CPF_Edit);
+	UGMASUtilities::ClearPropertyFlagsSafe(StaticClass(), TEXT("AbilitySystemComponent"), CPF_SimpleDisplay | CPF_Edit);
+#endif
+}
 
 void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 {
@@ -41,10 +51,21 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 		}
 #endif
 	}
-
+	
 	if (AbilitySystemComponent)
 	{
-		if (bShouldInitializeProperties)
+#if WITH_EDITOR
+		if (!GetWorld()->IsGameWorld())
+		{
+			// We're in the editor preview; manually instantiate our attributes for purposes of property mapping
+			// the default values. This is a convenience for debugging in-editor, so that the editor preview's
+			// mapped properties should match the class-level defaults for the chosen editor preview class.
+			AbilitySystemComponent->InstantiateAttributes();
+			AbilitySystemComponent->SetStartingTags();
+		}
+#endif
+
+    if (bShouldInitializeProperties)
 		{
 			TagPropertyMap.Initialize(this, AbilitySystemComponent);
 		}
@@ -56,14 +77,21 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 	}
 	else
 	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("%s: unable to find a GMC Ability System Component on %s after initializing animation blueprint. Will make a last-ditch effort in BeginPlay."),
-			*GetClass()->GetName(), *GetOwningActor()->GetName())
+		// Don't bother with this log in editor previews.
+		if (GetWorld()->IsGameWorld())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("%s: unable to find a GMC Ability System Component on %s after initializing animation blueprint. Will make a last-ditch effort in BeginPlay."),
+				*GetClass()->GetName(), *GetOwningActor()->GetName())
+		}
 	}
 }
 
 void UGMCAbilityAnimInstance::NativeBeginPlay()
 {
-	// One last sanity-check, in case folks are adding things at runtime.
+	Super::NativeBeginPlay();
+	
+	// Components added in blueprint won't be available during InitializeAnimation but will by the time we hit BeginPlay;
+	// make a second attempt to set up our property bindings in that scenario.
 	if (GMCPawn && !AbilitySystemComponent)
 	{
 		AbilitySystemComponent = Cast<UGMC_AbilitySystemComponent>(GMCPawn->GetComponentByClass(UGMC_AbilitySystemComponent::StaticClass()));
@@ -75,7 +103,5 @@ void UGMCAbilityAnimInstance::NativeBeginPlay()
 
 		TagPropertyMap.Initialize(this, AbilitySystemComponent);
 	}
-
-	Super::NativeBeginPlay();
 }
 

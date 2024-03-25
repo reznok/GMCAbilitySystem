@@ -215,6 +215,11 @@ void FGMCGameplayElementTagPropertyMap::ApplyCurrentAttributes()
 	}
 }
 
+bool FGMCGameplayElementTagPropertyMap::IsInitialized() const
+{
+	return CachedAbilityComponent.IsValid();
+}
+
 void FGMCGameplayElementTagPropertyMap::Unregister()
 {
 	if (UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get())

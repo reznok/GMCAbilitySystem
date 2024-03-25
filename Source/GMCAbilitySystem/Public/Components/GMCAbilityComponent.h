@@ -14,6 +14,7 @@
 #include "GMCAbilityComponent.generated.h"
 
 
+class UGMCAbilityAnimInstance;
 class UGMCAbilityMapData;
 class UGMCAttributesData;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPreAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
@@ -42,7 +43,7 @@ struct FEffectStatePrediction
 
 class UGMCAbility;
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"))
+UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"), meta=(Categories="GMAS"))
 class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
 {
 	GENERATED_BODY()
@@ -64,10 +65,10 @@ public:
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void AddAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 		
 	// Add an ability to the GrantedAbilities array
@@ -124,7 +125,7 @@ public:
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr);
 	
 	// Queue an ability to be executed
-	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="Ability", meta=(Categories="Ability"))
+	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="GMAS|Abilities")
 	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
 
 	void QueueTaskData(const FInstancedStruct& TaskData);
@@ -168,27 +169,27 @@ public:
 	 * @param	bOverwriteExistingModifiers	Whether or not to replace existing modifiers that have the same name as additional modifiers. If false, will add them.
 	 * @param	bAppliedByServer	Is this Effect only applied by server? Used to help client predict the unpredictable.
 	 */
-	UFUNCTION(BlueprintCallable, meta = (AutoCreateRefTerm = "AdditionalModifiers"))
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", meta = (AutoCreateRefTerm = "AdditionalModifiers"))
 	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData);
 	
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 
 	
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
 
 	/**
 	 * Removes an instanced effect if it exists. If NumToRemove == -1, remove all. Returns the number of removed instances.
 	 * If the inputted count is higher than the number of active corresponding effects, remove all we can.
 	 */
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	int32 RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove=-1);
 
 	/**
 	 * Gets the number of active effects with the inputted tag.
 	 * Returns -1 if tag is invalid.
 	 */
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	int32 GetNumEffectByTag(FGameplayTag InEffectTag);
 
 	//// Event Delegates
@@ -218,30 +219,30 @@ public:
 	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
 
 	// Get Attribute value by Tag
-	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
 	// Set Attribute value by Tag
 	// Will NOT trigger an "OnAttributeChanged" Event
 	// bResetModifiers: Will reset all modifiers on the attribute to the base value. DO NOT USE if you have any active effects that modify this attribute.
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue, bool bResetModifiers = false);
 	
 	/** Get the default value of an attribute from the data assets. */
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	float GetBaseAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
 
 	UPROPERTY(BlueprintReadWrite)
 	bool bJustTeleported;
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, AdvancedDisplay)
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
 	UFUNCTION(Server, Reliable)
@@ -278,20 +279,20 @@ public:
 
 #pragma region GMC
 	// GMC
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void BindReplicationData();
 	
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
 
 
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void GenPredictionTick(float DeltaTime);
 
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void GenSimulationTick(float DeltaTime);
 
-	UFUNCTION(BlueprintCallable, Category="GMCAbilitySystem")
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
 
 #pragma endregion GMC
@@ -320,11 +321,14 @@ protected:
 	// Effect tags that are granted to the player (bound)
 	FGameplayTagContainer ActiveTags;
 
-	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
+	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	FGameplayTagContainer StartingAbilities;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	TArray<TSubclassOf<UGMCAbilityEffect>> StartingEffects;
+
+	UPROPERTY(EditDefaultsOnly, Category="Tags")
+	FGameplayTagContainer StartingTags;
 	
 	// Returns the matching abilities in the AbilityMap if they have been granted
 	TArray<TSubclassOf<UGMCAbility>> GetGrantedAbilitiesByTag(FGameplayTag AbilityTag);
@@ -336,7 +340,7 @@ protected:
 private:
 
 	// Array of data objects to initialize the component's ability map
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	TArray<TObjectPtr<UGMCAbilityMapData>> AbilityMaps;
 	
 	// Map of Ability Tags to Ability Classes
@@ -380,6 +384,8 @@ private:
 	// This must run before variable binding
 	void InstantiateAttributes();
 
+	void SetStartingTags();
+	
 	// Clear out abilities in the Ended state from the ActivateAbilities map
 	void CleanupStaleAbilities();
 
@@ -433,5 +439,7 @@ private:
 	// this is just for redundancy
 	UFUNCTION(Client, Reliable)
 	void RPCClientEndEffect(int EffectID);
+
+	friend UGMCAbilityAnimInstance;
 		
 };
