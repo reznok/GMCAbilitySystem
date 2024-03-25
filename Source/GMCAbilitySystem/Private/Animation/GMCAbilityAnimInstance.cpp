@@ -39,6 +39,15 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 				// try getting the ability component again.
 				AbilitySystemComponent = Cast<UGMC_AbilitySystemComponent>(GMCPawn->GetComponentByClass(UGMC_AbilitySystemComponent::StaticClass()));
 			}
+			
+			if (!IsValid(AbilitySystemComponent))
+			{
+				// There's not going to be any attributes or tags really to work with when using the
+				// default parent class.
+				bShouldInitializeProperties = false;
+			
+				AbilitySystemComponent = NewObject<UGMC_AbilitySystemComponent>();
+			}
 		}
 #endif
 	}
@@ -55,7 +64,16 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 			AbilitySystemComponent->SetStartingTags();
 		}
 #endif
-		TagPropertyMap.Initialize(this, AbilitySystemComponent);
+
+    if (bShouldInitializeProperties)
+		{
+			TagPropertyMap.Initialize(this, AbilitySystemComponent);
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("%s: skipping property map initialization since we're an in-editor preview; we're using the default ability system component, and won't have valid data."),
+				*GetClass()->GetName());
+		}
 	}
 	else
 	{

@@ -73,32 +73,53 @@ public:
 		
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void GrantAbilityByTag(FGameplayTag AbilityTag);
+	void GrantAbilityByTag(const FGameplayTag& AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void RemoveGrantedAbilityByTag(FGameplayTag AbilityTag);
+	void RemoveGrantedAbilityByTag(const FGameplayTag& AbilityTag);
 
 	UFUNCTION(BlueprintPure, meta=(Categories="Ability"))
-	bool HasGrantedAbilityTag(FGameplayTag GameplayTag) const;
+	bool HasGrantedAbilityTag(const FGameplayTag& GameplayTag) const;
 
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void AddActiveTag(FGameplayTag AbilityTag);
+	void AddActiveTag(const FGameplayTag& AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void RemoveActiveTag(FGameplayTag AbilityTag);
+	void RemoveActiveTag(const FGameplayTag& AbilityTag);
 
+	// Checks whether any active tag matches this tag or any of its children.
 	UFUNCTION(BlueprintPure)
-	bool HasActiveTag(FGameplayTag GameplayTag) const;
+	bool HasActiveTag(const FGameplayTag& GameplayTag) const;
 
+	// Checks whether any active tag matches this tag exactly; it will not match on child tags.
+	UFUNCTION(BlueprintPure)
+	bool HasActiveTagExact(const FGameplayTag& GameplayTag) const;
+
+	// Checks whether any active tag matches any of the tags provided (or their children).
+	UFUNCTION(BlueprintPure)
+	bool HasAnyTag(const FGameplayTagContainer& TagsToCheck) const;
+
+	// Checks whether any active tag matches any of the tags provided exactly (excluding children).
+	UFUNCTION(BlueprintPure)
+	bool HasAnyTagExact(const FGameplayTagContainer& TagsToCheck) const;
+
+	// Checks whether every tag provided is in current tags, allowing for child tags.
+	UFUNCTION(BlueprintPure)
+	bool HasAllTags(const FGameplayTagContainer& TagsToCheck) const;
+
+	// Checks whether every tag provided is in current tags, without matching on child tags.
+	UFUNCTION(BlueprintPure)
+	bool HasAllTagsExact(const FGameplayTagContainer& TagsToCheck) const;
+	
 	/** Get all active tags that match a given parent tag */
 	UFUNCTION(BlueprintCallable)
-	TArray<FGameplayTag> GetActiveTagsByParentTag(FGameplayTag ParentTag);
+	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag& ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	void TryActivateAbilitiesByInputTag(FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
+	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr);
@@ -112,17 +133,17 @@ public:
 	// Set an ability cooldown
 	// If it's already on cooldown, subsequent calls will overwrite it
 	UFUNCTION(BlueprintCallable)
-	void SetCooldownForAbility(FGameplayTag AbilityTag, float CooldownTime);
+	void SetCooldownForAbility(const FGameplayTag& AbilityTag, float CooldownTime);
 
 	UFUNCTION(BlueprintPure)
-	float GetCooldownForAbility(FGameplayTag AbilityTag) const;
+	float GetCooldownForAbility(const FGameplayTag& AbilityTag) const;
 	/**
 	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
 	 * Call this function on Prediction Tick.
 	 * A good example of this is something like a State.InAir tag.
 	 */
 	UFUNCTION(BlueprintCallable)
-	void MatchTagToBool(FGameplayTag InTag, bool MatchedBool);
+	void MatchTagToBool(const FGameplayTag& InTag, bool MatchedBool);
 
 	// A UGMCAttributesData asset that defines the default attributes for this component
 	UPROPERTY(EditDefaultsOnly, DisplayName="Attributes")
