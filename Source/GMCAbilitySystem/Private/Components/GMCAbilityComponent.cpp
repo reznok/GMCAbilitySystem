@@ -100,7 +100,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_InterpolationFunction::TargetValue);
 
 	// Attributes
-	BindInstancedStruct(BoundAttributes,
+	GMCMovementComponent->BindInstancedStruct(BoundAttributes,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
@@ -121,7 +121,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_InterpolationFunction::TargetValue);
 	
 	// TaskData Bind
-	BindInstancedStruct(TaskData,
+	GMCMovementComponent->BindInstancedStruct(TaskData,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,

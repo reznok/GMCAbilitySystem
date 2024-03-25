@@ -1,10 +1,11 @@
 ﻿#include "Animation/GMCAbilityAnimInstance.h"
-#include "GMCPawn.h"
 #include "GMCAbilityComponent.h"
 
 void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
+
+	bool bShouldInitializeProperties = true;
 	
 	// A subclass may have already set these before calling us, so check if we need to do the work.
 	if (!AbilitySystemComponent || !GMCPawn)
@@ -22,10 +23,19 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 			// Create a default for in-editor preview.
 			if (!IsValid(GMCPawn))
 			{
-				GMCPawn = GetMutableDefault<AGMC_Pawn>();
+				GMCPawn = EditorPreviewClass->GetDefaultObject<AGMC_Pawn>();
+
+				// Since we might have overridden the editor preview class with something that already has an ability component,
+				// try getting the ability component again.
+				AbilitySystemComponent = Cast<UGMC_AbilitySystemComponent>(GMCPawn->GetComponentByClass(UGMC_AbilitySystemComponent::StaticClass()));
 			}
+			
 			if (!IsValid(AbilitySystemComponent))
 			{
+				// There's not going to be any attributes or tags really to work with when using the
+				// default parent class.
+				bShouldInitializeProperties = false;
+			
 				AbilitySystemComponent = NewObject<UGMC_AbilitySystemComponent>();
 			}
 		}
@@ -34,7 +44,15 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 
 	if (AbilitySystemComponent)
 	{
-		TagPropertyMap.Initialize(this, AbilitySystemComponent);
+		if (bShouldInitializeProperties)
+		{
+			TagPropertyMap.Initialize(this, AbilitySystemComponent);
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("%s: skipping property map initialization since we're an in-editor preview; we're using the default ability system component, and won't have valid data."),
+				*GetClass()->GetName());
+		}
 	}
 	else
 	{
