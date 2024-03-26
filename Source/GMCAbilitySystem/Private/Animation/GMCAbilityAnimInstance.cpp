@@ -28,7 +28,7 @@ void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 		}
 		
 #if WITH_EDITOR
-		if (!GetWorld()->IsGameWorld() && !IsValid(AbilitySystemComponent) || !IsValid(GMCPawn))
+		if (!GetWorld()->IsGameWorld() && (!IsValid(AbilitySystemComponent) || !IsValid(GMCPawn)))
 		{
 			// Create a default for in-editor preview.
 			if (!IsValid(GMCPawn))
