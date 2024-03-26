@@ -80,11 +80,11 @@ public:
 
 	/** Get the Pawn associated with ability if applicable. */
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	APawn* GetOwnerPawn() const;
+	AGMC_Pawn* GetOwnerPawn() const;
 
 	/** Get the Player Controller associated with the owning pawn if applicable. */
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
-	APlayerController* GetOwningPlayerController() const;
+	AGMC_PlayerController* GetOwningPlayerController() const;
 
 	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")

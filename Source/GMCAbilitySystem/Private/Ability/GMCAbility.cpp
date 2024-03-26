@@ -1,5 +1,6 @@
 ﻿#include "Ability/GMCAbility.h"
 #include "GMCAbilitySystem.h"
+#include "GMCPawn.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
 
@@ -235,16 +236,16 @@ AActor* UGMCAbility::GetOwnerActor() const
 	return OwnerAbilityComponent->GetOwner();
 }
 
-APawn* UGMCAbility::GetOwnerPawn() const{
-	if (APawn* OwningPawn = Cast<APawn>(GetOwnerActor())){
+AGMC_Pawn* UGMCAbility::GetOwnerPawn() const{
+	if (AGMC_Pawn* OwningPawn = Cast<AGMC_Pawn>(GetOwnerActor())){
 		return OwningPawn;
 	}
 	return nullptr;
 }
 
-APlayerController* UGMCAbility::GetOwningPlayerController() const{
-	if (const APawn* OwningPawn = GetOwnerPawn()){
-		if(APlayerController* OwningPC = Cast<APlayerController>(OwningPawn->GetController())){
+AGMC_PlayerController* UGMCAbility::GetOwningPlayerController() const{
+	if (const AGMC_Pawn* OwningPawn = GetOwnerPawn()){
+		if(AGMC_PlayerController* OwningPC = Cast<AGMC_PlayerController>(OwningPawn->GetController())){
 			return OwningPC;
 		}
 	}
