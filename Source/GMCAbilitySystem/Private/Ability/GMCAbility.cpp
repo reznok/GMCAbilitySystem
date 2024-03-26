@@ -235,6 +235,22 @@ AActor* UGMCAbility::GetOwnerActor() const
 	return OwnerAbilityComponent->GetOwner();
 }
 
+APawn* UGMCAbility::GetOwnerPawn() const{
+	if (APawn* OwningPawn = Cast<APawn>(GetOwnerActor())){
+		return OwningPawn;
+	}
+	return nullptr;
+}
+
+APlayerController* UGMCAbility::GetOwningPlayerController() const{
+	if (const APawn* OwningPawn = GetOwnerPawn()){
+		if(APlayerController* OwningPC = Cast<APlayerController>(OwningPawn->GetController())){
+			return OwningPC;
+		}
+	}
+	return nullptr;
+}
+
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 {
 	return OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag);
