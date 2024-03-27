@@ -21,6 +21,10 @@ public:
 	int TaskID;
 
 	virtual void Activate() override;
+
+	// An overridable function for when the task is being ended by the ability system
+	// Allows for any cleanup that may be required if an ability is force ended
+	virtual void EndTaskGMAS();
 	
 	void SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent);
 	void RegisterTask(UGMCAbilityTaskBase* Task);

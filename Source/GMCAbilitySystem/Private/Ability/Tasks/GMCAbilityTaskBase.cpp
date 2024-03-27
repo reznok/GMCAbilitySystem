@@ -12,6 +12,11 @@ void UGMCAbilityTaskBase::Activate()
 	LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;
 }
 
+void UGMCAbilityTaskBase::EndTaskGMAS()
+{
+	EndTask();
+}
+
 void UGMCAbilityTaskBase::SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent)
 {
 	this->AbilitySystemComponent = InAbilitySystemComponent;

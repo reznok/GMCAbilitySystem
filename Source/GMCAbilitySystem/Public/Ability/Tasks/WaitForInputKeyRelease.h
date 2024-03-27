@@ -10,7 +10,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGMCAbilityTaskWaitForInputKeyRelease);
 
 
 UCLASS()
-class UGMCAbilityTask_WaitForInputKeyRelease : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_WaitForInputKeyRelease : public UGMCAbilityTaskBase
 {
 	GENERATED_BODY()
 	

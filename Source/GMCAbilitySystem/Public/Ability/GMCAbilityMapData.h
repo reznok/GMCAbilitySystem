@@ -11,13 +11,31 @@ class UGMCAbility;
 /**
  * 
  */
+
+USTRUCT()
+struct FAbilityMapData{
+	GENERATED_BODY()
+
+	// Ability Tag
+	UPROPERTY(EditDefaultsOnly)
+	FGameplayTag InputTag;
+
+	// Ability Objects that the tag should execute
+	UPROPERTY(EditDefaultsOnly)
+	TArray<TSubclassOf<UGMCAbility>> Abilities;
+
+	// Whether or not this ability should be automatically granted to the owning Ability Component
+	UPROPERTY(EditDefaultsOnly)
+	bool bGrantedByDefault{true};
+};
+
 UCLASS()
 class GMCABILITYSYSTEM_API UGMCAbilityMapData : public UPrimaryDataAsset{
 	GENERATED_BODY()
 
 	UPROPERTY(EditDefaultsOnly)
-	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> AbilityMap;
+	TArray<FAbilityMapData> AbilityMapData;
 
 public:
-	TMap<FGameplayTag, TSubclassOf<UGMCAbility>> GetAbilityMap() {return AbilityMap;}
+	TArray<FAbilityMapData> GetAbilityMapData() {return AbilityMapData;}
 };
