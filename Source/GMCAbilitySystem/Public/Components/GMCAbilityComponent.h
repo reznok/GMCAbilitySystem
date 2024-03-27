@@ -55,6 +55,9 @@ public:
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly)
 	double ActionTimer;
+
+	// Is this a server-only pawn (not player-controlled)?
+	bool IsServerOnly() const;
 	
 	// Ability tags that the controller has 
 	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
@@ -73,50 +76,50 @@ public:
 		
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void GrantAbilityByTag(const FGameplayTag& AbilityTag);
+	void GrantAbilityByTag(const FGameplayTag AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void RemoveGrantedAbilityByTag(const FGameplayTag& AbilityTag);
+	void RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag);
 
 	UFUNCTION(BlueprintPure, meta=(Categories="Ability"))
-	bool HasGrantedAbilityTag(const FGameplayTag& GameplayTag) const;
+	bool HasGrantedAbilityTag(const FGameplayTag GameplayTag) const;
 
 	// Add an ability to the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void AddActiveTag(const FGameplayTag& AbilityTag);
+	void AddActiveTag(const FGameplayTag AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
 	UFUNCTION(BlueprintCallable)
-	void RemoveActiveTag(const FGameplayTag& AbilityTag);
+	void RemoveActiveTag(const FGameplayTag AbilityTag);
 
 	// Checks whether any active tag matches this tag or any of its children.
 	UFUNCTION(BlueprintPure)
-	bool HasActiveTag(const FGameplayTag& GameplayTag) const;
+	bool HasActiveTag(const FGameplayTag GameplayTag) const;
 
 	// Checks whether any active tag matches this tag exactly; it will not match on child tags.
 	UFUNCTION(BlueprintPure)
-	bool HasActiveTagExact(const FGameplayTag& GameplayTag) const;
+	bool HasActiveTagExact(const FGameplayTag GameplayTag) const;
 
 	// Checks whether any active tag matches any of the tags provided (or their children).
 	UFUNCTION(BlueprintPure)
-	bool HasAnyTag(const FGameplayTagContainer& TagsToCheck) const;
+	bool HasAnyTag(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether any active tag matches any of the tags provided exactly (excluding children).
 	UFUNCTION(BlueprintPure)
-	bool HasAnyTagExact(const FGameplayTagContainer& TagsToCheck) const;
+	bool HasAnyTagExact(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether every tag provided is in current tags, allowing for child tags.
 	UFUNCTION(BlueprintPure)
-	bool HasAllTags(const FGameplayTagContainer& TagsToCheck) const;
+	bool HasAllTags(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether every tag provided is in current tags, without matching on child tags.
 	UFUNCTION(BlueprintPure)
-	bool HasAllTagsExact(const FGameplayTagContainer& TagsToCheck) const;
+	bool HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const;
 	
 	/** Get all active tags that match a given parent tag */
 	UFUNCTION(BlueprintCallable)
-	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag& ParentTag);
+	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
 	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr);
@@ -133,10 +136,10 @@ public:
 	// Set an ability cooldown
 	// If it's already on cooldown, subsequent calls will overwrite it
 	UFUNCTION(BlueprintCallable)
-	void SetCooldownForAbility(const FGameplayTag& AbilityTag, float CooldownTime);
+	void SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime);
 
 	UFUNCTION(BlueprintPure)
-	float GetCooldownForAbility(const FGameplayTag& AbilityTag) const;
+	float GetCooldownForAbility(const FGameplayTag AbilityTag) const;
 	/**
 	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
 	 * Call this function on Prediction Tick.

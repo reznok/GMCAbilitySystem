@@ -204,7 +204,7 @@ void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* Abili
 	}
 }
 
-void UGMC_AbilitySystemComponent::GrantAbilityByTag(const FGameplayTag& AbilityTag)
+void UGMC_AbilitySystemComponent::GrantAbilityByTag(const FGameplayTag AbilityTag)
 {
 	if (!GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
@@ -212,7 +212,7 @@ void UGMC_AbilitySystemComponent::GrantAbilityByTag(const FGameplayTag& AbilityT
 	}
 }
 
-void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(const FGameplayTag& AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag)
 {
 	if (GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
@@ -220,17 +220,17 @@ void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(const FGameplayTag& 
 	}
 }
 
-bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(const FGameplayTag& GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(const FGameplayTag GameplayTag) const
 {
 	return GrantedAbilityTags.HasTagExact(GameplayTag);
 }
 
-void UGMC_AbilitySystemComponent::AddActiveTag(const FGameplayTag& AbilityTag)
+void UGMC_AbilitySystemComponent::AddActiveTag(const FGameplayTag AbilityTag)
 {
 	ActiveTags.AddTag(AbilityTag);
 }
 
-void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag& AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 {
 	if (ActiveTags.HasTagExact(AbilityTag))
 	{
@@ -238,37 +238,37 @@ void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag& AbilityTag
 	}
 }
 
-bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag& GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag GameplayTag) const
 {
 	return ActiveTags.HasTagExact(GameplayTag);
 }
 
-bool UGMC_AbilitySystemComponent::HasActiveTagExact(const FGameplayTag& GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasActiveTagExact(const FGameplayTag GameplayTag) const
 {
 	return ActiveTags.HasTagExact(GameplayTag);
 }
 
-bool UGMC_AbilitySystemComponent::HasAnyTag(const FGameplayTagContainer& TagsToCheck) const
+bool UGMC_AbilitySystemComponent::HasAnyTag(const FGameplayTagContainer TagsToCheck) const
 {
 	return ActiveTags.HasAny(TagsToCheck);
 }
 
-bool UGMC_AbilitySystemComponent::HasAnyTagExact(const FGameplayTagContainer& TagsToCheck) const
+bool UGMC_AbilitySystemComponent::HasAnyTagExact(const FGameplayTagContainer TagsToCheck) const
 {
 	return ActiveTags.HasAnyExact(TagsToCheck);
 }
 
-bool UGMC_AbilitySystemComponent::HasAllTags(const FGameplayTagContainer& TagsToCheck) const
+bool UGMC_AbilitySystemComponent::HasAllTags(const FGameplayTagContainer TagsToCheck) const
 {
 	return ActiveTags.HasAll(TagsToCheck);
 }
 
-bool UGMC_AbilitySystemComponent::HasAllTagsExact(const FGameplayTagContainer& TagsToCheck) const
+bool UGMC_AbilitySystemComponent::HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const
 {
 	return ActiveTags.HasAllExact(TagsToCheck);
 }
 
-TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const FGameplayTag& ParentTag){
+TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const FGameplayTag ParentTag){
 	TArray<FGameplayTag> MatchedTags;
 	if(!ParentTag.IsValid()) return MatchedTags;
 	for(FGameplayTag Tag : ActiveTags){
@@ -328,7 +328,7 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 	QueuedTaskData.Push(InTaskData);
 }
 
-void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag& AbilityTag, float CooldownTime)
+void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime)
 {
 	if (AbilityTag == FGameplayTag::EmptyTag) return;
 	
@@ -340,7 +340,7 @@ void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag& Abil
 	ActiveCooldowns.Add(AbilityTag, CooldownTime);
 }
 
-float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag& AbilityTag) const
+float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag AbilityTag) const
 {
 	if (ActiveCooldowns.Contains(AbilityTag))
 	{
@@ -357,6 +357,15 @@ void UGMC_AbilitySystemComponent::MatchTagToBool(const FGameplayTag& InTag, bool
 	else{
 		RemoveActiveTag(InTag);
 	}
+}
+
+bool UGMC_AbilitySystemComponent::IsServerOnly() const
+{
+	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		return !Pawn->IsPlayerControlled();
+	}
+	return true;
 }
 
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
