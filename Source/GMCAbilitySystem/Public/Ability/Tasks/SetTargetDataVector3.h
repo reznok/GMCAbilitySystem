@@ -18,7 +18,7 @@ struct FGMCAbilityTaskTargetDataVector3 : public FGMCAbilityTaskData
 };
 
 UCLASS()
-class UGMCAbilityTask_SetTargetDataVector3 : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_SetTargetDataVector3 : public UGMCAbilityTaskBase
 {
 	GENERATED_BODY()
 	

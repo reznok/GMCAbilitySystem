@@ -37,6 +37,10 @@ public:
 	UPROPERTY(BlueprintReadOnly)
 	EAbilityState AbilityState;
 
+	// Data used to execute this ability
+	UPROPERTY(BlueprintReadOnly)
+	FGMCAbilityData AbilityData;
+
 	// Assign a new, incrementing, Task ID
 	UFUNCTION()
 	int GetNextTaskID(){TaskIDCounter += 1;
@@ -51,7 +55,7 @@ public:
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
 	
-	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction = nullptr);
+	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
 	
 	// Called by AbilityComponent
 	virtual void Tick(float DeltaTime);
@@ -73,6 +77,14 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	AActor* GetOwnerActor() const;
+
+	/** Get the Pawn associated with ability if applicable. */
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	AGMC_Pawn* GetOwnerPawn() const;
+
+	/** Get the Player Controller associated with the owning pawn if applicable. */
+	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
+	AGMC_PlayerController* GetOwningPlayerController() const;
 
 	// Get Ability Owner Attribute value by Name from a passed AbilityComponent
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
@@ -131,7 +143,7 @@ public:
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
 	UPROPERTY(BlueprintReadOnly)
-	UInputAction* AbilityInputAction;
+	TObjectPtr<const UInputAction> AbilityInputAction;
 
 	// Pass data into the Task
 	void HandleTaskData(int TaskID, FInstancedStruct TaskData);

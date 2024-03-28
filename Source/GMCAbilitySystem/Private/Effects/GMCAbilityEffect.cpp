@@ -55,7 +55,7 @@ void UGMCAbilityEffect::StartEffect()
 	bHasStarted = true;
 
 	// Ensure tag requirements are met before applying the effect
-	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
+	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
 		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
@@ -68,7 +68,7 @@ void UGMCAbilityEffect::StartEffect()
 	// Duration and Instant applies immediately.
 	if (EffectData.Period == 0)
 	{
-		for (const FGMCAttributeModifier Modifier : EffectData.Modifiers)
+		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
 			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier);
 		}
@@ -105,7 +105,7 @@ void UGMCAbilityEffect::EndEffect()
 
 	if (EffectData.bNegateEffectAtEnd && !EffectData.bIsInstant)
 	{
-		for (const FGMCAttributeModifier Modifier : EffectData.Modifiers)
+		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
 			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
 		}
@@ -121,7 +121,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
-	if( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ||
+	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
 		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
@@ -148,7 +148,7 @@ void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
 
 void UGMCAbilityEffect::PeriodTick()
 {
-	for (const FGMCAttributeModifier AttributeModifier : EffectData.Modifiers)
+	for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
 	{
 		OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier);
 	}
