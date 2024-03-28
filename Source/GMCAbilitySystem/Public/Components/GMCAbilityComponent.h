@@ -287,8 +287,7 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove);
-
-
+	
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void GenPredictionTick(float DeltaTime);
 
@@ -388,6 +387,9 @@ private:
 	void InstantiateAttributes();
 
 	void SetStartingTags();
+
+	// Check if ActiveTags has changed and call delegates
+	void CheckActiveTagsChanged();
 	
 	// Clear out abilities in the Ended state from the ActivateAbilities map
 	void CleanupStaleAbilities();
