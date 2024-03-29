@@ -303,6 +303,21 @@ float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag Abil
 	return 0.f;
 }
 
+TMap<FGameplayTag, float> UGMC_AbilitySystemComponent::GetCooldownsForInputTag(const FGameplayTag InputTag)
+{
+	TArray<TSubclassOf<UGMCAbility>> Abilities = GetGrantedAbilitiesByTag(InputTag);
+
+	TMap<FGameplayTag, float> Cooldowns;
+
+	for (auto Ability : Abilities)
+	{
+		FGameplayTag AbilityTag = Ability.GetDefaultObject()->AbilityTag;
+		Cooldowns.Add(AbilityTag, GetCooldownForAbility(AbilityTag));
+	}
+
+	return Cooldowns;
+}
+
 void UGMC_AbilitySystemComponent::MatchTagToBool(const FGameplayTag& InTag, bool MatchedBool){
 	if(!InTag.IsValid()) return;
 	if(MatchedBool){
@@ -739,7 +754,12 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	
 	if (Effect->EffectData.EffectID == 0)
 	{
-		// Todo: Need a better way to generate EffectIDs
+		if (ActionTimer == 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[ApplyAbilityEffect] Action Timer is 0, cannot generate Effect ID. Is it a listen server smoothed pawn?"));
+			return nullptr;
+		}
+		
 		int NewEffectID = static_cast<int>(ActionTimer * 100);
 		while (ActiveEffects.Contains(NewEffectID))
 		{

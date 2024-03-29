@@ -140,6 +140,10 @@ public:
 
 	UFUNCTION(BlueprintPure)
 	float GetCooldownForAbility(const FGameplayTag AbilityTag) const;
+
+	// Get the cooldowns for all abilities associated with Input tag
+	UFUNCTION(BlueprintCallable)
+	TMap<FGameplayTag, float> GetCooldownsForInputTag(const FGameplayTag InputTag);
 	/**
 	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
 	 * Call this function on Prediction Tick.
