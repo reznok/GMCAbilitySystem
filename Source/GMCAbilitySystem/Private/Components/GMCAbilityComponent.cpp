@@ -22,6 +22,56 @@ UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitialize
 	SetIsReplicatedByDefault(true);
 }
 
+FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
+	const FGameplayTagFilteredMulticastDelegate::FDelegate& Delegate)
+{
+	TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>* MatchedPair = nullptr;
+
+	for (auto& SearchPair : FilteredTagDelegates)
+	{
+		if (SearchPair.Key == Tags)
+		{
+			MatchedPair = &SearchPair;
+		}
+	}
+
+	if (!MatchedPair)
+	{
+		MatchedPair = new(FilteredTagDelegates) TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>(Tags, FGameplayTagFilteredMulticastDelegate());
+	}
+
+	return MatchedPair->Value.Add(Delegate);
+}
+
+void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
+	FDelegateHandle Handle)
+{
+	for (int32 Index = FilteredTagDelegates.Num() - 1; Index >= 0; --Index)
+	{
+		TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>& SearchPair = FilteredTagDelegates[Index];
+		if (SearchPair.Key == Tags)
+		{
+			SearchPair.Value.Remove(Handle);
+			if (!SearchPair.Value.IsBound())
+			{
+				FilteredTagDelegates.RemoveAt(Index);
+			}
+			break;
+		}
+	}
+}
+
+FDelegateHandle UGMC_AbilitySystemComponent::AddAttributeChangeDelegate(
+	const FGameplayAttributeChangedNative::FDelegate& Delegate)
+{
+	return NativeAttributeChangeDelegate.Add(Delegate);
+}
+
+void UGMC_AbilitySystemComponent::RemoveAttributeChangeDelegate(FDelegateHandle Handle)
+{
+	NativeAttributeChangeDelegate.Remove(Handle);
+}
+
 void UGMC_AbilitySystemComponent::BindReplicationData()
 {
 	// Attribute Binds
@@ -50,7 +100,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_InterpolationFunction::TargetValue);
 
 	// Attributes
-	BindInstancedStruct(BoundAttributes,
+	GMCMovementComponent->BindInstancedStruct(BoundAttributes,
 		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
@@ -64,14 +114,14 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 
-	GMCMovementComponent->BindGameplayTag(AbilityData.AbilityTag,
+	GMCMovementComponent->BindGameplayTag(AbilityData.InputTag,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 	
 	// TaskData Bind
-	BindInstancedStruct(TaskData,
+	GMCMovementComponent->BindInstancedStruct(TaskData,
 		EGMC_PredictionMode::ClientAuth_Input,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
@@ -87,48 +137,90 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
+	CheckActiveTagsChanged();
 }
 
-void UGMC_AbilitySystemComponent::GrantAbilityByTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
-	if (!GrantedAbilityTags.HasTag(AbilityTag))
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
+	{
+		AddAbilityMapData(Data);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData)
+{
+	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())
+	{
+		RemoveAbilityMapData(Data);
+	}
+}
+
+void UGMC_AbilitySystemComponent::GrantAbilityByTag(const FGameplayTag AbilityTag)
+{
+	if (!GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
 		GrantedAbilityTags.AddTag(AbilityTag);
 	}
 }
 
-void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag)
 {
-	if (GrantedAbilityTags.HasTag(AbilityTag))
+	if (GrantedAbilityTags.HasTagExact(AbilityTag))
 	{
 		GrantedAbilityTags.RemoveTag(AbilityTag);
 	}
 }
 
-bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(FGameplayTag GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(const FGameplayTag GameplayTag) const
 {
-	return GrantedAbilityTags.HasTag(GameplayTag);
+	return GrantedAbilityTags.HasTagExact(GameplayTag);
 }
 
-void UGMC_AbilitySystemComponent::AddActiveTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::AddActiveTag(const FGameplayTag AbilityTag)
 {
 	ActiveTags.AddTag(AbilityTag);
 }
 
-void UGMC_AbilitySystemComponent::RemoveActiveTag(FGameplayTag AbilityTag)
+void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 {
-	if (ActiveTags.HasTag(AbilityTag))
+	if (ActiveTags.HasTagExact(AbilityTag))
 	{
 		ActiveTags.RemoveTag(AbilityTag);
 	}
 }
 
-bool UGMC_AbilitySystemComponent::HasActiveTag(FGameplayTag GameplayTag) const
+bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag GameplayTag) const
 {
-	return ActiveTags.HasTag(GameplayTag);
+	return ActiveTags.HasTagExact(GameplayTag);
 }
 
-TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGameplayTag ParentTag){
+bool UGMC_AbilitySystemComponent::HasActiveTagExact(const FGameplayTag GameplayTag) const
+{
+	return ActiveTags.HasTagExact(GameplayTag);
+}
+
+bool UGMC_AbilitySystemComponent::HasAnyTag(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAny(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAnyTagExact(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAnyExact(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAllTags(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAll(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAllExact(TagsToCheck);
+}
+
+TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const FGameplayTag ParentTag){
 	TArray<FGameplayTag> MatchedTags;
 	if(!ParentTag.IsValid()) return MatchedTags;
 	for(FGameplayTag Tag : ActiveTags){
@@ -139,38 +231,48 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(FGame
 	return MatchedTags;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
-	if (const TSubclassOf<UGMCAbility> ActivatedAbility = GetGrantedAbilityByTag(AbilityTag))
+	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
-		// Generated ID is based on ActionTimer so it always lines up on client/server
-		// Also helps when dealing with replays
-		const int AbilityID = GenerateAbilityID();
-
-		// Replays may try to create duplicate abilities
-		if (ActiveAbilities.Contains(AbilityID)) return false;
-		
-		//UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Generated Ability Activation ID: %d"), InAbilityData.AbilityActivationID);
-		
-		UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
-		
-		Ability->Execute(this, AbilityID, InputAction);
-		ActiveAbilities.Add(AbilityID, Ability);
-		
-		if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}		
-		return true;
+		TryActivateAbility(ActivatedAbility, InputAction);
 	}
-
-	return false;
 }
 
-void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag AbilityTag, UInputAction* InputAction)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
+{
+	if (ActivatedAbility == nullptr) return false;
+	
+	// Generated ID is based on ActionTimer so it always lines up on client/server
+	// Also helps when dealing with replays
+	int AbilityID = GenerateAbilityID();
+
+	// If multiple abilities are activated on the same frame, add 1 to the ID
+	// This should never actually happen as abilities get queued
+	while (ActiveAbilities.Contains(AbilityID)){
+		AbilityID += 1;
+	}
+	
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Ability Activation ID: %d"), HasAuthority(), AbilityID);
+	
+	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
+	Ability->AbilityData = AbilityData;
+	
+	Ability->Execute(this, AbilityID, InputAction);
+	ActiveAbilities.Add(AbilityID, Ability);
+	
+	if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}
+	
+	return true;
+}
+
+void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
 	
 	FGMCAbilityData Data;
-	Data.AbilityTag = AbilityTag;
+	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
 	QueuedAbilities.Push(Data);
 }
@@ -180,7 +282,7 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 	QueuedTaskData.Push(InTaskData);
 }
 
-void UGMC_AbilitySystemComponent::SetCooldownForAbility(FGameplayTag AbilityTag, float CooldownTime)
+void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime)
 {
 	if (AbilityTag == FGameplayTag::EmptyTag) return;
 	
@@ -192,7 +294,7 @@ void UGMC_AbilitySystemComponent::SetCooldownForAbility(FGameplayTag AbilityTag,
 	ActiveCooldowns.Add(AbilityTag, CooldownTime);
 }
 
-float UGMC_AbilitySystemComponent::GetCooldownForAbility(FGameplayTag AbilityTag) const
+float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag AbilityTag) const
 {
 	if (ActiveCooldowns.Contains(AbilityTag))
 	{
@@ -201,7 +303,22 @@ float UGMC_AbilitySystemComponent::GetCooldownForAbility(FGameplayTag AbilityTag
 	return 0.f;
 }
 
-void UGMC_AbilitySystemComponent::MatchTagToBool(FGameplayTag InTag, bool MatchedBool){
+TMap<FGameplayTag, float> UGMC_AbilitySystemComponent::GetCooldownsForInputTag(const FGameplayTag InputTag)
+{
+	TArray<TSubclassOf<UGMCAbility>> Abilities = GetGrantedAbilitiesByTag(InputTag);
+
+	TMap<FGameplayTag, float> Cooldowns;
+
+	for (auto Ability : Abilities)
+	{
+		FGameplayTag AbilityTag = Ability.GetDefaultObject()->AbilityTag;
+		Cooldowns.Add(AbilityTag, GetCooldownForAbility(AbilityTag));
+	}
+
+	return Cooldowns;
+}
+
+void UGMC_AbilitySystemComponent::MatchTagToBool(const FGameplayTag& InTag, bool MatchedBool){
 	if(!InTag.IsValid()) return;
 	if(MatchedBool){
 		AddActiveTag(InTag);
@@ -209,6 +326,15 @@ void UGMC_AbilitySystemComponent::MatchTagToBool(FGameplayTag InTag, bool Matche
 	else{
 		RemoveActiveTag(InTag);
 	}
+}
+
+bool UGMC_AbilitySystemComponent::IsServerOnly() const
+{
+	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
+	{
+		return !Pawn->IsPlayerControlled();
+	}
+	return true;
 }
 
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
@@ -235,20 +361,22 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	// Abilities
 	CleanupStaleAbilities();
 
+	
+	
 	// Was an ability used?
-	if (AbilityData.AbilityTag != FGameplayTag::EmptyTag)
+	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbility(AbilityData.AbilityTag, AbilityData.ActionInput);
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput);
 	}
 
 	// Ability Task Data
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
-			if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
-			{
-				ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
-			}
+		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
+		{
+			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
 	}
 	
 	AbilityData = FGMCAbilityData{};
@@ -257,8 +385,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
-	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
+	CheckActiveTagsChanged();
 	
+	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
 	if (bJustTeleported)
 	{
@@ -285,6 +414,7 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 	Super::BeginPlay();
 	InitializeStartingAbilities();
 	InitializeAbilityMap();
+	SetStartingTags();
 }
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
@@ -308,6 +438,59 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			else{
 				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::SetStartingTags()
+{
+	ActiveTags.AppendTags(StartingTags);
+}
+
+void UGMC_AbilitySystemComponent::CheckActiveTagsChanged()
+{
+	// Only bother checking changes in tags if we actually have delegates which care.
+	if (OnActiveTagsChanged.IsBound() || !FilteredTagDelegates.IsEmpty())
+	{
+		if (GetActiveTags() != PreviousActiveTags)
+		{
+			FGameplayTagContainer AllTags = GetActiveTags();
+			AllTags.AppendTags(PreviousActiveTags);
+		
+			FGameplayTagContainer AddedTags;
+			FGameplayTagContainer RemovedTags;
+			for (const FGameplayTag& Tag : AllTags)
+			{
+				if (GetActiveTags().HasTagExact(Tag) && !PreviousActiveTags.HasTagExact(Tag))
+				{
+					AddedTags.AddTagFast(Tag);
+				}
+				else if (!GetActiveTags().HasTagExact(Tag) && PreviousActiveTags.HasTagExact(Tag))
+				{
+					RemovedTags.AddTagFast(Tag);
+				}
+			}
+			
+			// Let any general 'active tag changed' delegates know about our changes.
+			OnActiveTagsChanged.Broadcast(AddedTags, RemovedTags);
+
+			// If we have filtered tag delegates, call them if appropriate.
+			if (!FilteredTagDelegates.IsEmpty())
+			{
+				for (const auto& FilteredBinding : FilteredTagDelegates)
+				{
+					FGameplayTagContainer AddedMatches = AddedTags.Filter(FilteredBinding.Key);
+					FGameplayTagContainer RemovedMatches = RemovedTags.Filter(FilteredBinding.Key);
+
+					if (!AddedMatches.IsEmpty() || !RemovedMatches.IsEmpty())
+					{
+						FilteredBinding.Value.Broadcast(AddedMatches, RemovedMatches);
+					}
+					
+				}
+			}
+		
+			PreviousActiveTags = GetActiveTags();
 		}
 	}
 }
@@ -451,30 +634,66 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 	if (ActiveAbilities.Contains(AbilityID))
 	{
 		ActiveAbilities[AbilityID]->ServerConfirm();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Ability Activation: %d"), AbilityID);
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Long-Running Ability Activation: %d"), AbilityID);
 	}
 }
 
-TSubclassOf<UGMCAbility> UGMC_AbilitySystemComponent::GetGrantedAbilityByTag(FGameplayTag AbilityTag)
+TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitiesByTag(FGameplayTag AbilityTag)
 {
 	if (!GrantedAbilityTags.HasTag(AbilityTag))
 	{
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Granted: %s"), *AbilityTag.ToString());
-		return nullptr;
+		return {};
 	}
 
 	if (!AbilityMap.Contains(AbilityTag))
 	{
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s | Check The Component's AbilityMap"), *AbilityTag.ToString());
-		return nullptr;
+		return {};
 	}
 
-	return AbilityMap[AbilityTag];
+	return AbilityMap[AbilityTag].Abilities;
 }
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
-	if(!StartingAbilityMap) return;
-	AbilityMap.Append(StartingAbilityMap.Get()->GetAbilityMap());
+	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
+	{
+		for (const FAbilityMapData& Data : StartingAbilityMap->GetAbilityMapData())
+		{
+			AddAbilityMapData(Data);
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::AddAbilityMapData(const FAbilityMapData& AbilityMapData)
+{
+	if (AbilityMap.Contains(AbilityMapData.InputTag))
+	{
+		AbilityMap[AbilityMapData.InputTag] = AbilityMapData;
+	}
+	else
+	{
+		AbilityMap.Add(AbilityMapData.InputTag, AbilityMapData);
+	}
+	
+	if (AbilityMapData.bGrantedByDefault)
+	{
+		GrantedAbilityTags.AddTag(AbilityMapData.InputTag);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RemoveAbilityMapData(const FAbilityMapData& AbilityMapData)
+{
+	if (AbilityMap.Contains(AbilityMapData.InputTag))
+	{
+		AbilityMap.Remove(AbilityMapData.InputTag);
+	}
+	{
+		if (GrantedAbilityTags.HasTag(AbilityMapData.InputTag))
+		{
+			GrantedAbilityTags.RemoveTag(AbilityMapData.InputTag);
+		}
+	}
 }
 
 void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
@@ -499,6 +718,7 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct Previ
 	for (const FAttribute& Attribute : CurrentAttributes){
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 		}
 	}
 }
@@ -534,7 +754,12 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	
 	if (Effect->EffectData.EffectID == 0)
 	{
-		// Todo: Need a better way to generate EffectIDs
+		if (ActionTimer == 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[ApplyAbilityEffect] Action Timer is 0, cannot generate Effect ID. Is it a listen server smoothed pawn?"));
+			return nullptr;
+		}
+		
 		int NewEffectID = static_cast<int>(ActionTimer * 100);
 		while (ActiveEffects.Contains(NewEffectID))
 		{
@@ -601,11 +826,26 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
-		AllAttributes.Add(&Attribute);
+	if (UnBoundAttributes.IsValid())
+	{
+		for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
+			AllAttributes.Add(&Attribute);
+		}
 	}
-	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
-		AllAttributes.Add(&Attribute);
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing unbound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	}
+
+	if (BoundAttributes.IsValid())
+	{
+		for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
+			AllAttributes.Add(&Attribute);
+		}
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing bound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
 	}
 	return AllAttributes;
 }
@@ -638,11 +878,17 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0;
 }
 
-bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue)
+bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue, bool bResetModifiers)
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
 		Att->Value = NewValue;
+
+		if (bResetModifiers)
+		{
+			Att->ResetModifiers();
+		}
+		
 		return true;
 	}
 	return false;
@@ -722,6 +968,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		AffectedAttribute->ApplyModifier(AttributeModifier);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 	}
 }
 

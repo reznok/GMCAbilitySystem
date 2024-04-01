@@ -1,12 +1,11 @@
 ﻿#pragma once
 #include "GMCAbilityTaskBase.h"
-#include "WorldTime.h"
 #include "WaitDelay.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FGMCAbilityTaskWaitDelayOutputPin);
 
 UCLASS()
-class UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBase
 {
 	GENERATED_UCLASS_BODY()
 	

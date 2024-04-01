@@ -1,5 +1,6 @@
 ﻿#include "Ability/GMCAbility.h"
 #include "GMCAbilitySystem.h"
+#include "GMCPawn.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
 
@@ -39,7 +40,7 @@ void UGMCAbility::TickTasks(float DeltaTime)
 	}
 }
 
-void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, UInputAction* InputAction)
+void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction)
 {
 	this->AbilityInputAction = InputAction;
 	this->AbilityID = InAbilityID;
@@ -220,11 +221,10 @@ void UGMCAbility::BeginAbility()
 
 void UGMCAbility::EndAbility()
 {
-	// RunningTasks.Empty();
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
 		if (Task.Value == nullptr) continue;
-		Task.Value->EndTask();
+		Task.Value->EndTaskGMAS();
 	}
 	
 	AbilityState = EAbilityState::Ended;
@@ -234,6 +234,22 @@ void UGMCAbility::EndAbility()
 AActor* UGMCAbility::GetOwnerActor() const
 {
 	return OwnerAbilityComponent->GetOwner();
+}
+
+AGMC_Pawn* UGMCAbility::GetOwnerPawn() const{
+	if (AGMC_Pawn* OwningPawn = Cast<AGMC_Pawn>(GetOwnerActor())){
+		return OwningPawn;
+	}
+	return nullptr;
+}
+
+AGMC_PlayerController* UGMCAbility::GetOwningPlayerController() const{
+	if (const AGMC_Pawn* OwningPawn = GetOwnerPawn()){
+		if(AGMC_PlayerController* OwningPC = Cast<AGMC_PlayerController>(OwningPawn->GetController())){
+			return OwningPC;
+		}
+	}
+	return nullptr;
 }
 
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
