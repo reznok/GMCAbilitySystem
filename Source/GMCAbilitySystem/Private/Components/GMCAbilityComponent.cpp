@@ -192,7 +192,7 @@ void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 
 bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag GameplayTag) const
 {
-	return ActiveTags.HasTagExact(GameplayTag);
+	return ActiveTags.HasTag(GameplayTag);
 }
 
 bool UGMC_AbilitySystemComponent::HasActiveTagExact(const FGameplayTag GameplayTag) const
