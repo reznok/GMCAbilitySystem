@@ -888,7 +888,16 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 		{
 			Att->ResetModifiers();
 		}
-		
+
+		if (Att->bIsGMCBound)
+		{
+			BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirtyByTag(AttributeTag);
+		}
+		else
+		{
+			UnBoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirtyByTag(AttributeTag);
+		}
+
 		return true;
 	}
 	return false;
@@ -967,6 +976,15 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		}
 		AffectedAttribute->ApplyModifier(AttributeModifier);
 
+		if (AffectedAttribute->bIsGMCBound)
+		{
+			BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirtyByTag(AffectedAttribute->Tag);
+		}
+		else
+		{
+			UnBoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirtyByTag(AffectedAttribute->Tag);
+		}
+		
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 	}
