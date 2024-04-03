@@ -49,7 +49,7 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float Value{0};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EModifierType ModifierType{EModifierType::Add};
 
 	// Metadata tags to be passed with the attribute
