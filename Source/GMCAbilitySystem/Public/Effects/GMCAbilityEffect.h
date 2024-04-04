@@ -52,6 +52,12 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	EModifierType ModifierType{EModifierType::Add};
 
+	// Only affects Add modifiers
+	// Should this value directly modify the Attribute's BaseValue
+	// Set True for temporary effects, False for permanent effects
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	bool bApplyToBaseValue = false;
+
 	// Metadata tags to be passed with the attribute
 	// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)

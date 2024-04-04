@@ -429,8 +429,10 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.BaseValue = AttributeData.DefaultValue;
+			NewAttribute.Clamp = AttributeData.Clamp;
+			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
-			NewAttribute.CalculateValue();
+			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
 				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
@@ -439,6 +441,18 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
 		}
+	}
+
+	// After all attributes are initialized, calc their values which will primarily apply their Clamps
+	
+	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	{
+		Attribute.CalculateValue();
+	}
+
+	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	{
+		Attribute.CalculateValue();
 	}
 }
 
