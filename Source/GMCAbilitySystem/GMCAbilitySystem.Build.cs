@@ -18,6 +18,7 @@ public class GMCAbilitySystem : ModuleRules
 				"GameplayTasks",
 				"GameplayTags",
 				"GameplayDebugger",
+				"NetCore",
 				"StructUtils"
 				// ... add other public dependencies that you statically link with here ...
 			}
