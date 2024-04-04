@@ -16,7 +16,7 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 
 	// Value will be clamped to the value of this attribute
 	// If set, this will take priority over Min
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
 	FGameplayTag MinAttributeTag;
 
 	// Maximum attribute value
@@ -25,7 +25,7 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 
 	// Value will be clamped to the value of this attribute
 	// If set, this will take priority over Max
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
 	FGameplayTag MaxAttributeTag;
 
 	UPROPERTY()
