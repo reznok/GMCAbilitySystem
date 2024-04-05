@@ -2,11 +2,10 @@
 #include "GameplayTagContainer.h"
 #include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
-#include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
-struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
+struct GMCABILITYSYSTEM_API FAttribute
 {
 	GENERATED_BODY()
 	FAttribute(){};
@@ -107,8 +106,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 };
 
 USTRUCT()
-struct GMCABILITYSYSTEM_API FGMCAttributeSet : public FFastArraySerializer
-{
+struct GMCABILITYSYSTEM_API FGMCAttributeSet{
 	GENERATED_BODY()
 
 	UPROPERTY()
@@ -117,30 +115,5 @@ struct GMCABILITYSYSTEM_API FGMCAttributeSet : public FFastArraySerializer
 	void AddAttribute(FAttribute NewAttribute) {Attributes.Add(NewAttribute);}
 
 	TArray<FAttribute> GetAttributes() const{return Attributes;}
-
-	bool NetDeltaSerialize(FNetDeltaSerializeInfo & DeltaParms)
-	{
-		return FFastArraySerializer::FastArrayDeltaSerialize<FAttribute, FGMCAttributeSet>( Attributes, DeltaParms, *this );
-	}
-
-	void MarkAttributeDirtyByTag(FGameplayTag AttributeTag)
-	{
-		for (auto& Attribute : Attributes)
-		{
-			if (Attribute.Tag.MatchesTag(AttributeTag))
-			{
-				MarkItemDirty(Attribute);
-			}
-		}
-	}
-};
-
-template<>
-struct TStructOpsTypeTraits< FGMCAttributeSet > : public TStructOpsTypeTraitsBase2< FGMCAttributeSet >
-{
-	enum 
-	{
-		WithNetDeltaSerializer = true,
-   };
 };
 
