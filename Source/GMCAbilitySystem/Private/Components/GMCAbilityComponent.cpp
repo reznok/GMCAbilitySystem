@@ -896,7 +896,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
-		Att->BaseValue = NewValue;
+		Att->SetBaseValue(NewValue);
 
 		if (bResetModifiers)
 		{

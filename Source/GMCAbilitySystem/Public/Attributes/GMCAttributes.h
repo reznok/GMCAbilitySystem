@@ -79,6 +79,13 @@ struct GMCABILITYSYSTEM_API FAttribute
 		MultiplyModifier = 1;
 		DivisionModifier = 1;
 	}
+
+	// Allow for externally directly setting the BaseValue
+	// Usually preferred to go through Effects/Modifiers instead of this
+	void SetBaseValue(const float Value) const
+	{
+		BaseValue = Clamp.ClampValue(Value);
+	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	mutable float Value{0};
