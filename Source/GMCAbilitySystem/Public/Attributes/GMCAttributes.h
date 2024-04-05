@@ -82,9 +82,9 @@ struct GMCABILITYSYSTEM_API FAttribute
 
 	// Allow for externally directly setting the BaseValue
 	// Usually preferred to go through Effects/Modifiers instead of this
-	void SetBaseValue(const float Value) const
+	void SetBaseValue(const float NewValue) const
 	{
-		BaseValue = Clamp.ClampValue(Value);
+		BaseValue = Clamp.ClampValue(NewValue);
 	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
