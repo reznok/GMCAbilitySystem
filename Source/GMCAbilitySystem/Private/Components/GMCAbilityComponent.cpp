@@ -896,7 +896,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
-		Att->Value = NewValue;
+		Att->BaseValue = NewValue;
 
 		if (bResetModifiers)
 		{
@@ -956,7 +956,7 @@ FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 
 #pragma endregion  ToStringHelpers
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bModifyBaseValue, bool bNegateValue,  UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
 	UGMCAttributeModifierContainer* AttributeModifierContainer = NewObject<UGMCAttributeModifierContainer>(this);
@@ -979,7 +979,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		{
 			AttributeModifier.Value = -AttributeModifier.Value;
 		}
-		AffectedAttribute->ApplyModifier(AttributeModifier);
+		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);

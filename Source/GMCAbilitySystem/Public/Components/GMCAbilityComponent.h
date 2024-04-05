@@ -241,7 +241,7 @@ public:
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
-	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
+	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier,bool bModifyBaseValue, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
 
 	UPROPERTY(BlueprintReadWrite)
 	bool bJustTeleported;

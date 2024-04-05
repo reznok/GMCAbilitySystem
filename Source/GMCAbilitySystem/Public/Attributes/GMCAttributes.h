@@ -24,12 +24,12 @@ struct GMCABILITYSYSTEM_API FAttribute
 	UPROPERTY()
 	mutable float DivisionModifier{1};
 
-	void ApplyModifier(const FGMCAttributeModifier& Modifier) const
+	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue) const
 	{
 		switch(Modifier.ModifierType)
 		{
 		case EModifierType::Add:
-			if (Modifier.bApplyToBaseValue)
+			if (bModifyBaseValue)
 			{
 				BaseValue += Modifier.Value;
 				BaseValue = Clamp.ClampValue(BaseValue);
