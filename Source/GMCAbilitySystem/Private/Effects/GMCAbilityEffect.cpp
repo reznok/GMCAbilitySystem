@@ -73,10 +73,11 @@ void UGMCAbilityEffect::StartEffect()
 			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
 		}
 		EndEffect();
+		return;
 	}
 
 	// Duration Effects that aren't periodic alter modifiers, not base
-	if (EffectData.Period == 0)
+	if (!EffectData.bIsInstant && EffectData.Period == 0)
 	{
 		EffectData.bNegateEffectAtEnd = true;
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)

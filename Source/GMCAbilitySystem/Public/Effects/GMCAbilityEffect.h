@@ -72,7 +72,7 @@ struct FGMCAbilityEffectData
 
 	// Apply an inversed version of the modifiers at effect end
 	UPROPERTY()
-	bool bNegateEffectAtEnd = true;
+	bool bNegateEffectAtEnd = false;
 
 	// Delay before the effect starts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
