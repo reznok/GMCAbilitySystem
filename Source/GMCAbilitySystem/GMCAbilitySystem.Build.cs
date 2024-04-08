@@ -44,6 +44,7 @@ public class GMCAbilitySystem : ModuleRules
 		
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Attributes"));
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 	}
 }
