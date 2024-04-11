@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "GameplayTagContainer.h"
+#include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAttributes.generated.h"
 
@@ -11,25 +12,32 @@ struct GMCABILITYSYSTEM_API FAttribute
 
 	void Init() const
 	{
-		CalculateValue();
+		CalculateValue(false);
 	}
 
-	// Starting Value of the attribute. Modifiers use this for calculations.
 	UPROPERTY()
 	mutable float AdditiveModifier{0};
-
+	
 	UPROPERTY()
 	mutable float MultiplyModifier{1};
 
 	UPROPERTY()
 	mutable float DivisionModifier{1};
 
-	void ApplyModifier(const FGMCAttributeModifier& Modifier) const
+	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue) const
 	{
 		switch(Modifier.ModifierType)
 		{
 		case EModifierType::Add:
-			AdditiveModifier += Modifier.Value;
+			if (bModifyBaseValue)
+			{
+				BaseValue += Modifier.Value;
+				BaseValue = Clamp.ClampValue(BaseValue);
+			}
+			else
+			{
+				AdditiveModifier += Modifier.Value;
+			}
 			break;
 		case EModifierType::Multiply:
 			MultiplyModifier += Modifier.Value;
@@ -44,7 +52,7 @@ struct GMCABILITYSYSTEM_API FAttribute
 		CalculateValue();
 	}
 
-	void CalculateValue() const
+	void CalculateValue(bool bClamp = true) const
 	{
 		// Prevent divide by 0 and negative divisors
 		float LocalDivisionModifier = DivisionModifier;
@@ -58,15 +66,25 @@ struct GMCABILITYSYSTEM_API FAttribute
 			LocalMultiplyModifier = 0;
 		}
 		
-		Value = (AdditiveModifier + (BaseValue * LocalMultiplyModifier)) / LocalDivisionModifier;
+		Value =((BaseValue + AdditiveModifier) * LocalMultiplyModifier) / LocalDivisionModifier;
+		if (bClamp)
+		{
+			Value = Clamp.ClampValue(Value);
+		}
 	}
 
 	// Reset the modifiers to the base value. May cause jank if there's effects going on.
 	void ResetModifiers() const
 	{
-		AdditiveModifier = 0;
 		MultiplyModifier = 1;
 		DivisionModifier = 1;
+	}
+
+	// Allow for externally directly setting the BaseValue
+	// Usually preferred to go through Effects/Modifiers instead of this
+	void SetBaseValue(const float NewValue) const
+	{
+		BaseValue = Clamp.ClampValue(NewValue);
 	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -83,6 +101,11 @@ struct GMCABILITYSYSTEM_API FAttribute
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
 	UPROPERTY(EditDefaultsOnly)
 	bool bIsGMCBound = false;
+
+	// Clamp the attribute to a certain range
+	// Clamping will only happen if this is modified
+	UPROPERTY(EditDefaultsOnly)
+	FAttributeClamp Clamp{};
 
 	FString ToString() const{
 		return FString::Printf(TEXT("%s : %f (Bound: %d)"), *Tag.ToString(), Value, bIsGMCBound);

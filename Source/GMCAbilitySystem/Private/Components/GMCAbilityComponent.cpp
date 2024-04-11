@@ -429,8 +429,10 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.BaseValue = AttributeData.DefaultValue;
+			NewAttribute.Clamp = AttributeData.Clamp;
+			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
-			NewAttribute.CalculateValue();
+			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
 				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
@@ -439,6 +441,18 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
 		}
+	}
+
+	// After all attributes are initialized, calc their values which will primarily apply their Clamps
+	
+	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	{
+		Attribute.CalculateValue();
+	}
+
+	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	{
+		Attribute.CalculateValue();
 	}
 }
 
@@ -882,7 +896,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
-		Att->Value = NewValue;
+		Att->SetBaseValue(NewValue);
 
 		if (bResetModifiers)
 		{
@@ -942,7 +956,7 @@ FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 
 #pragma endregion  ToStringHelpers
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bModifyBaseValue, bool bNegateValue,  UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
 	UGMCAttributeModifierContainer* AttributeModifierContainer = NewObject<UGMCAttributeModifierContainer>(this);
@@ -965,7 +979,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		{
 			AttributeModifier.Value = -AttributeModifier.Value;
 		}
-		AffectedAttribute->ApplyModifier(AttributeModifier);
+		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
