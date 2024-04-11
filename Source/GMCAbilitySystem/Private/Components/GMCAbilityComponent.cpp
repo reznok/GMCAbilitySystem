@@ -138,6 +138,15 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
 	CheckActiveTagsChanged();
+	TickActiveEffects(DeltaTime);
+	TickActiveCooldowns(DeltaTime);
+	TickAncillaryActiveAbilities(DeltaTime);
+
+	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
+	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
+	{
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
+	}
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -231,12 +240,15 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 	return MatchedTags;
 }
 
-void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
 	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
 	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
-		TryActivateAbility(ActivatedAbility, InputAction);
+		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
+		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
+			TryActivateAbility(ActivatedAbility, InputAction);
+		}
 	}
 }
 
@@ -354,19 +366,16 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		StartingEffects.Empty();
 	}
 	
-	TickActiveEffects(DeltaTime);
+	
 	TickActiveAbilities(DeltaTime);
-	TickActiveCooldowns(DeltaTime);
 	
 	// Abilities
 	CleanupStaleAbilities();
-
-	
 	
 	// Was an ability used?
 	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput);
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, true);
 	}
 
 	// Ability Task Data
@@ -565,6 +574,13 @@ void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
 	{
 		Ability.Value->Tick(DeltaTime);
+	}
+}
+
+void UGMC_AbilitySystemComponent::TickAncillaryActiveAbilities(float DeltaTime){
+	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	{
+		Ability.Value->AncillaryTick(DeltaTime);
 	}
 }
 
