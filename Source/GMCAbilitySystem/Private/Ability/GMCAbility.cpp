@@ -31,12 +31,25 @@ void UGMCAbility::Tick(float DeltaTime)
 	TickEvent(DeltaTime);
 }
 
+void UGMCAbility::AncillaryTick(float DeltaTime){
+	AncillaryTickTasks(DeltaTime);
+	AncillaryTickEvent(DeltaTime);
+}
+
 void UGMCAbility::TickTasks(float DeltaTime)
 {
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
 		if (Task.Value == nullptr) {continue;}
 		Task.Value->Tick(DeltaTime);
+	}
+}
+
+void UGMCAbility::AncillaryTickTasks(float DeltaTime){
+	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	{
+		if (Task.Value == nullptr) {continue;}
+		Task.Value->AncillaryTick(DeltaTime);
 	}
 }
 

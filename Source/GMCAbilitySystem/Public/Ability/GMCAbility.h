@@ -54,14 +54,21 @@ public:
 
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
+	void AncillaryTickTasks(float DeltaTime);
 	
 	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
 	
-	// Called by AbilityComponent
+	// Called by AbilityComponent (this is a prediction tick so should be used for movement)
 	virtual void Tick(float DeltaTime);
+	
+	// Called by AbilityComponent from AncillaryTick (won't be rolled back on mispredictions)
+	virtual void AncillaryTick(float DeltaTime);
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void TickEvent(float DeltaTime);
+
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Ancillary Tick Ability"), Category="GMCAbilitySystem|Ability")
+	void AncillaryTickEvent(float DeltaTime);
 	
 	UFUNCTION()
 	virtual void BeginAbility();
@@ -164,6 +171,13 @@ public:
 	UPROPERTY(EditDefaultsOnly)
 	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
+
+	/** 
+	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.
+	 * Should be set to false for actions that should not be replayed on mispredictions. i.e. firing a weapon
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly)
+	bool bActivateOnMovementTick = true; 
 
 	UFUNCTION()
 	void ServerConfirm();

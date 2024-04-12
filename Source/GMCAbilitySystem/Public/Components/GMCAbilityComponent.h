@@ -122,7 +122,7 @@ public:
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr);
+	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr);
@@ -403,6 +403,9 @@ private:
 
 	// Tick active abilities, primarily the Tasks inside them
 	void TickActiveAbilities(float DeltaTime);
+
+	// Tick active abilities, but from the ancillary tick rather than prediction
+	void TickAncillaryActiveAbilities(float DeltaTime);
 
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);

@@ -39,6 +39,9 @@ public:
 	// Tick called by AbilityComponent, different from TickTask
 	virtual void Tick(float DeltaTime);
 
+	// AncillaryTick called by AbilityComponent, different from TickTask
+	virtual void AncillaryTick(float DeltaTime);
+
 	/** Helper function for instantiating and initializing a new task */
 	template <class T>
 	static T* NewAbilityTask(UGMCAbility* ThisAbility, FName InstanceName = FName())
