@@ -60,12 +60,15 @@ void AGMAS_Pawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent
 {
 	if (const UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent); InputMappingContext && EnhancedInput)
 	{
-		if (const ULocalPlayer* Player = Cast<ULocalPlayer>(GetController()))
+		if (const AGMC_PlayerController* Player = Cast<AGMC_PlayerController>(GetController()))
 		{
-			if (UEnhancedInputLocalPlayerSubsystem* InputSystem = Player->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
+			if (Player->GetLocalPlayer() != nullptr)
 			{
-				// Add our default system as the lowest mapping context.
-				InputSystem->AddMappingContext(InputMappingContext, 0);
+				if (UEnhancedInputLocalPlayerSubsystem* InputSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(Player->GetLocalPlayer()))
+				{
+					// Add our default system as the lowest mapping context.
+					InputSystem->AddMappingContext(InputMappingContext, 0);
+				}				
 			}
 		}
 	}
