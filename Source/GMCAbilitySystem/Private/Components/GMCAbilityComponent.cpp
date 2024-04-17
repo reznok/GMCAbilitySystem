@@ -434,6 +434,10 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 
 	// Loop through each of the data assets inputted into the component to create new attributes.
 	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
+
+		// Avoid crashing in an editor preview if we're actually editing the ability component's attribute table.
+		if (!AttributeDataAsset) continue;
+		
 		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
@@ -688,6 +692,10 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
 	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
 	{
+
+		// Avoid crashing if we're adding a new entry to the ability map in the editor.
+		if (!StartingAbilityMap) continue;
+		
 		for (const FAbilityMapData& Data : StartingAbilityMap->GetAbilityMapData())
 		{
 			AddAbilityMapData(Data);
