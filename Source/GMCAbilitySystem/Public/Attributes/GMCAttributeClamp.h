@@ -31,7 +31,10 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 	UPROPERTY()
 	UGMC_AbilitySystemComponent* AbilityComponent;
 
-	bool operator==(const FAttributeClamp* Other) const {return Other->Min == Min && Other->Max == Max && Other->MinAttributeTag == MinAttributeTag && Other->MaxAttributeTag == MaxAttributeTag;}
+	bool operator==(const FAttributeClamp* Other) const {return *this == *Other;} 
+	bool operator==(const FAttributeClamp& Other) const {return Other.Min == Min && Other.Max == Max && Other.MinAttributeTag == MinAttributeTag && Other.MaxAttributeTag == MaxAttributeTag;}
 
+	bool IsSet() const;
+	
 	float ClampValue(float Value) const;
 };

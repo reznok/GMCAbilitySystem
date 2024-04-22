@@ -3,10 +3,15 @@
 
 #include "GMCAbilityComponent.h"
 
+bool FAttributeClamp::IsSet() const
+{
+	return Min != 0.f || Max != 0.f || MinAttributeTag != FGameplayTag::EmptyTag || MaxAttributeTag != FGameplayTag::EmptyTag;
+}
+
 float FAttributeClamp::ClampValue(float Value) const
 {
 	// Clamp not set, return Value
-	if (this == FAttributeClamp{}){return Value;}
+	if (!IsSet()) {return Value;}
 
 	// No AbilityComponent, clamp to Min and Max
 	if (!AbilityComponent)
