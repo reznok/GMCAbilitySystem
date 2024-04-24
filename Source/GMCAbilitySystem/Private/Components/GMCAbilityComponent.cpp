@@ -11,6 +11,7 @@
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/UnrealNetwork.h"
+#include "WorldPartition/ContentBundle/ContentBundleLog.h"
 
 
 // Sets default values for this component's properties
@@ -429,7 +430,7 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
 	BoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
-	UnBoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	UnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
 	// Loop through each of the data assets inputted into the component to create new attributes.
@@ -451,7 +452,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
 			}
 			else{
-				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+				UnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
 	}
@@ -463,7 +464,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		Attribute.CalculateValue();
 	}
 
-	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	for (const FAttribute& Attribute : UnBoundAttributes.Items)
 	{
 		Attribute.CalculateValue();
 	}
@@ -742,10 +743,10 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes)
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes)
 {
-	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Get<FGMCAttributeSet>().Attributes;
-	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Get<FGMCAttributeSet>().Attributes;
+	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Items;
+	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
 	TMap<FGameplayTag, float> OldValues;
 	
@@ -757,6 +758,9 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct Previ
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+
+			BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirty(Attribute);
+			UnBoundAttributes.MarkAttributeDirty(Attribute);
 		}
 	}
 }
@@ -864,15 +868,8 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	if (UnBoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing unbound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : UnBoundAttributes.Items){
+		AllAttributes.Add(&Attribute);
 	}
 
 	if (BoundAttributes.IsValid())
@@ -1007,6 +1004,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+
+		BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirty(*AffectedAttribute);
+		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 	}
 }
 

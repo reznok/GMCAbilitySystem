@@ -2,10 +2,11 @@
 #include "GameplayTagContainer.h"
 #include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
 USTRUCT(BlueprintType)
-struct GMCABILITYSYSTEM_API FAttribute
+struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 {
 	GENERATED_BODY()
 	FAttribute(){};
@@ -50,6 +51,7 @@ struct GMCABILITYSYSTEM_API FAttribute
 		}
 		
 		CalculateValue();
+		
 	}
 
 	void CalculateValue(bool bClamp = true) const
@@ -112,15 +114,63 @@ struct GMCABILITYSYSTEM_API FAttribute
 	}
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FGMCAttributeSet{
 	GENERATED_BODY()
 
 	UPROPERTY()
 	TArray<FAttribute> Attributes;
 
-	void AddAttribute(FAttribute NewAttribute) {Attributes.Add(NewAttribute);}
+	void AddAttribute(const FAttribute& NewAttribute) {Attributes.Add(NewAttribute);}
 
 	TArray<FAttribute> GetAttributes() const{return Attributes;}
+
+	void MarkAttributeDirty(const FAttribute& Attribute) {};
 };
 
+USTRUCT(BlueprintType)
+struct FGMCUnboundAttributeSet : public FFastArraySerializer
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FAttribute> Items;
+
+	void AddAttribute(const FAttribute& NewAttribute)
+	{
+		Items.Add(NewAttribute);
+		MarkArrayDirty();
+	}
+
+	TArray<FAttribute> GetAttributes() const
+	{
+		return Items;
+	}
+
+	void MarkAttributeDirty(const FAttribute& Attribute)
+	{
+		for (auto& Item : Items)
+		{
+			if (Item.Tag == Attribute.Tag)
+			{
+				MarkItemDirty(Item);
+				return;
+			}
+		}
+	}
+
+	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
+	{
+		return FFastArraySerializer::FastArrayDeltaSerialize<FAttribute, FGMCUnboundAttributeSet>(Items, DeltaParams,
+			*this);
+	}
+};
+
+template<>
+struct TStructOpsTypeTraits<FGMCUnboundAttributeSet> : public TStructOpsTypeTraitsBase2<FGMCUnboundAttributeSet>
+{
+	enum
+	{
+		WithNetDeltaSerializer = true
+	};
+};

@@ -162,10 +162,10 @@ public:
 
 	/** Struct containing attributes that are replicated and unbound from the GMC */
 	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
-	FInstancedStruct UnBoundAttributes;
+	FGMCUnboundAttributeSet UnBoundAttributes;
 
 	UFUNCTION()
-	void OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes);
+	void OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes);
 
 	/**
 	 * Applies an effect to the Ability Component
