@@ -478,7 +478,9 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			if(AttributeData.bGMCBound){
 				BoundAttributes.AddAttribute(NewAttribute);
 			}
-			else{
+			else if (GetOwnerRole() == ROLE_Authority) {
+				// FFastArraySerializer will duplicate all attributes on first replication if we
+				// add the attributes on the clients as well.
 				UnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
