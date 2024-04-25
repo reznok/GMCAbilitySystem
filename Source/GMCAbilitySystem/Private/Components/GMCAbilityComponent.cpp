@@ -78,6 +78,40 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+
+	// We sort our attributes alphabetically by tag so that it's deterministic.
+	for (auto& AttributeForBind : BoundAttributes.Attributes)
+	{
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.BaseValue,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.AdditiveModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.MultiplyModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.DivisionModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+	}
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
@@ -100,13 +134,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
-	// Attributes
-	GMCMovementComponent->BindInstancedStruct(BoundAttributes,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::TargetValue);
-	
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
@@ -429,7 +456,7 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
-	BoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	BoundAttributes = FGMCAttributeSet();
 	UnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
@@ -449,7 +476,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
-				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+				BoundAttributes.AddAttribute(NewAttribute);
 			}
 			else{
 				UnBoundAttributes.AddAttribute(NewAttribute);
@@ -459,7 +486,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 
 	// After all attributes are initialized, calc their values which will primarily apply their Clamps
 	
-	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	for (const FAttribute& Attribute : BoundAttributes.Attributes)
 	{
 		Attribute.CalculateValue();
 	}
@@ -759,7 +786,6 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSe
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 
-			BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirty(Attribute);
 			UnBoundAttributes.MarkAttributeDirty(Attribute);
 		}
 	}
@@ -872,15 +898,8 @@ TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 		AllAttributes.Add(&Attribute);
 	}
 
-	if (BoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing bound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : BoundAttributes.Attributes){
+		AllAttributes.Add(&Attribute);
 	}
 	return AllAttributes;
 }
@@ -1005,7 +1024,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 
-		BoundAttributes.GetMutable<FGMCAttributeSet>().MarkAttributeDirty(*AffectedAttribute);
+		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 	}
 }

@@ -112,6 +112,11 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	FString ToString() const{
 		return FString::Printf(TEXT("%s : %f (Bound: %d)"), *Tag.ToString(), Value, bIsGMCBound);
 	}
+
+	bool operator < (const FAttribute& Other) const
+	{
+		return Tag.ToString() < Other.Tag.ToString();
+	}
 };
 
 USTRUCT(BlueprintType)
@@ -121,9 +126,16 @@ struct GMCABILITYSYSTEM_API FGMCAttributeSet{
 	UPROPERTY()
 	TArray<FAttribute> Attributes;
 
-	void AddAttribute(const FAttribute& NewAttribute) {Attributes.Add(NewAttribute);}
+	void AddAttribute(const FAttribute& NewAttribute)
+	{
+		Attributes.Add(NewAttribute);
+		Attributes.Sort();
+	}
 
-	TArray<FAttribute> GetAttributes() const{return Attributes;}
+	TArray<FAttribute> GetAttributes() const
+	{
+		return Attributes;
+	}
 
 	void MarkAttributeDirty(const FAttribute& Attribute) {};
 };
