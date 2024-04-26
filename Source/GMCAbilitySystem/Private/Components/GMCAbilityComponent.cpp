@@ -11,8 +11,6 @@
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/UnrealNetwork.h"
-#include "WorldPartition/ContentBundle/ContentBundleLog.h"
-
 
 // Sets default values for this component's properties
 UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
