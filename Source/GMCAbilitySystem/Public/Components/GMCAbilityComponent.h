@@ -53,7 +53,7 @@ public:
 	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
 	// Bound/Synced over GMC
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double ActionTimer;
 
 	// Is this a server-only pawn (not player-controlled)?
@@ -75,50 +75,50 @@ public:
 	void RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 		
 	// Add an ability to the GrantedAbilities array
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void GrantAbilityByTag(const FGameplayTag AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag);
 
-	UFUNCTION(BlueprintPure, meta=(Categories="Ability"))
+	UFUNCTION(BlueprintPure, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	bool HasGrantedAbilityTag(const FGameplayTag GameplayTag) const;
 
 	// Add an ability to the GrantedAbilities array
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void AddActiveTag(const FGameplayTag AbilityTag);
 
 	// Remove an ability from the GrantedAbilities array
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveActiveTag(const FGameplayTag AbilityTag);
 
 	// Checks whether any active tag matches this tag or any of its children.
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasActiveTag(const FGameplayTag GameplayTag) const;
 
 	// Checks whether any active tag matches this tag exactly; it will not match on child tags.
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasActiveTagExact(const FGameplayTag GameplayTag) const;
 
 	// Checks whether any active tag matches any of the tags provided (or their children).
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasAnyTag(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether any active tag matches any of the tags provided exactly (excluding children).
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasAnyTagExact(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether every tag provided is in current tags, allowing for child tags.
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasAllTags(const FGameplayTagContainer TagsToCheck) const;
 
 	// Checks whether every tag provided is in current tags, without matching on child tags.
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const;
 	
 	/** Get all active tags that match a given parent tag */
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
@@ -135,33 +135,33 @@ public:
 
 	// Set an ability cooldown
 	// If it's already on cooldown, subsequent calls will overwrite it
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime);
 
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	float GetCooldownForAbility(const FGameplayTag AbilityTag) const;
 
 	// Get the cooldowns for all abilities associated with Input tag
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	TMap<FGameplayTag, float> GetCooldownsForInputTag(const FGameplayTag InputTag);
 	/**
 	 * Will add/remove a given gameplay tag to the ASC based on the bool inputted.
 	 * Call this function on Prediction Tick.
 	 * A good example of this is something like a State.InAir tag.
 	 */
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void MatchTagToBool(const FGameplayTag& InTag, bool MatchedBool);
 
 	// A UGMCAttributesData asset that defines the default attributes for this component
-	UPROPERTY(EditDefaultsOnly, DisplayName="Attributes")
+	UPROPERTY(EditDefaultsOnly, DisplayName="Attributes", Category = "GMCAbilitySystem")
 	TArray<UGMCAttributesData*> AttributeDataAssets; 
 
 	/** Struct containing attributes that are bound to the GMC */
-	UPROPERTY(BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
+	UPROPERTY(BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"), Category = "GMCAbilitySystem")
 	FInstancedStruct BoundAttributes;
 
 	/** Struct containing attributes that are replicated and unbound from the GMC */
-	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
+	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"), Category = "GMCAbilitySystem")
 	FInstancedStruct UnBoundAttributes;
 
 	UFUNCTION()
@@ -243,13 +243,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
 
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bJustTeleported;
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
 	
-	UPROPERTY(BlueprintReadWrite, AdvancedDisplay)
+	UPROPERTY(BlueprintReadWrite, AdvancedDisplay, Category = "GMCAbilitySystem", Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
 	UFUNCTION(Server, Reliable)

@@ -28,17 +28,17 @@ class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwn
 {
 	GENERATED_BODY()
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual UWorld* GetWorld() const override;
 	
 public:
 		//// Ability State
 	// EAbilityState. Use Getters/Setters
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	EAbilityState AbilityState;
 
 	// Data used to execute this ability
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAbilityData AbilityData;
 
 	// Assign a new, incrementing, Task ID
@@ -94,55 +94,55 @@ public:
 	void SetOwnerJustTeleported(bool bValue);
 
 	// Tag to identify this ability. Required for setting cooldowns.
-	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
+	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
 	// An Effect that modifies attributes when the ability is activated
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
 	// How long in seconds ability should go on cooldown when activated
 	// Requires AbilityTag to be set
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	float CooldownTime;
 
 	// If true, the ability will apply the Cooldown when activated
 	// If false, the ability will NOT apply the Cooldown when the ability begins
 	// You can still apply the cooldown manually with CommitAbilityCooldown or CommitAbilityCostAndCooldown
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	bool bApplyCooldownAtAbilityBegin{true};
 
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	virtual bool CanAffordAbilityCost() const;
 
 	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCostAndCooldown();
 	
 	// (Re-)Apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCooldown();
 	
 	// Apply the effects in AbilityCost
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCost();
 
 	// Remove the ability cost effect (if applicable)
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void RemoveAbilityCost();
 
 	// GMC_AbilitySystemComponent that owns this ability
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 	// The GMC Movement Component on the same actor as OwnerAbilityComponent
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	TObjectPtr<const UInputAction> AbilityInputAction;
 
 	// Pass data into the Task
@@ -153,15 +153,15 @@ public:
 	// UFUNCTION(BlueprintCallable)
 	// bool HasAuthority();
 
-	UFUNCTION(BlueprintCallable, BlueprintPure)
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "GMCAbilitySystem")
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
 
 	// Tags
 	// Tags that the owner must have to activate the ability. BeginAbility will not be called if the owner does not have these tags.
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	FGameplayTagContainer ActivationRequiredTags;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
 

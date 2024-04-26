@@ -13,7 +13,7 @@ struct FGMCAbilityTaskTargetDataInt : public FGMCAbilityTaskData
 {
 	GENERATED_BODY()
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	int Target{0};
 };
 
@@ -26,7 +26,7 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FUGMCAbilityTaskTargetDataIntAsyncActionPin	Completed;
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	int Target;
 	
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;
