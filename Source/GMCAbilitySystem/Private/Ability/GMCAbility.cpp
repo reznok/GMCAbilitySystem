@@ -3,6 +3,8 @@
 #include "GMCPawn.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Logging/StructuredLog.h"
+
 
 UWorld* UGMCAbility::GetWorld() const
 {
@@ -110,9 +112,14 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 
 void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 {
-	if (RunningTasks.Contains(TaskID))
-	{
-		RunningTasks[TaskID]->Heartbeat();
+	if (RunningTasks.Contains(TaskID)) {
+		if (RunningTasks[TaskID]) {
+			RunningTasks[TaskID]->Heartbeat();
+		}
+		else {
+			RunningTasks.Remove(TaskID);
+			UE_LOGFMT(LogGMCAbilitySystem, Error, "Task with ID {ID} is nullptr", TaskID);
+		}
 	}
 }
 
