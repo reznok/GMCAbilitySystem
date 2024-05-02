@@ -131,6 +131,15 @@ public:
 	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="GMAS|Abilities")
 	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
 
+	UFUNCTION(BlueprintCallable, DisplayName="Count Queued Ability Instances", Category="GMAS|Abilities")
+	int32 GetQueuedAbilityCount(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances", Category="GMAS|Abilities")
+	int32 GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass);
+	
+	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances (by tag)", Category="GMAS|Abilities")
+	int32 GetActiveAbilityCountByTag(FGameplayTag AbilityTag);
+	
 	void QueueTaskData(const FInstancedStruct& TaskData);
 
 	// Set an ability cooldown
