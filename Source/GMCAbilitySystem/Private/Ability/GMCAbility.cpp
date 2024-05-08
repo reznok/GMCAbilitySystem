@@ -176,6 +176,18 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 	ActiveTasks.Remove(&Task);
 }
 
+
+void UGMCAbility::FinishEndAbility() {
+	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	{
+		if (Task.Value == nullptr) continue;
+		Task.Value->EndTaskGMAS();
+	}
+	
+	AbilityState = EAbilityState::Ended;
+}
+
+
 bool UGMCAbility::CheckActivationTags()
 {
 	// Required Tags
@@ -209,14 +221,14 @@ void UGMCAbility::BeginAbility()
 	// Check Activation Tags
 	if (!CheckActivationTags()){
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *AbilityTag.ToString());
-		EndAbility();
+		CancelAbility();
 		return;
 	}
 
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
-		EndAbility();
+		CancelAbility();
 		return;
 	}
 
@@ -234,15 +246,15 @@ void UGMCAbility::BeginAbility()
 
 void UGMCAbility::EndAbility()
 {
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
-	{
-		if (Task.Value == nullptr) continue;
-		Task.Value->EndTaskGMAS();
-	}
-	
-	AbilityState = EAbilityState::Ended;
+	FinishEndAbility();
 	EndAbilityEvent();
 }
+
+
+void UGMCAbility::CancelAbility() {
+	FinishEndAbility();
+}
+
 
 AActor* UGMCAbility::GetOwnerActor() const
 {

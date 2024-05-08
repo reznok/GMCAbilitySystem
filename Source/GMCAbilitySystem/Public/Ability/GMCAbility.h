@@ -79,6 +79,11 @@ public:
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void EndAbility();
 
+	/** End an ability without triggering the EndAbilityEvent.
+	 * This is useful for abilities that need to end immediately without any additional logic, usual for dead born abilities. */
+	UFUNCTION(BlueprintCallable, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
+	virtual void CancelAbility();
+
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
 
@@ -198,6 +203,8 @@ public:
 	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
 	
 private:
+
+	void FinishEndAbility();
 
 	int AbilityID = -1;
 	int TaskIDCounter = -1;
