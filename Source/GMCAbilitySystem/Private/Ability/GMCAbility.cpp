@@ -188,18 +188,6 @@ void UGMCAbility::FinishEndAbility() {
 }
 
 
-
-void UGMCAbility::FinishEndAbility() {
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
-	{
-		if (Task.Value == nullptr) continue;
-		Task.Value->EndTaskGMAS();
-	}
-	
-	AbilityState = EAbilityState::Ended;
-}
-
-
 bool UGMCAbility::IsOnCooldown() const
 {
 	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
