@@ -137,7 +137,13 @@ public:
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass);
 
-	
+	UFUNCTION(BlueprintCallable, DisplayName="End Abilities (By Tag)", Category="GMAS|Abilities")
+	// End all abilities with the corresponding tag, returns the number of abilities ended
+	int EndAbilitiesByTag(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintCallable, DisplayName="End Abilities (By Class)", Category="GMAS|Abilities")
+	// End all abilities with the corresponding tag, returns the number of abilities ended
+	int EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass);
 	
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances (by tag)", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCountByTag(FGameplayTag AbilityTag);

@@ -351,6 +351,35 @@ int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility
 	return Result;
 }
 
+
+int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
+	int AbilitiesEnded = 0;
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
+		{
+			ActiveAbilityData.Value->EndAbility();
+			AbilitiesEnded++;
+		}
+	}
+	return AbilitiesEnded;
+}
+
+
+int UGMC_AbilitySystemComponent::EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass) {
+	int AbilitiesEnded = 0;
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->IsA(AbilityClass))
+		{
+			ActiveAbilityData.Value->EndAbility();
+			AbilitiesEnded++;
+		}
+	}
+	return AbilitiesEnded;
+}
+
+
 int32 UGMC_AbilitySystemComponent::GetActiveAbilityCountByTag(FGameplayTag AbilityTag)
 {
 	int32 Result = 0;
