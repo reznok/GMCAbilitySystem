@@ -12,7 +12,6 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/UnrealNetwork.h"
 
-
 // Sets default values for this component's properties
 UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -77,6 +76,40 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+
+	// We sort our attributes alphabetically by tag so that it's deterministic.
+	for (auto& AttributeForBind : BoundAttributes.Attributes)
+	{
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.BaseValue,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.AdditiveModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.MultiplyModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.DivisionModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+	}
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
@@ -99,13 +132,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
-	// Attributes
-	GMCMovementComponent->BindInstancedStruct(BoundAttributes,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::TargetValue);
-	
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
@@ -428,8 +454,8 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
-	BoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
-	UnBoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	BoundAttributes = FGMCAttributeSet();
+	UnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
 	// Loop through each of the data assets inputted into the component to create new attributes.
@@ -448,22 +474,24 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
-				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+				BoundAttributes.AddAttribute(NewAttribute);
 			}
-			else{
-				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+			else if (GetOwnerRole() == ROLE_Authority) {
+				// FFastArraySerializer will duplicate all attributes on first replication if we
+				// add the attributes on the clients as well.
+				UnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
 	}
 
 	// After all attributes are initialized, calc their values which will primarily apply their Clamps
 	
-	for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	for (const FAttribute& Attribute : BoundAttributes.Attributes)
 	{
 		Attribute.CalculateValue();
 	}
 
-	for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes)
+	for (const FAttribute& Attribute : UnBoundAttributes.Items)
 	{
 		Attribute.CalculateValue();
 	}
@@ -742,10 +770,10 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes)
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes)
 {
-	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Get<FGMCAttributeSet>().Attributes;
-	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Get<FGMCAttributeSet>().Attributes;
+	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Items;
+	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
 	TMap<FGameplayTag, float> OldValues;
 	
@@ -757,6 +785,8 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct Previ
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+
+			UnBoundAttributes.MarkAttributeDirty(Attribute);
 		}
 	}
 }
@@ -864,26 +894,12 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	if (UnBoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing unbound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : UnBoundAttributes.Items){
+		AllAttributes.Add(&Attribute);
 	}
 
-	if (BoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing bound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : BoundAttributes.Attributes){
+		AllAttributes.Add(&Attribute);
 	}
 	return AllAttributes;
 }
@@ -1007,6 +1023,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+
+		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
+		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 	}
 }
 

@@ -157,15 +157,15 @@ public:
 	TArray<UGMCAttributesData*> AttributeDataAssets; 
 
 	/** Struct containing attributes that are bound to the GMC */
-	UPROPERTY(BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
-	FInstancedStruct BoundAttributes;
+	UPROPERTY(BlueprintReadOnly)
+	FGMCAttributeSet BoundAttributes;
 
 	/** Struct containing attributes that are replicated and unbound from the GMC */
-	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, meta = (BaseStruct = "GMCAttributeSet"))
-	FInstancedStruct UnBoundAttributes;
+	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly)
+	FGMCUnboundAttributeSet UnBoundAttributes;
 
 	UFUNCTION()
-	void OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes);
+	void OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes);
 
 	/**
 	 * Applies an effect to the Ability Component

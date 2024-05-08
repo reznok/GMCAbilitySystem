@@ -163,7 +163,7 @@ public:
 	
 	void UpdateState(EEffectState State, bool Force=false);
 
-	bool IsPeriodPaused();
+	virtual bool IsPeriodPaused();
 	
 	bool bCompleted;
 
