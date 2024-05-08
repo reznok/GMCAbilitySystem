@@ -204,11 +204,23 @@ void UGMCAbility::FinishEndAbility() {
 }
 
 
+bool UGMCAbility::CheckActivationTags()
+{
+	// Required Tags
+	for (const FGameplayTag Tag : ActivationRequiredTags)
+	{
+		if (!OwnerAbilityComponent->HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+}
+
+
 bool UGMCAbility::IsOnCooldown() const
 {
 	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
 }
-
 
 
 bool UGMCAbility::PreExecuteCheckEvent_Implementation() {
@@ -240,6 +252,13 @@ bool UGMCAbility::PreBeginAbility() {
 
 void UGMCAbility::BeginAbility()
 {
+
+	// Check Activation Tags
+	if (!CheckActivationTags()){
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *AbilityTag.ToString());
+		CancelAbility();
+		return;
+	}
 	
 	if (bApplyCooldownAtAbilityBegin)
 	{
