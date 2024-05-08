@@ -12,24 +12,24 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 
 	// Minimum attribute value
 	UPROPERTY(EditDefaultsOnly)
-	float Min;
+	float Min { 0.f };
 
 	// Value will be clamped to the value of this attribute
 	// If set, this will take priority over Min
 	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
-	FGameplayTag MinAttributeTag;
+	FGameplayTag MinAttributeTag { FGameplayTag::EmptyTag };
 
 	// Maximum attribute value
 	UPROPERTY(EditDefaultsOnly)
-	float Max;
+	float Max { 0.f };
 
 	// Value will be clamped to the value of this attribute
 	// If set, this will take priority over Max
 	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
-	FGameplayTag MaxAttributeTag;
+	FGameplayTag MaxAttributeTag { FGameplayTag::EmptyTag };
 
 	UPROPERTY()
-	UGMC_AbilitySystemComponent* AbilityComponent;
+	UGMC_AbilitySystemComponent* AbilityComponent { nullptr };
 
 	bool operator==(const FAttributeClamp* Other) const {return *this == *Other;} 
 	bool operator==(const FAttributeClamp& Other) const {return Other.Min == Min && Other.Max == Max && Other.MinAttributeTag == MinAttributeTag && Other.MaxAttributeTag == MaxAttributeTag;}
