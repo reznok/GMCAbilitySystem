@@ -336,6 +336,12 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 		return false;
 	}
 
+	// Check Activation Tags
+	if (!CheckActivationTags(AbilityCDO)){
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
+		return false;
+	}
+
 	// If multiple abilities are activated on the same frame, add 1 to the ID
 	// This should never actually happen as abilities get queued
 	while (ActiveAbilities.Contains(AbilityID)){
