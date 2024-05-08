@@ -108,11 +108,11 @@ struct FGMCAbilityEffectData
 
 	// Tags that the owner must have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer OngoingMustHaveTags;
+	FGameplayTagContainer MustHaveTags;
 
 	// Tags that the owner must not have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer OngoingMustNotHaveTags;
+	FGameplayTagContainer MustNotHaveTags;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
