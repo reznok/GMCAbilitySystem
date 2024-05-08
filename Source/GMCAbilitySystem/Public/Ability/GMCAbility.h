@@ -220,8 +220,6 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UGameplayTask>> ActiveTasks;
 
-	bool CheckActivationTags();
-
 	UPROPERTY()
 	UGMCAbilityEffect* AbilityCostInstance = nullptr;
 

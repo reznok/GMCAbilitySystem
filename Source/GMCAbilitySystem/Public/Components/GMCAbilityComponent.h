@@ -136,6 +136,8 @@ public:
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass);
+
+	
 	
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances (by tag)", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCountByTag(FGameplayTag AbilityTag);
@@ -353,6 +355,9 @@ protected:
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
 private:
+
+	// return true if the ability is allowed to be activated considering active tags
+	bool CheckActivationTags(const UGMCAbility* Ability) const;
 
 	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly, Category="Ability")

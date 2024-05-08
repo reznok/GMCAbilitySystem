@@ -293,6 +293,12 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 		if (GetActiveAbilityCount(ActivatedAbility) > 0) return false;
 	}
 
+	// Check Activation Tags
+	if (!CheckActivationTags(AbilityCDO)){
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
+		return false;
+	}
+
 	// If multiple abilities are activated on the same frame, add 1 to the ID
 	// This should never actually happen as abilities get queued
 	while (ActiveAbilities.Contains(AbilityID)){
@@ -758,6 +764,34 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 
 	return AbilityMap[AbilityTag].Abilities;
 }
+
+
+bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability) const {
+
+	if (!Ability) return false;
+
+	// Required Tags
+	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
+	{
+		if (!HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+
+	// Blocking Tags
+	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
+	{
+		if (HasActiveTag(Tag))
+		{
+			return false;
+		}
+	}
+
+	return true;
+	
+}
+
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
 	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
