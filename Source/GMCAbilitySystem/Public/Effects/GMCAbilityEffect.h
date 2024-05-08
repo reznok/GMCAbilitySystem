@@ -34,7 +34,7 @@ class GMCABILITYSYSTEM_API UGMCAttributeModifierContainer : public UObject
 	GENERATED_BODY()
 	
 public:
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGMCAttributeModifier AttributeModifier;
 };
 
@@ -51,7 +51,7 @@ struct FGMCAbilityEffectData
 	{
 	}
 
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* SourceAbilityComponent;
 
 	UPROPERTY()
@@ -67,7 +67,7 @@ struct FGMCAbilityEffectData
 	double EndTime;
 
 	// Instantly applies effect then exits. Will not tick.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bIsInstant = true;
 
 	// Apply an inversed version of the modifiers at effect end
@@ -75,45 +75,45 @@ struct FGMCAbilityEffectData
 	bool bNegateEffectAtEnd = false;
 
 	// Delay before the effect starts
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Delay = 0;
 
 	// How long the effect lasts
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Duration = 0;
 
 	// How often the periodic effect ticks
 	// Suggest keeping this above .01
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Period = 0;
 
 	// For Period effects, whether first tick should happen immediately
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bPeriodTickAtStart = false;
 
 	// Tag to identify this effect
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTag EffectTag;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
 	// Tags that the owner must have to apply and maintain this effect
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MustHaveTags;
 
 	// Tags that the owner must not have to apply and maintain this effect
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MustNotHaveTags;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
 
 	// If tag is present, periodic effect will not tick. Duration is not affected.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer PausePeriodicEffect;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
 	
 	inline bool operator==(const FGMCAbilityEffectData& Other) const
@@ -146,10 +146,10 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 public:
 	EEffectState CurrentState;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
 	void EndEffect();
@@ -172,10 +172,10 @@ public:
 	float ClientEffectApplicationTime;
 
 protected:
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* SourceAbilityComponent;
 
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 private:

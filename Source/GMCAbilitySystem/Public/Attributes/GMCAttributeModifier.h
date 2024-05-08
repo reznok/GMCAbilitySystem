@@ -22,15 +22,15 @@ struct FGMCAttributeModifier
 	FGameplayTag AttributeTag;
 
 	// Value to modify the attribute by
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	float Value{0};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EModifierType ModifierType{EModifierType::Add};
 
 	// Metadata tags to be passed with the attribute
 	// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MetaTags;
 	
 };

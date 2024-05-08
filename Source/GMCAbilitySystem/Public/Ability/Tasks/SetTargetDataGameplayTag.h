@@ -17,7 +17,7 @@ struct FGMCAbilityTaskTargetDataGameplayTag : public FGMCAbilityTaskData
 {
 	GENERATED_BODY()
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTag Target{FGameplayTag()};
 };
 
@@ -33,7 +33,7 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FUGMCAbilityTaskTargetDataGameplayTagAsyncActionPin	Completed;
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTag Target;
 	
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;
