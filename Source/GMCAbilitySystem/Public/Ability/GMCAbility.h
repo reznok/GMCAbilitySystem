@@ -119,6 +119,11 @@ public:
 	UPROPERTY(EditAnywhere)
 	bool bApplyCooldownAtAbilityBegin{true};
 
+	// If true, more than one instance of this ability can be active at once. If false, the actual activation (but not
+	// the queuing) of an ability will fail if the ability already is active.
+	UPROPERTY(EditAnywhere)
+	bool bAllowMultipleInstances {false};
+	
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
 	UFUNCTION(BlueprintPure)
 	virtual bool CanAffordAbilityCost() const;

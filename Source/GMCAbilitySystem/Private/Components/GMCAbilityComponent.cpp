@@ -286,6 +286,13 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	// Also helps when dealing with replays
 	int AbilityID = GenerateAbilityID();
 
+	const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
+	if (!AbilityCDO->bAllowMultipleInstances)
+	{
+		// Enforce only one active instance of the ability at a time.
+		if (GetActiveAbilityCount(ActivatedAbility) > 0) return false;
+	}
+
 	// If multiple abilities are activated on the same frame, add 1 to the ID
 	// This should never actually happen as abilities get queued
 	while (ActiveAbilities.Contains(AbilityID)){
@@ -308,11 +315,46 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
-	
+
 	FGMCAbilityData Data;
 	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
 	QueuedAbilities.Push(Data);
+}
+
+int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
+{
+	int32 Result = 0;
+
+	for (const auto& QueuedData : QueuedAbilities)
+	{
+		if (QueuedData.InputTag == AbilityTag) Result++;
+	}
+	return Result;
+}
+
+int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass)
+{
+	int32 Result = 0;
+
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->IsA(AbilityClass)) Result++;
+	}
+
+	return Result;
+}
+
+int32 UGMC_AbilitySystemComponent::GetActiveAbilityCountByTag(FGameplayTag AbilityTag)
+{
+	int32 Result = 0;
+
+	for (const auto& Ability : GetGrantedAbilitiesByTag(AbilityTag))
+	{
+		Result += GetActiveAbilityCount(Ability);
+	}
+
+	return Result;
 }
 
 void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
@@ -989,7 +1031,7 @@ FString UGMC_AbilitySystemComponent::GetActiveEffectsString() const{
 FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 	FString FinalString = TEXT("\n");
 	for(const TTuple<int, UGMCAbility*> ActiveAbility : ActiveAbilities){
-		FinalString += ActiveAbility.Value->ToString() + TEXT("\n");
+		FinalString += FString::Printf(TEXT("%d: "), ActiveAbility.Key) + ActiveAbility.Value->ToString() + TEXT("\n");
 	}
 	return FinalString;
 }
