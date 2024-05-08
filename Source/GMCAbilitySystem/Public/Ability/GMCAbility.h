@@ -69,6 +69,9 @@ public:
 
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Ancillary Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void AncillaryTickEvent(float DeltaTime);
+
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
+	bool PreExecuteCheckEvent();
 	
 	UFUNCTION()
 	virtual void BeginAbility();
@@ -181,6 +184,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	// Cancel Abilities with these tags when this ability is activated
+	FGameplayTagContainer CancelAbilitiesWithTag;
 
 	/** 
 	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.
