@@ -73,6 +73,9 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
 	bool PreExecuteCheckEvent();
+
+	UFUNCTION()
+	virtual bool PreBeginAbility();
 	
 	UFUNCTION()
 	virtual void BeginAbility();
@@ -209,6 +212,11 @@ public:
 	virtual void OnGameplayTaskInitialized(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskActivated(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
+	
+protected:
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	virtual UWorld* GetWorld() const override;
 	
 private:
 
