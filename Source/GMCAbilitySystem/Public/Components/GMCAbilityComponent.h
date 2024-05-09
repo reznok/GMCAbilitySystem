@@ -363,6 +363,8 @@ protected:
 
 	void ClearAbilityAndTaskData();
 
+	void SendTaskDataToActiveAbility(bool bFromMovement);
+
 private:
 
 	// return true if the ability is allowed to be activated considering active tags
