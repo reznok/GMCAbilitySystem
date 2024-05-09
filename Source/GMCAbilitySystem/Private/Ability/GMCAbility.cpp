@@ -232,9 +232,10 @@ void UGMCAbility::BeginAbility()
 			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
 			continue;
 		}
-
-		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());
-		OwnerAbilityComponent->EndAbilitiesByTag(AbilityTag);
+		
+		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
+		}
 	}
 
 	// Execute BP Event
