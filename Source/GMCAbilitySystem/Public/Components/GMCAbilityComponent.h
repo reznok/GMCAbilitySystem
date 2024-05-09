@@ -358,6 +358,8 @@ protected:
 	
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
+	// Copy of Ability data used for ancillary tick
+	FGMCAbilityData AncillaryAbilityData; 
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
 private:

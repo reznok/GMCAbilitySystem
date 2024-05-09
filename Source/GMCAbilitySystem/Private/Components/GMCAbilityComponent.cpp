@@ -167,12 +167,15 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	TickActiveEffects(DeltaTime);
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
-
+	
+	
 	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
-	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
+	if (AncillaryAbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
+		TryActivateAbilitiesByInputTag(AncillaryAbilityData.InputTag, AncillaryAbilityData.ActionInput, false);
 	}
+
+	AncillaryAbilityData = FGMCAbilityData{};
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -268,7 +271,7 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 
 void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
-	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
+	
 	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
@@ -280,7 +283,12 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
 {
+
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Check"), *GetNameSafe(ActivatedAbility));
+	
 	if (ActivatedAbility == nullptr) return false;
+
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Check"), *GetNameSafe(ActivatedAbility));
 	
 	// Generated ID is based on ActionTimer so it always lines up on client/server
 	// Also helps when dealing with replays
@@ -490,7 +498,8 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
 		}
 	}
-	
+
+	AncillaryAbilityData = AbilityData;
 	AbilityData = FGMCAbilityData{};
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
@@ -800,7 +809,7 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 	if (!Ability) return false;
 
 	// Required Tags
-	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
+	for (const FGameplayTag Tag : Ability->ActivationRequiredTags)
 	{
 		if (!HasActiveTag(Tag))
 		{
