@@ -175,7 +175,9 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
 	}
 
-	EndTick(false);
+	SendTaskDataToActiveAbility(false);
+	
+	ClearAbilityAndTaskData();
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -490,15 +492,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, true);
 	}
 
-	// Ability Task Data
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
-	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
-	{
-		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
-		{
-			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
-		}
-	}
+	SendTaskDataToActiveAbility(true);
+
+	
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -804,6 +800,19 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 	AbilityData = FGMCAbilityData{};
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
+}
+
+
+void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
+	
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
+	{
+		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID) && ActiveAbilities[TaskDataFromInstance.AbilityID]->bActivateOnMovementTick == bFromMovement)
+		{
+			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
+	}
 }
 
 
