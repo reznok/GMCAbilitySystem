@@ -170,12 +170,12 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	
 	
 	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
-	if (AncillaryAbilityData.InputTag != FGameplayTag::EmptyTag)
+	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbilitiesByInputTag(AncillaryAbilityData.InputTag, AncillaryAbilityData.ActionInput, false);
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
 	}
 
-	AncillaryAbilityData = FGMCAbilityData{};
+	EndTick(false);
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -276,6 +276,7 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
 		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Trying to Activate Ability: %s from %s"), *GetNameSafe(ActivatedAbility), bFromMovementTick ? TEXT("Movement") : TEXT("Ancillary"));
 			TryActivateAbility(ActivatedAbility, InputAction);
 		}
 	}
@@ -283,12 +284,9 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
 {
-
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Check"), *GetNameSafe(ActivatedAbility));
 	
 	if (ActivatedAbility == nullptr) return false;
-
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Check"), *GetNameSafe(ActivatedAbility));
+	
 	
 	// Generated ID is based on ActionTimer so it always lines up on client/server
 	// Also helps when dealing with replays
@@ -298,7 +296,10 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	if (!AbilityCDO->bAllowMultipleInstances)
 	{
 		// Enforce only one active instance of the ability at a time.
-		if (GetActiveAbilityCount(ActivatedAbility) > 0) return false;
+		if (GetActiveAbilityCount(ActivatedAbility) > 0) {
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Ability Activation for %s Stopped (Already Instanced)"), *GetNameSafe(ActivatedAbility));
+			return false;
+		}
 	}
 
 	// Check Activation Tags
@@ -498,10 +499,6 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
 		}
 	}
-
-	AncillaryAbilityData = AbilityData;
-	AbilityData = FGMCAbilityData{};
-	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -801,6 +798,12 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 	}
 
 	return AbilityMap[AbilityTag].Abilities;
+}
+
+
+void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
+	AbilityData = FGMCAbilityData{};
+	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
 
