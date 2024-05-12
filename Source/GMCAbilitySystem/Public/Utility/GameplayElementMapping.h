@@ -26,16 +26,16 @@ struct GMCABILITYSYSTEM_API FGMCGameplayElementTagPropertyMapping
 		PropertyGuid = Other.PropertyGuid;
 	}
 	
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGameplayTagContainer TagsToMap;
 
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, Category = "GMCAbilitySystem")
 	TFieldPath<FProperty> PropertyToMap;	
 
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, Category = "GMCAbilitySystem")
 	FName PropertyName;
 
-	UPROPERTY(VisibleAnywhere)
+	UPROPERTY(VisibleAnywhere, Category = "GMCAbilitySystem")
 	FGuid PropertyGuid;
 
 	FDelegateHandle DelegateHandle;
@@ -89,6 +89,6 @@ protected:
 	TWeakObjectPtr<UObject> CachedOwner;
 	TWeakObjectPtr<UGMC_AbilitySystemComponent> CachedAbilityComponent;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TArray<FGMCGameplayElementTagPropertyMapping> PropertyMappings;
 };
