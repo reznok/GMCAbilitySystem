@@ -2,26 +2,59 @@
 
 #include "EnhancedInputComponent.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Kismet/KismetSystemLibrary.h"
 
-UGMCAbilityTask_WaitForInputKeyRelease* UGMCAbilityTask_WaitForInputKeyRelease::WaitForKeyRelease(UGMCAbility* OwningAbility)
+UGMCAbilityTask_WaitForInputKeyRelease* UGMCAbilityTask_WaitForInputKeyRelease::WaitForKeyRelease(UGMCAbility* OwningAbility, bool bCheckForReleaseDuringActivation)
 {
 	UGMCAbilityTask_WaitForInputKeyRelease* Task = NewAbilityTask<UGMCAbilityTask_WaitForInputKeyRelease>(OwningAbility);
 	Task->Ability = OwningAbility;
+	Task->bShouldCheckForReleaseDuringActivation = bCheckForReleaseDuringActivation;
 	return Task;
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 {
 	Super::Activate();
+
+	UEnhancedInputComponent* const InputComponent = GetEnhancedInputComponent();
 	
 	if (Ability->AbilityInputAction != nullptr)
 	{
-		InputActionBinding = &GetEnhancedInputComponent()->BindActionValue(Ability->AbilityInputAction);
+		FEnhancedInputActionEventBinding& Binding = InputComponent->BindAction(
+			Ability->AbilityInputAction, ETriggerEvent::Completed, this,
+			&UGMCAbilityTask_WaitForInputKeyRelease::OnKeyReleased);
+
+		InputBindingHandle = Binding.GetHandle();
+		
+		// Check that the value isn't currently false.
+		if (bShouldCheckForReleaseDuringActivation)
+		{
+			const FInputActionValue ActionValue = InputComponent->GetBoundActionValue(Ability->AbilityInputAction);
+			if (ActionValue.Get<bool>())
+			{
+				// We'll want to immediately unbind the binding.
+				InputComponent->RemoveActionBindingForHandle(Binding.GetHandle());
+				InputBindingHandle = -1;
+				ClientProgressTask();
+			}
+		}
 	}
 	else
 	{
 		ClientProgressTask();
 	}
+}
+
+void UGMCAbilityTask_WaitForInputKeyRelease::OnKeyReleased(const FInputActionValue& InputActionValue)
+{
+	// Unbind since we're done now.
+	ClientProgressTask();
+	if (UInputComponent* const InputComponent = GetValid(GetEnhancedInputComponent()))
+	{
+		InputComponent->RemoveActionBindingForHandle(InputBindingHandle);
+	}
+
+	InputBindingHandle = -1;
 }
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
@@ -37,19 +70,6 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInpu
 	return nullptr;
 }
 
-void UGMCAbilityTask_WaitForInputKeyRelease::Tick(float DeltaTime)
-{
-	Super::Tick(DeltaTime);
-	if (bTaskCompleted) {return;}
-	
-	if (AbilitySystemComponent->GetNetMode() == NM_DedicatedServer) return;
-	
-	if(InputActionBinding == nullptr || !InputActionBinding->GetValue().Get<bool>())
-	{
-		ClientProgressTask();
-	}
-}
-
 void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 {
 	EndTask();
@@ -60,6 +80,17 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
 {
 	Super::OnDestroy(bInOwnerFinished);
+
+	// If the handle is still valid somehow, unbind it.
+	if (InputBindingHandle != -1)
+	{
+		if (UInputComponent* const InputComponent = GetValid(GetEnhancedInputComponent()))
+		{
+			InputComponent->RemoveActionBindingForHandle(InputBindingHandle);
+		}
+
+		InputBindingHandle = -1;
+	}
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& TaskData)
