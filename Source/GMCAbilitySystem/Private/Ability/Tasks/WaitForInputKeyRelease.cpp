@@ -30,7 +30,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		if (bShouldCheckForReleaseDuringActivation)
 		{
 			const FInputActionValue ActionValue = InputComponent->GetBoundActionValue(Ability->AbilityInputAction);
-			if (ActionValue.Get<bool>())
+			if (!ActionValue.Get<bool>())
 			{
 				// We'll want to immediately unbind the binding.
 				InputComponent->RemoveActionBindingForHandle(Binding.GetHandle());
