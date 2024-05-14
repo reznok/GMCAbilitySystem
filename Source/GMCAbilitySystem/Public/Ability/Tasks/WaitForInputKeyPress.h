@@ -1,6 +1,4 @@
-﻿// © Deep Worlds SA
-
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"

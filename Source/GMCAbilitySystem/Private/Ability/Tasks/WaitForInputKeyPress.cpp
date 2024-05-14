@@ -1,10 +1,7 @@
-﻿// © Deep Worlds SA
-#include "Ability/Tasks/WaitForInputKeyPress.h"
+﻿#include "Ability/Tasks/WaitForInputKeyPress.h"
 
 #include "EnhancedInputComponent.h"
-#include "SNegativeActionButton.h"
 #include "Components/GMCAbilityComponent.h"
-
 
 UGMCAbilityTask_WaitForInputKeyPress* UGMCAbilityTask_WaitForInputKeyPress::WaitForKeyPress(UGMCAbility* OwningAbility)
 {
