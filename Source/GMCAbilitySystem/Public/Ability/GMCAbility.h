@@ -213,11 +213,6 @@ public:
 	virtual void OnGameplayTaskActivated(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
 	
-protected:
-
-	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	virtual UWorld* GetWorld() const override;
-	
 private:
 
 	void FinishEndAbility();
