@@ -1,5 +1,4 @@
-﻿// © Deep Worlds SA
-
+﻿
 
 #include "Ability/Tasks/SetTargetDataObject.h"
 
