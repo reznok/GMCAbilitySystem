@@ -28,11 +28,12 @@ class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwn
 {
 	GENERATED_BODY()
 
+public:
+	
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual UWorld* GetWorld() const override;
 	
-public:
-		//// Ability State
+	//// Ability State
 	// EAbilityState. Use Getters/Setters
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	EAbilityState AbilityState;

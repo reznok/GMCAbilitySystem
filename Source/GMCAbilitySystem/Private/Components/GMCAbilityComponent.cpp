@@ -800,10 +800,11 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 	if (!Ability) return false;
 
 	// Required Tags
-	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
+	for (const FGameplayTag Tag : Ability->ActivationRequiredTags)
 	{
 		if (!HasActiveTag(Tag))
 		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, missing required tag:  %s"), *Tag.ToString());
 			return false;
 		}
 	}
@@ -813,6 +814,7 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 	{
 		if (HasActiveTag(Tag))
 		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, blocked by tag: %s"), *Tag.ToString());
 			return false;
 		}
 	}
