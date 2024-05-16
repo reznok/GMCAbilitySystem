@@ -358,7 +358,12 @@ protected:
 	
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
+	
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
+
+	void ClearAbilityAndTaskData();
+
+	void SendTaskDataToActiveAbility(bool bFromMovement);
 
 private:
 

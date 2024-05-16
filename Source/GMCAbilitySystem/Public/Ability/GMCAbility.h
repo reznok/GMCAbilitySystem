@@ -73,6 +73,9 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
 	bool PreExecuteCheckEvent();
+
+	UFUNCTION()
+	virtual bool PreBeginAbility();
 	
 	UFUNCTION()
 	virtual void BeginAbility();

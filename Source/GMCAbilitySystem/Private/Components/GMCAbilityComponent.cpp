@@ -167,12 +167,17 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	TickActiveEffects(DeltaTime);
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
-
+	
+	
 	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
 	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
 		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
 	}
+
+	SendTaskDataToActiveAbility(false);
+	
+	ClearAbilityAndTaskData();
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -268,11 +273,12 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 
 void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
-	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
+	
 	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
 		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Trying to Activate Ability: %s from %s"), *GetNameSafe(ActivatedAbility), bFromMovementTick ? TEXT("Movement") : TEXT("Ancillary"));
 			TryActivateAbility(ActivatedAbility, InputAction);
 		}
 	}
@@ -280,7 +286,9 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
 {
+	
 	if (ActivatedAbility == nullptr) return false;
+	
 	
 	// Generated ID is based on ActionTimer so it always lines up on client/server
 	// Also helps when dealing with replays
@@ -290,7 +298,10 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	if (!AbilityCDO->bAllowMultipleInstances)
 	{
 		// Enforce only one active instance of the ability at a time.
-		if (GetActiveAbilityCount(ActivatedAbility) > 0) return false;
+		if (GetActiveAbilityCount(ActivatedAbility) > 0) {
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Ability Activation for %s Stopped (Already Instanced)"), *GetNameSafe(ActivatedAbility));
+			return false;
+		}
 	}
 
 	// Check Activation Tags
@@ -345,7 +356,7 @@ int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility
 
 	for (const auto& ActiveAbilityData : ActiveAbilities)
 	{
-		if (ActiveAbilityData.Value->IsA(AbilityClass)) Result++;
+		if (ActiveAbilityData.Value->IsA(AbilityClass) && ActiveAbilityData.Value->AbilityState != EAbilityState::Ended) Result++;
 	}
 
 	return Result;
@@ -481,18 +492,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, true);
 	}
 
-	// Ability Task Data
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
-	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
-	{
-		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
-		{
-			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
-		}
-	}
+	SendTaskDataToActiveAbility(true);
+
 	
-	AbilityData = FGMCAbilityData{};
-	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -792,6 +794,25 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 	}
 
 	return AbilityMap[AbilityTag].Abilities;
+}
+
+
+void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
+	AbilityData = FGMCAbilityData{};
+	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
+}
+
+
+void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
+	
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
+	{
+		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID) && ActiveAbilities[TaskDataFromInstance.AbilityID]->bActivateOnMovementTick == bFromMovement)
+		{
+			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
+	}
 }
 
 

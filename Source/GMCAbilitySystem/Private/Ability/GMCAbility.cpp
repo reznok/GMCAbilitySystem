@@ -59,7 +59,7 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
-	BeginAbility();
+	PreBeginAbility();
 }
 
 bool UGMCAbility::CanAffordAbilityCost() const
@@ -200,14 +200,12 @@ bool UGMCAbility::PreExecuteCheckEvent_Implementation() {
 }
 
 
-void UGMCAbility::BeginAbility()
-{
-	
+bool UGMCAbility::PreBeginAbility() {
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
 		CancelAbility();
-		return;
+		return false;
 	}
 
 	// PreCheck
@@ -215,9 +213,18 @@ void UGMCAbility::BeginAbility()
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Failing PreExecution check"), *AbilityTag.ToString());
 		CancelAbility();
-		return;
+		return false;
 	}
 
+	BeginAbility();
+
+	return true;
+}
+
+
+void UGMCAbility::BeginAbility()
+{
+	
 	if (bApplyCooldownAtAbilityBegin)
 	{
 		CommitAbilityCooldown();
@@ -232,9 +239,10 @@ void UGMCAbility::BeginAbility()
 			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
 			continue;
 		}
-
-		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());
-		OwnerAbilityComponent->EndAbilitiesByTag(AbilityTag);
+		
+		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
+		}
 	}
 
 	// Execute BP Event
@@ -243,13 +251,17 @@ void UGMCAbility::BeginAbility()
 
 void UGMCAbility::EndAbility()
 {
-	FinishEndAbility();
-	EndAbilityEvent();
+	if (AbilityState != EAbilityState::Ended) {
+		FinishEndAbility();
+		EndAbilityEvent();
+	}
 }
 
 
 void UGMCAbility::CancelAbility() {
-	FinishEndAbility();
+	if (AbilityState != EAbilityState::Ended) {
+		FinishEndAbility();
+	}
 }
 
 
