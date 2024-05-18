@@ -341,6 +341,9 @@ protected:
 	// Abilities that are granted to the player (bound)
 	FGameplayTagContainer GrantedAbilityTags;
 
+	// return true if the ability is allowed to be activated considering active tags
+	virtual bool CheckActivationTags(const UGMCAbility* Ability) const;
+
 	// Effect tags that are granted to the player (bound)
 	FGameplayTagContainer ActiveTags;
 
@@ -358,13 +361,14 @@ protected:
 	
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
+	
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
+	void ClearAbilityAndTaskData();
+
+	void SendTaskDataToActiveAbility(bool bFromMovement);
+
 private:
-
-	// return true if the ability is allowed to be activated considering active tags
-	bool CheckActivationTags(const UGMCAbility* Ability) const;
-
 	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	TArray<TObjectPtr<UGMCAbilityMapData>> AbilityMaps;
