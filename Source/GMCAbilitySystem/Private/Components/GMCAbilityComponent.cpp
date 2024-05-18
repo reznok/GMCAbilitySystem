@@ -840,6 +840,18 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 		}
 	}
 
+	for (const FGameplayTag Tag : Ability->ActivationBlockedByActiveAbility)
+	{
+		for (const auto& ActiveAbility : ActiveAbilities) {
+			if (IsValid(ActiveAbility.Value)
+				&& ActiveAbility.Value->AbilityTag.MatchesTag(Tag)
+				&& ActiveAbility.Value->AbilityState != EAbilityState::Ended)
+			{
+				return false;
+			}
+		}
+	}
+
 	return true;
 	
 }
