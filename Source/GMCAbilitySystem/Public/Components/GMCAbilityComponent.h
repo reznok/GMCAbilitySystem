@@ -177,9 +177,16 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAttributeSet BoundAttributes;
 
+	/** Reminder to check attributes */
+	UPROPERTY()
+	FGMCAttributeSet OldBoundAttributes;
+
 	/** Struct containing attributes that are replicated and unbound from the GMC */
 	UPROPERTY(ReplicatedUsing = OnRep_UnBoundAttributes, BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCUnboundAttributeSet UnBoundAttributes;
+
+	UPROPERTY()
+	FGMCUnboundAttributeSet OldUnBoundAttributes;
 
 	UFUNCTION()
 	void OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes);
@@ -418,6 +425,11 @@ private:
 
 	// Check if ActiveTags has changed and call delegates
 	void CheckActiveTagsChanged();
+
+	// Check if any Attribute has changed and call delegates
+	void CheckAttributeChanged();
+
+	void CheckAttributeChanged_Internal(FGMCAttributeSet& OldAttributeSet, FGMCAttributeSet& NewAttributeSet);
 	
 	// Clear out abilities in the Ended state from the ActivateAbilities map
 	void CleanupStaleAbilities();
