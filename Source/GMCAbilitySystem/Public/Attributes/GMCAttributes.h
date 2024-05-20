@@ -5,6 +5,8 @@
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
+
 USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 {
@@ -15,6 +17,9 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	{
 		CalculateValue(false);
 	}
+
+	UPROPERTY(BlueprintAssignable)
+	FAttributeChanged OnAttributeChanged;
 
 	UPROPERTY()
 	mutable float AdditiveModifier{0};
