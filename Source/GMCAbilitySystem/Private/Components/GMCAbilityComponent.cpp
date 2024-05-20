@@ -174,6 +174,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
 	CheckActiveTagsChanged();
+	CheckAttributeChanged();
 	TickActiveEffects(DeltaTime);
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
@@ -532,6 +533,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
 	CheckActiveTagsChanged();
+	CheckAttributeChanged();
 	
 	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
@@ -609,6 +611,9 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
 	UnBoundAttributes.MarkArrayDirty();
+	
+	OldBoundAttributes = BoundAttributes;
+	OldUnBoundAttributes = UnBoundAttributes;
 }
 
 void UGMC_AbilitySystemComponent::SetStartingTags()
@@ -663,6 +668,35 @@ void UGMC_AbilitySystemComponent::CheckActiveTagsChanged()
 		}
 	}
 }
+
+
+void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
+	// Check Bound Attributes
+	for (int i = 0; i < BoundAttributes.Attributes.Num(); i++)
+	{
+		FAttribute& Attribute = BoundAttributes.Attributes[i];
+		FAttribute& OldAttribute = OldBoundAttributes.Attributes[i];
+		if (Attribute.Value != OldAttribute.Value)
+		{
+			OnAttributeChanged.Broadcast(Attribute.Tag, OldAttribute.Value, Attribute.Value);
+			OldAttribute.Value = Attribute.Value;
+		}
+	}
+
+	// Check UnBound Attributes
+	for (int i = 0; i < UnBoundAttributes.GetAttributes().Num(); i++)
+	{
+		FAttribute& Attribute = UnBoundAttributes.GetAttributes()[i];
+		FAttribute& OldAttribute = OldUnBoundAttributes.GetAttributes()[i];
+		if (Attribute.Value != OldAttribute.Value)
+		{
+			OnAttributeChanged.Broadcast(Attribute.Tag, OldAttribute.Value, Attribute.Value);
+			OldAttribute.Value = Attribute.Value;
+		}
+	}
+	
+}
+
 
 void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 {
@@ -1117,7 +1151,8 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 		{
 			Att->ResetModifiers();
 		}
-		
+
+		Att->CalculateValue();
 		return true;
 	}
 	return false;
