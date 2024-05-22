@@ -162,6 +162,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
+
 	OnAncillaryTick.Broadcast(DeltaTime);
 	CheckActiveTagsChanged();
 	CheckAttributeChanged();
@@ -957,7 +958,7 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSe
 
 	for (const FAttribute& Attribute : CurrentAttributes){
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
-			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+			
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 
 			UnBoundAttributes.MarkAttributeDirty(Attribute);
@@ -1195,7 +1196,6 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 			AttributeModifier.Value = -AttributeModifier.Value;
 		}
 		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
-		
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 
 		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
