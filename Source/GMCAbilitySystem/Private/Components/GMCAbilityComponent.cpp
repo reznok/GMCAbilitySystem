@@ -1196,6 +1196,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 			AttributeModifier.Value = -AttributeModifier.Value;
 		}
 		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
+		
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 
 		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
