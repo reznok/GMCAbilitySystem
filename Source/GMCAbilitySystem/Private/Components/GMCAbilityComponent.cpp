@@ -10,6 +10,7 @@
 #include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Net/UnrealNetwork.h"
 
 // Sets default values for this component's properties
@@ -594,6 +595,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				// FFastArraySerializer will duplicate all attributes on first replication if we
 				// add the attributes on the clients as well.
 				UnBoundAttributes.AddAttribute(NewAttribute);
+				
 			}
 		}
 	}
@@ -614,7 +616,6 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	UnBoundAttributes.MarkArrayDirty();
 	
 	OldBoundAttributes = BoundAttributes;
-	OldUnBoundAttributes = UnBoundAttributes;
 }
 
 void UGMC_AbilitySystemComponent::SetStartingTags()
@@ -683,19 +684,6 @@ void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
 			OldAttribute.Value = Attribute.Value;
 		}
 	}
-
-	// Check UnBound Attributes
-	for (int i = 0; i < UnBoundAttributes.GetAttributes().Num(); i++)
-	{
-		FAttribute& Attribute = UnBoundAttributes.GetAttributes()[i];
-		FAttribute& OldAttribute = OldUnBoundAttributes.GetAttributes()[i];
-		if (Attribute.Value != OldAttribute.Value)
-		{
-			OnAttributeChanged.Broadcast(Attribute.Tag, OldAttribute.Value, Attribute.Value);
-			OldAttribute.Value = Attribute.Value;
-		}
-	}
-	
 }
 
 
@@ -980,22 +968,29 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes)
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 {
-	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Items;
+	const TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
 	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
 	TMap<FGameplayTag, float> OldValues;
+
+	// If this mitchmatch, that mean we need to reset the number of attributes
+	if (OldAttributes.Num() != CurrentAttributes.Num())
+	{
+		OldUnBoundAttributes = UnBoundAttributes;
+	}
 	
 	for (const FAttribute& Attribute : OldAttributes){
 		OldValues.Add(Attribute.Tag, Attribute.Value);
 	}
 
+	
+
 	for (const FAttribute& Attribute : CurrentAttributes){
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
-			
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
-
+			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 			UnBoundAttributes.MarkAttributeDirty(Attribute);
 		}
 	}
@@ -1225,6 +1220,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		// If we are unbound that means we shouldn't predict.
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
 		float OldValue = AffectedAttribute->Value;
+		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
 		if (bNegateValue)
 		{
@@ -1241,6 +1237,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 
 		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
+		if (!AffectedAttribute->bIsGMCBound) {
+			OnRep_UnBoundAttributes();
+		}
 	}
 }
 

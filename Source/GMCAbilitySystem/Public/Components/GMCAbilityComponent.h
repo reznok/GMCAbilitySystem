@@ -193,9 +193,9 @@ public:
 
 	UPROPERTY()
 	FGMCUnboundAttributeSet OldUnBoundAttributes;
-
+	
 	UFUNCTION()
-	void OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes);
+	void OnRep_UnBoundAttributes();
 
 	/**
 	 * Applies an effect to the Ability Component
