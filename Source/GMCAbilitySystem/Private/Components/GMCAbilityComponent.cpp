@@ -565,6 +565,11 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				UnBoundAttributes.AddAttribute(NewAttribute);
 				
 			}
+			
+			if (!AttributeData.bGMCBound) {
+				// Initiate old unbound attributes
+				OldUnBoundAttributes.AddAttribute(NewAttribute);
+			}
 		}
 	}
 
@@ -576,6 +581,11 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	}
 
 	for (const FAttribute& Attribute : UnBoundAttributes.Items)
+	{
+		Attribute.CalculateValue();
+	}
+
+	for (const FAttribute& Attribute : OldUnBoundAttributes.Items)
 	{
 		Attribute.CalculateValue();
 	}
@@ -935,30 +945,38 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 {
-	const TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
+	
+	if (OldUnBoundAttributes.Items.Num() != UnBoundAttributes.Items.Num())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OnRep_UnBoundAttributes: Mismatched Attribute Old != New Value !"));
+	}
+
+	TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
 	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
-	TMap<FGameplayTag, float> OldValues;
+	TMap<FGameplayTag, float*> OldValues;
 
 	// If this mitchmatch, that mean we need to reset the number of attributes
-	if (OldAttributes.Num() != CurrentAttributes.Num())
-	{
-		OldUnBoundAttributes = UnBoundAttributes;
-	}
+
 	
-	for (const FAttribute& Attribute : OldAttributes){
-		OldValues.Add(Attribute.Tag, Attribute.Value);
+	for (FAttribute& Attribute : OldAttributes){
+		OldValues.Add(Attribute.Tag, &Attribute.Value);
 	}
 
 	
 
 	for (const FAttribute& Attribute : CurrentAttributes){
-		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
-			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
-			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+		if (OldValues.Contains(Attribute.Tag) && *OldValues[Attribute.Tag] != Attribute.Value){
+			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
+			OnAttributeChanged.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
 			UnBoundAttributes.MarkAttributeDirty(Attribute);
+
+			// Update Old Value
+			*OldValues[Attribute.Tag] = Attribute.Value;
 		}
 	}
+
+	
 }
 
 //BP Version
