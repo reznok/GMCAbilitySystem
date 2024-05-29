@@ -130,6 +130,7 @@ void UGMCAbilityEffect::EndEffect()
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
 	if (bCompleted) return;
+	EffectData.CurrentDuration += DeltaTime;
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect

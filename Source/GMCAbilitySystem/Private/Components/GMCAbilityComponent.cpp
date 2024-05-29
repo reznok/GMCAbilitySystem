@@ -183,6 +183,31 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	ClearAbilityAndTaskData();
 }
 
+
+TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActivesEffectByTag(FGameplayTag GameplayTag) const {
+	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
+
+	for (auto& EffectFound : ActiveEffects) {
+		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+			ActiveEffectsFound.Add(EffectFound.Value);
+		}
+	}
+
+	return ActiveEffectsFound;
+}
+
+
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const {
+	for (auto& EffectFound : ActiveEffects) {
+		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+			return EffectFound.Value;
+		}
+	}
+
+	return nullptr;
+}
+
+
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
 	for (const FAbilityMapData& Data : AbilityMapData->GetAbilityMapData())

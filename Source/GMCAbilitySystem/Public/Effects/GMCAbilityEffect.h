@@ -66,6 +66,9 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	double EndTime;
 
+	UPROPERTY()
+	double CurrentDuration;
+
 	// Instantly applies effect then exits. Will not tick.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bIsInstant = true;
@@ -129,7 +132,7 @@ struct FGMCAbilityEffectData
 	}
 
 	FString ToString() const{
-		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %f)"), EffectID, *EffectTag.ToString(), Duration);
+		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %.3lf) (CurrentDuration: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
 	}
 };
 
@@ -155,6 +158,10 @@ public:
 	void EndEffect();
 	
 	virtual void Tick(float DeltaTime);
+
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
