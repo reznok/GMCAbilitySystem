@@ -68,6 +68,14 @@ public:
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
 
+	// Return active Effect with tag
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	TArray<UGMCAbilityEffect*> GetActivesEffectByTag(FGameplayTag GameplayTag) const;
+
+	// Get the first active effect with the Effecttag
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	UGMCAbilityEffect* GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const;
+
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void AddAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 
