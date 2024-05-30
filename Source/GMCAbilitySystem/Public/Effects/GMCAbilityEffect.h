@@ -67,7 +67,7 @@ struct FGMCAbilityEffectData
 	double EndTime;
 
 	UPROPERTY()
-	double CurrentDuration;
+	double CurrentDuration{0.f};
 
 	// Instantly applies effect then exits. Will not tick.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
