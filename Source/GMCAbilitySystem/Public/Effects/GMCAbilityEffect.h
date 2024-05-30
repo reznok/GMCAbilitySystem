@@ -74,18 +74,33 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	bool bNegateEffectAtEnd = false;
 
-	// Delay before the effect starts
+	// Delay before the effect starts (in seconds)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Delay = 0;
 
-	// How long the effect lasts
+	// Instead of hard-coding a delay, you can use another attribute to get the value from
+	// If set, this will take priority over Delay
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTag DelayAttributeTag;
+
+	// How long the effect lasts (in seconds)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Duration = 0;
 
-	// How often the periodic effect ticks
+	// Instead of hard-coding a duration, you can use another attribute to get the value from
+	// If set, this will take priority over Duration
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTag DurationAttributeTag;
+
+	// How often the periodic effect ticks (in seconds)
 	// Suggest keeping this above .01
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Period = 0;
+
+	// Instead of hard-coding a period, you can use another attribute to get the value from
+	// If set, this will take priority over Period
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTag PeriodAttributeTag;
 
 	// For Period effects, whether first tick should happen immediately
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -129,8 +144,12 @@ struct FGMCAbilityEffectData
 	}
 
 	FString ToString() const{
-		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %f)"), EffectID, *EffectTag.ToString(), Duration);
+		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %f)"), EffectID, *EffectTag.ToString(), GetDuration());
 	}
+
+	float GetDelay() const;
+	float GetDuration() const;
+	float GetPeriod() const;
 };
 
 /**

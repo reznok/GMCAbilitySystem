@@ -6,6 +6,41 @@
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
 
+float FGMCAbilityEffectData::GetDelay() const
+{
+	// Return value from attribute if DelayAttributeTag is valid
+	if (DelayAttributeTag.IsValid())
+	{
+		return OwnerAbilityComponent->GetAttributeValueByTag(DelayAttributeTag);
+	}
+
+	// Otherwise, fall back to the hard-coded value
+	return Delay;
+}
+
+float FGMCAbilityEffectData::GetDuration() const
+{
+	// Return value from attribute if DurationAttributeTag is valid
+	if (DurationAttributeTag.IsValid())
+	{
+		return OwnerAbilityComponent->GetAttributeValueByTag(DurationAttributeTag);
+	}
+
+	// Otherwise, fall back to the hard-coded value
+	return Duration;
+}
+
+float FGMCAbilityEffectData::GetPeriod() const
+{
+	// Return value from attribute if PeriodAttributeTag is valid
+	if (PeriodAttributeTag.IsValid())
+	{
+		return OwnerAbilityComponent->GetAttributeValueByTag(PeriodAttributeTag);
+	}
+
+	// Otherwise, fall back to the hard-coded value
+	return Period;
+}
 
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
 {
@@ -30,7 +65,7 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 	else
 	{
-		EffectData.StartTime = OwnerAbilityComponent->ActionTimer + EffectData.Delay;
+		EffectData.StartTime = OwnerAbilityComponent->ActionTimer + EffectData.GetDelay();
 	}
 	
 	if (InitializationData.EndTime != 0)
@@ -39,11 +74,11 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 	else
 	{
-		EffectData.EndTime = EffectData.StartTime + EffectData.Duration;
+		EffectData.EndTime = EffectData.StartTime + EffectData.GetDuration();
 	}
 
 	// Start Immediately
-	if (EffectData.Delay == 0)
+	if (EffectData.GetDelay() == 0)
 	{
 		StartEffect();
 	}
@@ -77,7 +112,7 @@ void UGMCAbilityEffect::StartEffect()
 	}
 
 	// Duration Effects that aren't periodic alter modifiers, not base
-	if (!EffectData.bIsInstant && EffectData.Period == 0)
+	if (!EffectData.bIsInstant && EffectData.GetPeriod() == 0)
 	{
 		EffectData.bNegateEffectAtEnd = true;
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
@@ -87,7 +122,7 @@ void UGMCAbilityEffect::StartEffect()
 	}
 
 	// Tick period at start
-	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
+	if (EffectData.bPeriodTickAtStart && EffectData.GetPeriod() > 0)
 	{
 		PeriodTick();
 	}
@@ -141,9 +176,9 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 
 
 	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EEffectState::Started)
+	if (!IsPeriodPaused() && EffectData.GetPeriod() > 0 && CurrentState == EEffectState::Started)
 	{
-		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
+		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.GetPeriod());
 		if (Mod < PrevPeriodMod)
 		{
 			PeriodTick();
@@ -255,7 +290,7 @@ void UGMCAbilityEffect::CheckState()
 			}
 			break;
 		case EEffectState::Started:
-			if (EffectData.Duration != 0 && OwnerAbilityComponent->ActionTimer >= EffectData.EndTime)
+			if (EffectData.GetDuration() != 0 && OwnerAbilityComponent->ActionTimer >= EffectData.EndTime)
 			{
 				EndEffect();
 			}

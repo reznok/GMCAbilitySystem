@@ -73,7 +73,7 @@ bool UGMCAbility::CanAffordAbilityCost() const
 		{
 			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
 			{
-				if (Attribute->Value + AttributeModifier.Value < 0) return false;
+				if (Attribute->Value + AttributeModifier.GetValue(OwnerAbilityComponent) < 0) return false;
 			}
 		}
 	}
@@ -89,8 +89,9 @@ void UGMCAbility::CommitAbilityCostAndCooldown()
 
 void UGMCAbility::CommitAbilityCooldown()
 {
-	if (CooldownTime <= 0.f || OwnerAbilityComponent == nullptr) return;
-	OwnerAbilityComponent->SetCooldownForAbility(AbilityTag, CooldownTime);
+	float CalculatedCooldownTime = GetCooldownTime();
+	if (CalculatedCooldownTime <= 0.f || OwnerAbilityComponent == nullptr) return;
+	OwnerAbilityComponent->SetCooldownForAbility(AbilityTag, CalculatedCooldownTime);
 }
 
 void UGMCAbility::CommitAbilityCost()
