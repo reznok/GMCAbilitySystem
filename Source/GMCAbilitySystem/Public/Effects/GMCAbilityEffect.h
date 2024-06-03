@@ -94,6 +94,13 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bPeriodTickAtStart = false;
 
+	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
+	float ClientGraceTime = 1.f;
+	
+	UPROPERTY()
+	int LateApplicationID = -1;
+
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTag EffectTag;
@@ -125,7 +132,7 @@ struct FGMCAbilityEffectData
 		return StartTime == Other.StartTime && EndTime == Other.EndTime;
 	};
 
-	bool IsValid()
+	bool IsValid() const
 	{
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
 				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
@@ -134,6 +141,24 @@ struct FGMCAbilityEffectData
 	FString ToString() const{
 		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %.3lf) (CurrentDuration: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
 	}
+};
+
+class UGMCAbilityEffect;
+
+USTRUCT(BlueprintType)
+struct FGMCAbilityEffectLateApplicationData {
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int LateApplicationID = 0;
+	
+	float ClientGraceTimeRemaining = 0.f;
+
+	UPROPERTY()
+	TSubclassOf<UGMCAbilityEffect> EffectClass;
+
+	UPROPERTY()
+	FGMCAbilityEffectData InitializationData;
 };
 
 /**

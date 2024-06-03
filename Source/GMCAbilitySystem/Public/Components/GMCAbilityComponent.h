@@ -28,6 +28,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagC
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
 USTRUCT()
+struct FGMCAcknowledgeId {
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<int> Id = {};
+};
+
+USTRUCT()
 struct FEffectStatePrediction
 {
 	GENERATED_BODY()
@@ -212,7 +220,7 @@ public:
 	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData);
 	
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
-
+	
 	
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
@@ -416,8 +424,12 @@ private:
 
 	TArray<FEffectStatePrediction> QueuedEffectStates;
 
+	
+
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
+
+	
 
 	UPROPERTY()
 	TMap<FGameplayTag, float> ActiveCooldowns;
@@ -472,6 +484,32 @@ private:
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
+
+	// Effect applied externally, pending activation, used by server and client. Not replicated.
+	UPROPERTY()
+	TArray<FGMCAbilityEffectLateApplicationData> PendingEffectApplicationsServer;
+
+	UPROPERTY()
+	TArray<FGMCAbilityEffectLateApplicationData> PendingEffectApplicationsClient;
+
+	bool bInGMCTime = false;
+
+	// Binded Used for acknowledge server initiated ability/effect
+	FInstancedStruct AcknowledgeId = FInstancedStruct::Make(FGMCAcknowledgeId{});
+
+	void AddPendingEffectApplications(TSubclassOf<UGMCAbilityEffect> Effect, const FGMCAbilityEffectData& InitializationData);
+
+	// Let the client know that the server ask for an external effect application
+	UFUNCTION(Client, Reliable)
+	void RPCClientAddPendingEffectApplication(FGMCAbilityEffectLateApplicationData LateApplicationData);
+	
+	void ServerHandlePendingEffect(float DeltaTime);
+
+	void ClientHandlePendingEffect();
+
+	int GenerateLateApplicationID();
+
+	int LateApplicationIDCounter = 0;
 
 	// Effect IDs that have been processed and don't need to be remade when ActiveEffectsData is replicated
 	// This need to be persisted for a while

@@ -159,6 +159,12 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(AcknowledgeId,
+	EGMC_PredictionMode::ClientAuth_Input,
+	EGMC_CombineMode::CombineIfUnchanged,
+	EGMC_SimulationMode::None,
+	EGMC_InterpolationFunction::TargetValue);
 	
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
@@ -167,6 +173,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	OnAncillaryTick.Broadcast(DeltaTime);
 	CheckActiveTagsChanged();
 	CheckAttributeChanged();
+
 	TickActiveEffects(DeltaTime);
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
@@ -181,6 +188,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	SendTaskDataToActiveAbility(false);
 	
 	ClearAbilityAndTaskData();
+	bInGMCTime = false;
 }
 
 
@@ -495,6 +503,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	bJustTeleported = false;
 	ActionTimer += DeltaTime;
+	bInGMCTime = true;
 	
 	// Startup Effects
 	// Only applied on server. There's large desync if client tries to predict this, so just let server apply
@@ -507,8 +516,11 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		}
 		StartingEffects.Empty();
 	}
+
+	ClientHandlePendingEffect();
+	ServerHandlePendingEffect(DeltaTime);
 	
-	
+
 	TickActiveAbilities(DeltaTime);
 	
 	// Abilities
@@ -550,6 +562,8 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 	{
 		TaskData = QueuedTaskData.Pop();
 	}
+
+	
 }
 
 void UGMC_AbilitySystemComponent::BeginPlay()
@@ -802,6 +816,87 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 	}
 }
 
+
+void UGMC_AbilitySystemComponent::RPCClientAddPendingEffectApplication_Implementation(
+		FGMCAbilityEffectLateApplicationData LateApplicationData) {
+	
+	PendingEffectApplicationsClient.Add(LateApplicationData);
+}
+
+
+void UGMC_AbilitySystemComponent::AddPendingEffectApplications(TSubclassOf<UGMCAbilityEffect> Effect, const FGMCAbilityEffectData& InitializationData) {
+
+	check(HasAuthority())
+
+	FGMCAbilityEffectLateApplicationData LateApplicationData;
+	LateApplicationData.EffectClass = Effect;
+	LateApplicationData.InitializationData = InitializationData;
+	LateApplicationData.ClientGraceTimeRemaining = InitializationData.IsValid() ? InitializationData.ClientGraceTime : Effect->GetDefaultObject<UGMCAbilityEffect>()->EffectData.ClientGraceTime;
+	LateApplicationData.LateApplicationID = GenerateLateApplicationID();
+
+	PendingEffectApplicationsServer.Add(LateApplicationData);
+	RPCClientAddPendingEffectApplication(LateApplicationData);
+}
+
+
+void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
+
+	if (!HasAuthority()) {
+		return;
+	}
+
+	
+
+	FGMCAcknowledgeId& AckId =	AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
+
+	
+
+	// Server Handle Pending Effects
+	for (int i = PendingEffectApplicationsServer.Num() - 1; i >= 0; i--)
+	{
+		FGMCAbilityEffectLateApplicationData& LateApplicationData = PendingEffectApplicationsServer[i];
+		LateApplicationData.ClientGraceTimeRemaining -= DeltaTime;
+
+		// We have acknowledged the client's application of this effect
+		if (AckId.Id.Contains(LateApplicationData.LateApplicationID)) {
+			ApplyAbilityEffect(LateApplicationData.EffectClass, LateApplicationData.InitializationData);
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Server Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), LateApplicationData.LateApplicationID);
+			PendingEffectApplicationsServer.RemoveAt(i);
+		}
+		else if (LateApplicationData.ClientGraceTimeRemaining <= 0) // Client missed grace period, force application
+		{
+			ApplyAbilityEffect(LateApplicationData.EffectClass, LateApplicationData.InitializationData);
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client `%s` missed grace period for effect `%s`, force application."),
+					*GetNameSafe(GetOwner()), *GetNameSafe(LateApplicationData.EffectClass));
+			PendingEffectApplicationsServer.RemoveAt(i);
+		}
+	}
+	
+}
+
+
+void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
+	
+	
+	for (int i = PendingEffectApplicationsClient.Num() - 1; i >= 0; i--)
+	{
+		FGMCAbilityEffectLateApplicationData& LateApplicationData = PendingEffectApplicationsClient[i];
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), LateApplicationData.LateApplicationID);
+		ApplyAbilityEffect(LateApplicationData.EffectClass, LateApplicationData.InitializationData);
+		
+		FGMCAcknowledgeId& AckId = AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
+		AckId.Id.AddUnique(LateApplicationData.LateApplicationID);
+		
+		PendingEffectApplicationsClient.RemoveAt(i);
+	}
+}
+
+
+int UGMC_AbilitySystemComponent::GenerateLateApplicationID() {
+	return LateApplicationIDCounter++;
+}
+
+
 void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID, int TaskID)
 {
 	if (ActiveAbilities.Contains(AbilityID) && ActiveAbilities[AbilityID] != nullptr)
@@ -1007,7 +1102,20 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 //BP Version
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
 {
-	if (Effect == nullptr) return nullptr;
+	if (Effect == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
+		return nullptr;
+	}
+
+	
+	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
+	if (HasAuthority() && !bInGMCTime) {
+		AddPendingEffectApplications(Effect, InitializationData);
+		return nullptr;
+	}
+	
+
 	
 	UGMCAbilityEffect* AbilityEffect = DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this);
 	
@@ -1027,7 +1135,11 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
 {
-	if (Effect == nullptr) return nullptr;
+	if (Effect == nullptr) {
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
+		return nullptr;
+	}
+	
 	// Force the component this is being applied to to be the owner
 	InitializationData.OwnerAbilityComponent = this;
 	
