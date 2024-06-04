@@ -33,6 +33,9 @@ struct FGMCAcknowledgeId {
 
 	UPROPERTY()
 	TArray<int> Id = {};
+
+	UPROPERTY()
+	TArray<int> EfId = {};
 };
 
 USTRUCT()
@@ -223,7 +226,7 @@ public:
 	 * @param	bAppliedByServer	Is this Effect only applied by server? Used to help client predict the unpredictable.
 	 */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", meta = (AutoCreateRefTerm = "AdditionalModifiers"))
-	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData);
+	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation = false);
 	
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 	
@@ -236,7 +239,7 @@ public:
 	 * If the inputted count is higher than the number of active corresponding effects, remove all we can.
 	 */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
-	int32 RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove=-1);
+	int32 RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove=-1, bool bOuterActivation = false);
 
 	/**
 	 * Gets the number of active effects with the inputted tag.
@@ -492,22 +495,36 @@ private:
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
 	// Effect applied externally, pending activation, used by server and client. Not replicated.
+	//TODO: Later we will need to encapsulate this with Instanced struct to have a more generic way to handle this, and have cohabitation server <-> client
 	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationData> PendingEffectApplicationsServer;
+	TArray<FGMCAbilityEffectLateApplicationAddData> PendingAddEffectApplicationsServer;
 
 	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationData> PendingEffectApplicationsClient;
+	TArray<FGMCAbilityEffectLateApplicationAddData> PendingAddEffectApplicationsClient;
+	
+	UPROPERTY()
+	TArray<FGMCAbilityEffectLateApplicationRemoveData> PendingRemoveEffectApplicationsClient;
 
+	UPROPERTY()
+	TArray<FGMCAbilityEffectLateApplicationRemoveData> PendingRemoveEffectApplicationsServer;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInGMCTime = false;
 
+	// TODO: Need to be pushed later on a int64 32 index + 32 bitfield
 	// Binded Used for acknowledge server initiated ability/effect
 	FInstancedStruct AcknowledgeId = FInstancedStruct::Make(FGMCAcknowledgeId{});
 
 	void AddPendingEffectApplications(TSubclassOf<UGMCAbilityEffect> Effect, const FGMCAbilityEffectData& InitializationData);
 
+	void RemovePendingEffectApplication(FGameplayTag EffectTag, int num);
+
 	// Let the client know that the server ask for an external effect application
 	UFUNCTION(Client, Reliable)
-	void RPCClientAddPendingEffectApplication(FGMCAbilityEffectLateApplicationData LateApplicationData);
+	void RPCClientAddPendingEffectApplication(FGMCAbilityEffectLateApplicationAddData LateApplicationData);
+
+	UFUNCTION(Client, Reliable)
+	void RPCClientRemovePendingEffect(FGMCAbilityEffectLateApplicationRemoveData LateApplicationData);
 	
 	void ServerHandlePendingEffect(float DeltaTime);
 
