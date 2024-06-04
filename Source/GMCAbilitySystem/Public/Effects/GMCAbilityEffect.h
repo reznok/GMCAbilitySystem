@@ -60,13 +60,13 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	int EffectID;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
 	
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double EndTime;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double CurrentDuration{0.f};
 
 	// Instantly applies effect then exits. Will not tick.
@@ -177,6 +177,14 @@ public:
 	// Return the current duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
 	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
+
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
+
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	float GetEffectTotalDuration() const { return EffectData.Duration; }
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
