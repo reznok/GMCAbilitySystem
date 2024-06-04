@@ -146,7 +146,7 @@ struct FGMCAbilityEffectData
 class UGMCAbilityEffect;
 
 USTRUCT(BlueprintType)
-struct FGMCAbilityEffectLateApplicationData {
+struct FGMCAbilityEffectLateApplicationAddData {
 	GENERATED_BODY()
 
 	UPROPERTY()
@@ -159,6 +159,23 @@ struct FGMCAbilityEffectLateApplicationData {
 
 	UPROPERTY()
 	FGMCAbilityEffectData InitializationData;
+};
+
+USTRUCT(BlueprintType)
+struct FGMCAbilityEffectLateApplicationRemoveData {
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int LateApplicationID = 0;
+
+	UPROPERTY()
+	float ClientGraceTimeRemaining = 1.f;
+
+	UPROPERTY()
+	FGameplayTag EffectTag;
+
+	UPROPERTY()
+	int NumToRemove = -1;
 };
 
 /**
