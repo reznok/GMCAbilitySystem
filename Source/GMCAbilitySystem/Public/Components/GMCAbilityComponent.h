@@ -11,6 +11,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
+#include "GMCAbilityOuterApplication.h"
 #include "GMCAbilityComponent.generated.h"
 
 
@@ -27,16 +28,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
-USTRUCT()
-struct FGMCAcknowledgeId {
-	GENERATED_BODY()
 
-	UPROPERTY()
-	TArray<int> Id = {};
-
-	UPROPERTY()
-	TArray<int> EfId = {};
-};
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -491,17 +483,12 @@ private:
 	// Effect applied externally, pending activation, used by server and client. Not replicated.
 	//TODO: Later we will need to encapsulate this with Instanced struct to have a more generic way to handle this, and have cohabitation server <-> client
 	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationAddData> PendingAddEffectApplicationsServer;
+	TArray<FGMCOuterApplicationWrapper> PendingApplicationServer;
 
 	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationAddData> PendingAddEffectApplicationsClient;
-	
-	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationRemoveData> PendingRemoveEffectApplicationsClient;
+	TArray<FGMCOuterApplicationWrapper> PendingApplicationClient;
 
-	UPROPERTY()
-	TArray<FGMCAbilityEffectLateApplicationRemoveData> PendingRemoveEffectApplicationsServer;
-
+	// doesn't work ATM.
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInGMCTime = false;
 
@@ -509,16 +496,10 @@ private:
 	// Binded Used for acknowledge server initiated ability/effect
 	FInstancedStruct AcknowledgeId = FInstancedStruct::Make(FGMCAcknowledgeId{});
 
-	void AddPendingEffectApplications(TSubclassOf<UGMCAbilityEffect> Effect, const FGMCAbilityEffectData& InitializationData);
-
-	void RemovePendingEffectApplication(FGameplayTag EffectTag, int num);
-
+	void AddPendingEffectApplications(FGMCOuterApplicationWrapper& Wrapper);
 	// Let the client know that the server ask for an external effect application
 	UFUNCTION(Client, Reliable)
-	void RPCClientAddPendingEffectApplication(FGMCAbilityEffectLateApplicationAddData LateApplicationData);
-
-	UFUNCTION(Client, Reliable)
-	void RPCClientRemovePendingEffect(FGMCAbilityEffectLateApplicationRemoveData LateApplicationData);
+	void RPCClientAddPendingEffectApplication(FGMCOuterApplicationWrapper Wrapper);
 	
 	void ServerHandlePendingEffect(float DeltaTime);
 
