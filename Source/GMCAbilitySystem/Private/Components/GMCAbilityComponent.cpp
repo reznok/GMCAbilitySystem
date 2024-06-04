@@ -851,111 +851,57 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 	}
 }
 
+void UGMC_AbilitySystemComponent::AddPendingEffectApplications(FGMCOuterApplicationWrapper& Wrapper) {
+	check(HasAuthority())
+
+	Wrapper.ClientGraceTimeRemaining = 1.f;
+	Wrapper.LateApplicationID = GenerateLateApplicationID();
+
+	PendingApplicationServer.Add(Wrapper);
+	RPCClientAddPendingEffectApplication(Wrapper);
+}
+
 
 void UGMC_AbilitySystemComponent::RPCClientAddPendingEffectApplication_Implementation(
-		FGMCAbilityEffectLateApplicationAddData LateApplicationData) {
-	
-	PendingAddEffectApplicationsClient.Add(LateApplicationData);
-}
-
-
-void UGMC_AbilitySystemComponent::AddPendingEffectApplications(TSubclassOf<UGMCAbilityEffect> Effect, const FGMCAbilityEffectData& InitializationData) {
-
-	check(HasAuthority())
-
-	FGMCAbilityEffectLateApplicationAddData LateApplicationData;
-	LateApplicationData.EffectClass = Effect;
-	LateApplicationData.InitializationData = InitializationData;
-	LateApplicationData.ClientGraceTimeRemaining = InitializationData.IsValid() ? InitializationData.ClientGraceTime : Effect->GetDefaultObject<UGMCAbilityEffect>()->EffectData.ClientGraceTime;
-	LateApplicationData.LateApplicationID = GenerateLateApplicationID();
-
-	PendingAddEffectApplicationsServer.Add(LateApplicationData);
-	
-	RPCClientAddPendingEffectApplication(LateApplicationData);
-}
-
-
-void UGMC_AbilitySystemComponent::RemovePendingEffectApplication(FGameplayTag EffectTag, int num) {
-
-	check(HasAuthority())
-	
-	FGMCAbilityEffectLateApplicationRemoveData LateApplicationData;
-	LateApplicationData.EffectTag = EffectTag;
-	LateApplicationData.NumToRemove = num;
-	LateApplicationData.LateApplicationID = GenerateLateApplicationID();
-	LateApplicationData.ClientGraceTimeRemaining = 1.f;
-
-	PendingRemoveEffectApplicationsServer.Add(LateApplicationData);
-	RPCClientRemovePendingEffect(LateApplicationData);
-}
-
-
-void UGMC_AbilitySystemComponent::RPCClientRemovePendingEffect_Implementation(
-		FGMCAbilityEffectLateApplicationRemoveData LateApplicationData) {
-
-	PendingRemoveEffectApplicationsClient.Add(LateApplicationData);
+		FGMCOuterApplicationWrapper Wrapper) {
+	PendingApplicationClient.Add(Wrapper);
 }
 
 
 void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
-
 	if (!HasAuthority()) {
 		return;
 	}
 
 	FGMCAcknowledgeId& AckId =	AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
 
-	// Client Handle Pending Effects
-	for (int i = PendingRemoveEffectApplicationsServer.Num() - 1; i >= 0; i--) {
-		FGMCAbilityEffectLateApplicationRemoveData& LateApplicationData = PendingRemoveEffectApplicationsServer[i];
-		LateApplicationData.ClientGraceTimeRemaining -= DeltaTime;
 
-		if (AckId.Id.Contains(LateApplicationData.LateApplicationID)) {
-			RemoveEffectByTag(LateApplicationData.EffectTag, LateApplicationData.NumToRemove);
-			PendingRemoveEffectApplicationsServer.RemoveAt(i);
-		}
-		else if (LateApplicationData.ClientGraceTimeRemaining <= 0) // Client missed grace period, force application
-		{
-			RemoveEffectByTag(LateApplicationData.EffectTag, LateApplicationData.NumToRemove);
-			PendingRemoveEffectApplicationsServer.RemoveAt(i);
-		}
-	}
-	
-	// Server Handle Pending Effects
-	for (int i = PendingAddEffectApplicationsServer.Num() - 1; i >= 0; i--)
-	{
-		FGMCAbilityEffectLateApplicationAddData& LateApplicationData = PendingAddEffectApplicationsServer[i];
-		LateApplicationData.ClientGraceTimeRemaining -= DeltaTime;
+	for (int i = PendingApplicationServer.Num() - 1; i >= 0; i--) {
+		FGMCOuterApplicationWrapper& Wrapper = PendingApplicationServer[i];
 
-		// We have acknowledged the client's application of this effect
-		if (AckId.Id.Contains(LateApplicationData.LateApplicationID)) {
+		if (Wrapper.ClientGraceTimeRemaining <= 0.f || AckId.Id.Contains(Wrapper.LateApplicationID)) {
 
-			UGMCAbilityEffect* AbilityEffect = DuplicateObject(LateApplicationData.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
-
-			AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
-			FGMCAbilityEffectData EffectData;
-			if (LateApplicationData.InitializationData.IsValid())
-			{
-				EffectData = LateApplicationData.InitializationData;
+			switch (Wrapper.Type) {
+				case EGMC_AddEffect: {
+					const FGMCOuterEffectAdd& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectAdd>();
+					UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+					AbilityEffect->EffectData.EffectID = Wrapper.LateApplicationID;
+					FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
+					UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
+					//UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
+				} break;
+				case EGMC_RemoveEffect: {
+					const FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectRemove>();
+					RemoveEffectByTag(Data.EffectTag, Data.NumToRemove);
+				} break;
 			}
-			else
-			{
-				EffectData = AbilityEffect->EffectData;
-			}
-	
-			UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
-			
-			UE_LOG(LogGMCAbilitySystem, Log, TEXT("Server Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
-			//UE_LOG(LogGMCAbilitySystem, Error, TEXT("Server Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), LateApplicationData.LateApplicationID);
-			PendingAddEffectApplicationsServer.RemoveAt(i);
+			PendingApplicationServer.RemoveAt(i);
 		}
-		else if (LateApplicationData.ClientGraceTimeRemaining <= 0) // Client missed grace period, force application
-		{
-			ApplyAbilityEffect(LateApplicationData.EffectClass, LateApplicationData.InitializationData);
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client `%s` missed grace period for effect `%s`, force application."),
-					*GetNameSafe(GetOwner()), *GetNameSafe(LateApplicationData.EffectClass));
-			PendingAddEffectApplicationsServer.RemoveAt(i);
+		else {
+			Wrapper.ClientGraceTimeRemaining -= DeltaTime;
 		}
+
+		
 	}
 	
 }
@@ -963,46 +909,29 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 
 void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 
-	for (int i = PendingRemoveEffectApplicationsClient.Num() - 1; i >= 0; i--)
+
+	for (int i = PendingApplicationClient.Num() - 1; i >= 0; i--)
 	{
-		FGMCAbilityEffectLateApplicationRemoveData& LateApplicationData = PendingRemoveEffectApplicationsClient[i];
-		
-		RemoveEffectByTag(LateApplicationData.EffectTag, LateApplicationData.NumToRemove);
-		
-		FGMCAcknowledgeId& AckId = AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
-		AckId.Id.AddUnique(LateApplicationData.LateApplicationID);
-		
-		PendingRemoveEffectApplicationsClient.RemoveAt(i);
-	}
-	
-	for (int i = PendingAddEffectApplicationsClient.Num() - 1; i >= 0; i--)
-	{
-		FGMCAbilityEffectLateApplicationAddData& LateApplicationData = PendingAddEffectApplicationsClient[i];
+		FGMCOuterApplicationWrapper& LateApplicationData = PendingApplicationClient[i];
 
-
-		UGMCAbilityEffect* AbilityEffect = DuplicateObject(LateApplicationData.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
-
-		AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
-		FGMCAbilityEffectData EffectData;
-		if (LateApplicationData.InitializationData.IsValid())
-		{
-			EffectData = LateApplicationData.InitializationData;
+			switch (LateApplicationData.Type) {
+				case EGMC_AddEffect: {
+						const FGMCOuterEffectAdd& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectAdd>();
+						UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+						AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
+						FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
+						UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
+						//UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
+					} break;
+				case EGMC_RemoveEffect: {
+						const FGMCOuterEffectRemove& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectRemove>();
+						RemoveEffectByTag(Data.EffectTag, Data.NumToRemove);
+					} break;
+			}
+		
+			PendingApplicationClient.RemoveAt(i);
+			AcknowledgeId.GetMutable<FGMCAcknowledgeId>().Id.Add(LateApplicationData.LateApplicationID);
 		}
-		else
-		{
-			EffectData = AbilityEffect->EffectData;
-		}
-	
-		UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
-		
-		
-		UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
-		
-		FGMCAcknowledgeId& AckId = AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
-		AckId.Id.AddUnique(LateApplicationData.LateApplicationID);
-		
-		PendingAddEffectApplicationsClient.RemoveAt(i);
-	}
 }
 
 
@@ -1232,7 +1161,8 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
 	if (bOuterActivation) {
 		if (HasAuthority()) {
-			AddPendingEffectApplications(Effect, InitializationData);
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectAdd>(Effect, InitializationData);
+			AddPendingEffectApplications(Wrapper);
 		}
 		return nullptr;
 	}
@@ -1318,7 +1248,8 @@ int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, i
 
 	if (bOuterActivation) {
 		if (HasAuthority()) {
-			RemovePendingEffectApplication(InEffectTag, NumToRemove);
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(InEffectTag, NumToRemove);
+			AddPendingEffectApplications(Wrapper);
 		}
 		return 0;
 	}

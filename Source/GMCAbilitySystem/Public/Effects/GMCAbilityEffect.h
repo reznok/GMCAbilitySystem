@@ -151,41 +151,6 @@ struct FGMCAbilityEffectData
 	}
 };
 
-class UGMCAbilityEffect;
-
-USTRUCT(BlueprintType)
-struct FGMCAbilityEffectLateApplicationAddData {
-	GENERATED_BODY()
-
-	UPROPERTY()
-	int LateApplicationID = 0;
-	
-	float ClientGraceTimeRemaining = 0.f;
-
-	UPROPERTY()
-	TSubclassOf<UGMCAbilityEffect> EffectClass;
-
-	UPROPERTY()
-	FGMCAbilityEffectData InitializationData;
-};
-
-USTRUCT(BlueprintType)
-struct FGMCAbilityEffectLateApplicationRemoveData {
-	GENERATED_BODY()
-
-	UPROPERTY()
-	int LateApplicationID = 0;
-
-	UPROPERTY()
-	float ClientGraceTimeRemaining = 1.f;
-
-	UPROPERTY()
-	FGameplayTag EffectTag;
-
-	UPROPERTY()
-	int NumToRemove = -1;
-};
-
 /**
  * 
  */
