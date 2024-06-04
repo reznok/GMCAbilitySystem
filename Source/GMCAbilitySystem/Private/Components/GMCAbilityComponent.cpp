@@ -171,6 +171,10 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 {
 
 	OnAncillaryTick.Broadcast(DeltaTime);
+
+	ClientHandlePendingEffect();
+	ServerHandlePendingEffect(DeltaTime);
+	
 	CheckActiveTagsChanged();
 	CheckAttributeChanged();
 
@@ -515,11 +519,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		}
 		StartingEffects.Empty();
 	}
-
-	ClientHandlePendingEffect();
-	ServerHandlePendingEffect(DeltaTime);
 	
-
 	TickActiveAbilities(DeltaTime);
 	
 	// Abilities
@@ -852,11 +852,16 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 					AbilityEffect->EffectData.EffectID = Wrapper.LateApplicationID;
 					FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
 					UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
-					//UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
+					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
+						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Add Effect `%s ` Missed Grace time, Force application : id: %d"), *GetNameSafe(Data.EffectClass), FX->EffectData.EffectID);
+					}
 				} break;
 				case EGMC_RemoveEffect: {
 					const FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectRemove>();
 					RemoveEffectByTag(Data.EffectTag, Data.NumToRemove);
+					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
+						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Remove Effect `%s ` Missed Grace time, Force remove"), *Data.EffectTag.ToString());
+					}
 				} break;
 			}
 			PendingApplicationServer.RemoveAt(i);
@@ -884,8 +889,7 @@ void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 						UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 						AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
 						FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
-						UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
-						//UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Applied Late Effect: %s id: %d"), *GetNameSafe(LateApplicationData.EffectClass), FX->EffectData.EffectID);
+						ApplyAbilityEffect(AbilityEffect, EffectData);
 					} break;
 				case EGMC_RemoveEffect: {
 						const FGMCOuterEffectRemove& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectRemove>();
