@@ -35,10 +35,7 @@ struct FGMCOuterEffectRemove {
 	GENERATED_BODY()
 
 	UPROPERTY()
-	FGameplayTag EffectTag;
-
-	UPROPERTY()
-	int NumToRemove = -1;
+	TArray<int> Ids = {};
 };
 
 USTRUCT(BlueprintType)
@@ -78,13 +75,12 @@ template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<
 	return Wrapper;
 }
 
-template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(FGameplayTag GameplayTag, int NumToRemove)
+template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(TArray<int>& Ids)
 {
 	FGMCOuterApplicationWrapper Wrapper;
 	Wrapper.Type = EGMC_RemoveEffect;
 	Wrapper.OuterApplicationData = FInstancedStruct::Make<FGMCOuterEffectRemove>();
 	FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.GetMutable<FGMCOuterEffectRemove>();
-	Data.EffectTag = GameplayTag;
-	Data.NumToRemove = NumToRemove;
+	Data.Ids = Ids;
 	return Wrapper;
 }

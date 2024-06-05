@@ -832,6 +832,7 @@ void UGMC_AbilitySystemComponent::RPCClientAddPendingEffectApplication_Implement
 }
 
 
+
 void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 	if (!HasAuthority()) {
 		return;
@@ -858,9 +859,9 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 				} break;
 				case EGMC_RemoveEffect: {
 					const FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectRemove>();
-					RemoveEffectByTag(Data.EffectTag, Data.NumToRemove);
+					RemoveEffectById(Data.Ids);
 					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
-						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Remove Effect `%s ` Missed Grace time, Force remove"), *Data.EffectTag.ToString());
+						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Remove Effect Missed Grace time, Force remove"));
 					}
 				} break;
 			}
@@ -893,7 +894,7 @@ void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 					} break;
 				case EGMC_RemoveEffect: {
 						const FGMCOuterEffectRemove& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectRemove>();
-						RemoveEffectByTag(Data.EffectTag, Data.NumToRemove);
+						RemoveEffectById(Data.Ids);
 					} break;
 			}
 		
@@ -1214,28 +1215,75 @@ int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, i
 		return 0;
 	}
 
-	if (bOuterActivation) {
-		if (HasAuthority()) {
-			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(InEffectTag, NumToRemove);
-			AddPendingEffectApplications(Wrapper);
-		}
-		return 0;
-	}
-
+	TMap<int, UGMCAbilityEffect*> EffectsToRemove;
 	int32 NumRemoved = 0;
-	// Using this iterator allows us to remove while iterating
+	
 	for(const TTuple<int, UGMCAbilityEffect*> Effect : ActiveEffects)
 	{
 		if(NumRemoved == NumToRemove){
 			break;
 		}
+		
 		if(Effect.Value->EffectData.EffectTag.IsValid() && Effect.Value->EffectData.EffectTag.MatchesTagExact(InEffectTag)){
-			Effect.Value->EndEffect();
+			EffectsToRemove.Add(Effect.Key, Effect.Value);
 			NumRemoved++;
 		}
 	}
+	
+
+	if (bOuterActivation) {
+		if (HasAuthority() && EffectsToRemove.Num() > 0) {
+
+			TArray<int> EffectIDsToRemove;
+			for (const auto& ToRemove : EffectsToRemove) {
+				EffectIDsToRemove.Add(ToRemove.Key);
+			}
+			
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(EffectIDsToRemove);
+			AddPendingEffectApplications(Wrapper);
+		}
+		return 0;
+	}
+
+	for (auto& ToRemove : EffectsToRemove) {
+		ToRemove.Value->EndEffect();
+	}
+	
 	return NumRemoved;
 }
+
+
+bool UGMC_AbilitySystemComponent::RemoveEffectById(TArray<int> Ids, bool bOuterActivation) {
+
+	if (!Ids.Num()) {
+		return true;
+	}
+
+	// check all IDs exists
+	for (int Id : Ids) {
+		if (!ActiveEffects.Contains(Id)) {
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Trying to remove effect with ID %d, but it doesn't exist!"), Id);
+			return false;
+		}
+	}
+
+	if (bOuterActivation) {
+		if (HasAuthority()) {
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(Ids);
+			AddPendingEffectApplications(Wrapper);
+		}
+		return true;
+	}
+
+	for (auto& Effect : ActiveEffects) {
+		if (Ids.Contains(Effect.Key)) {
+			Effect.Value->EndEffect();
+		}
+	}
+
+	return true;
+}
+
 
 int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 	if(!InEffectTag.IsValid()) return -1;

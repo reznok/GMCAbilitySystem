@@ -228,6 +228,13 @@ public:
 	int32 RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove=-1, bool bOuterActivation = false);
 
 	/**
+	 * Removes an instanced effect by ids.
+	 * return false if any of the ids are invalid.
+	 */
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	bool RemoveEffectById(TArray<int> Ids, bool bOuterActivation = false);
+
+	/**
 	 * Gets the number of active effects with the inputted tag.
 	 * Returns -1 if tag is invalid.
 	 */
