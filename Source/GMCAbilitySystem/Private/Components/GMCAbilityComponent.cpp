@@ -887,7 +887,20 @@ void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 			switch (LateApplicationData.Type) {
 				case EGMC_AddEffect: {
 						const FGMCOuterEffectAdd& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectAdd>();
-						UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+
+						if (Data.EffectClass == nullptr) {
+							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: EffectClass is null"));
+							break;
+						}
+					
+						UGMCAbilityEffect* CDO = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>();
+
+						if (CDO == nullptr) {
+							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: CDO is null"));
+							break;
+						}
+					
+						UGMCAbilityEffect* AbilityEffect = DuplicateObject(CDO, this);
 						AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
 						FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
 						ApplyAbilityEffect(AbilityEffect, EffectData);
