@@ -75,7 +75,7 @@ template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<
 	return Wrapper;
 }
 
-template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(TArray<int>& Ids)
+template<> inline FGMCOuterApplicationWrapper FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(TArray<int> Ids)
 {
 	FGMCOuterApplicationWrapper Wrapper;
 	Wrapper.Type = EGMC_RemoveEffect;
