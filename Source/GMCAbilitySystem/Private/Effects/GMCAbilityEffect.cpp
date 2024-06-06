@@ -5,6 +5,7 @@
 
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
@@ -102,6 +103,7 @@ void UGMCAbilityEffect::StartEffect()
 
 	UpdateState(EEffectState::Started, true);
 }
+
 
 void UGMCAbilityEffect::EndEffect()
 {
