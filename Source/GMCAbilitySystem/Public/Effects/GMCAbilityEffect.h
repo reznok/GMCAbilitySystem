@@ -222,7 +222,7 @@ private:
 
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
 	void StartEffect();
-
+	
 
 public:
 	FString ToString() {
