@@ -1350,6 +1350,16 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0;
 }
 
+
+FAttributeClamp UGMC_AbilitySystemComponent::GetAttributeClampByTag(FGameplayTag AttributeTag) const {
+	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
+	{
+		return Att->Clamp;
+	}
+	return FAttributeClamp();
+}
+
+
 bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue, bool bResetModifiers)
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
