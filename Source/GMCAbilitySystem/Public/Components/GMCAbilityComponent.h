@@ -277,6 +277,10 @@ public:
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
+	// Get Attribute value by Tag
+	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
+	FAttributeClamp GetAttributeClampByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
+	
 	// Set Attribute value by Tag
 	// Will NOT trigger an "OnAttributeChanged" Event
 	// bResetModifiers: Will reset all modifiers on the attribute to the base value. DO NOT USE if you have any active effects that modify this attribute.
