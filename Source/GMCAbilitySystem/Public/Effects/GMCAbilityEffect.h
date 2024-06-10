@@ -210,7 +210,9 @@ protected:
 
 	// Tags
 	void AddTagsToOwner();
-	void RemoveTagsFromOwner();
+
+	// bPreserveOnMultipleInstances: If true, will not remove tags if there are multiple instances of the same effect
+	void RemoveTagsFromOwner(bool bPreserveOnMultipleInstances = true);
 
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();

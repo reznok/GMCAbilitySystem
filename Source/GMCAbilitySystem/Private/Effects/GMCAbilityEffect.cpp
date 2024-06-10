@@ -194,8 +194,17 @@ void UGMCAbilityEffect::AddTagsToOwner()
 	}
 }
 
-void UGMCAbilityEffect::RemoveTagsFromOwner()
+void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
+
+	if (bPreserveOnMultipleInstances) {
+		TArray<UGMCAbilityEffect*> ActiveEffect =  OwnerAbilityComponent->GetActivesEffectByTag(EffectData.EffectTag);
+		
+		if (ActiveEffect.Num() > 1) {
+			return;
+		}
+	}
+	
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
 		OwnerAbilityComponent->RemoveActiveTag(Tag);
