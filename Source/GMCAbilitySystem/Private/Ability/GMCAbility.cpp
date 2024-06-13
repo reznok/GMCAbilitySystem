@@ -6,13 +6,29 @@
 
 UWorld* UGMCAbility::GetWorld() const
 {
+	if (HasAllFlags(RF_ClassDefaultObject))
+	{
+		// If we're a CDO, we *must* return nullptr to avoid causing issues with
+		// UObject::ImplementsGetWorld(), which just blithely and blindly calls GetWorld().
+		return nullptr;
+	}
+	
 #if WITH_EDITOR
 	if (GIsEditor)
 	{
 		return GWorld;
 	}
 #endif // WITH_EDITOR
-	return GEngine->GetWorldContexts()[0].World();
+
+	// Sanity check rather than blindly accessing the world context array.
+	auto Contexts = GEngine->GetWorldContexts();
+	if (Contexts.Num() == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("%s: instanciated class with no valid world!"), *GetClass()->GetName())
+		return nullptr;
+	}
+	
+	return Contexts[0].World();
 }
 
 void UGMCAbility::Tick(float DeltaTime)
