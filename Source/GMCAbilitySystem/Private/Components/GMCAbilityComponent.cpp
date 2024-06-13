@@ -469,6 +469,12 @@ float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag Abil
 	return 0.f;
 }
 
+
+float UGMC_AbilitySystemComponent::GetMaxCooldownForAbility(TSubclassOf<UGMCAbility> Ability) const {
+	return Ability ? Ability.GetDefaultObject()->CooldownTime : 0.f;
+}
+
+
 TMap<FGameplayTag, float> UGMC_AbilitySystemComponent::GetCooldownsForInputTag(const FGameplayTag InputTag)
 {
 	TArray<TSubclassOf<UGMCAbility>> Abilities = GetGrantedAbilitiesByTag(InputTag);

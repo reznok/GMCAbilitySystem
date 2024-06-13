@@ -168,6 +168,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	float GetCooldownForAbility(const FGameplayTag AbilityTag) const;
+	
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	float GetMaxCooldownForAbility(TSubclassOf<UGMCAbility> Ability) const;
 
 	// Get the cooldowns for all abilities associated with Input tag
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
