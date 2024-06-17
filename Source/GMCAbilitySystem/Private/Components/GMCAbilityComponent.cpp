@@ -586,6 +586,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		Attribute.CalculateValue();
 		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
+	UnBoundAttributes.MarkArrayDirty();
 }
 
 void UGMC_AbilitySystemComponent::SetStartingTags()
