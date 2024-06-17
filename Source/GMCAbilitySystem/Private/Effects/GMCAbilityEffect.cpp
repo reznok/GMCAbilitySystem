@@ -101,7 +101,7 @@ void UGMCAbilityEffect::StartEffect()
 		EndEffect();
 	}
 
-	UpdateState(EEffectState::Started, true);
+	UpdateState(EGMASEffectState::Started, true);
 }
 
 
@@ -111,9 +111,9 @@ void UGMCAbilityEffect::EndEffect()
 	if (bCompleted) return;
 	
 	bCompleted = true;
-	if (CurrentState != EEffectState::Ended)
+	if (CurrentState != EGMASEffectState::Ended)
 	{
-		UpdateState(EEffectState::Ended, true);
+		UpdateState(EGMASEffectState::Ended, true);
 	}
 
 	// Only remove tags and abilities if the effect has started
@@ -146,7 +146,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 
 
 	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EEffectState::Started)
+	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EGMASEffectState::Started)
 	{
 		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
 		if (Mod < PrevPeriodMod)
@@ -171,9 +171,9 @@ void UGMCAbilityEffect::PeriodTick()
 	}
 }
 
-void UGMCAbilityEffect::UpdateState(EEffectState State, bool Force)
+void UGMCAbilityEffect::UpdateState(EGMASEffectState State, bool Force)
 {
-	if (State == EEffectState::Ended)
+	if (State == EGMASEffectState::Ended)
 	{
 	//	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Ended"));
 	}
@@ -261,20 +261,20 @@ void UGMCAbilityEffect::CheckState()
 {
 	switch (CurrentState)
 	{
-		case EEffectState::Initialized:
+		case EGMASEffectState::Initialized:
 			if (OwnerAbilityComponent->ActionTimer >= EffectData.StartTime)
 			{
 				StartEffect();
-				UpdateState(EEffectState::Started, true);
+				UpdateState(EGMASEffectState::Started, true);
 			}
 			break;
-		case EEffectState::Started:
+		case EGMASEffectState::Started:
 			if (EffectData.Duration != 0 && OwnerAbilityComponent->ActionTimer >= EffectData.EndTime)
 			{
 				EndEffect();
 			}
 			break;
-		case EEffectState::Ended:
+		case EGMASEffectState::Ended:
 			break;
 	default: break;
 	}

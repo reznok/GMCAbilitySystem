@@ -12,7 +12,7 @@
 class UGMC_AbilitySystemComponent;
 
 UENUM(BlueprintType)
-enum class EEffectType : uint8
+enum class EGMASEffectType : uint8
 {
 	Instant,  // Applies Instantly
 	Duration, // Lasts for X time
@@ -20,7 +20,7 @@ enum class EEffectType : uint8
 };
 
 UENUM(BlueprintType)
-enum class EEffectState : uint8
+enum class EGMASEffectState : uint8
 {
 	Initialized,  // Applies Instantly
 	Started, // Lasts for X time
@@ -162,7 +162,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 	GENERATED_BODY()
 
 public:
-	EEffectState CurrentState;
+	EGMASEffectState CurrentState;
 
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
@@ -191,7 +191,7 @@ public:
 	
 	virtual void PeriodTick();
 	
-	void UpdateState(EEffectState State, bool Force=false);
+	void UpdateState(EGMASEffectState State, bool Force=false);
 
 	virtual bool IsPeriodPaused();
 	
