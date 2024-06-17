@@ -65,12 +65,24 @@ void UGMCAbilityEffect::StartEffect()
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
 
-	// Duration and Instant applies immediately.
-	if (EffectData.Period == 0)
+	// Instant effects modify base value and end instantly
+	if (EffectData.bIsInstant)
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
+		}
+		EndEffect();
+		return;
+	}
+
+	// Duration Effects that aren't periodic alter modifiers, not base
+	if (!EffectData.bIsInstant && EffectData.Period == 0)
+	{
+		EffectData.bNegateEffectAtEnd = true;
+		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
+		{
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false);
 		}
 	}
 
@@ -103,11 +115,11 @@ void UGMCAbilityEffect::EndEffect()
 	// Only remove tags and abilities if the effect has started
 	if (!bHasStarted) return;
 
-	if (EffectData.bNegateEffectAtEnd && !EffectData.bIsInstant)
+	if (EffectData.bNegateEffectAtEnd)
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, true);
 		}
 	}
 	
@@ -150,7 +162,7 @@ void UGMCAbilityEffect::PeriodTick()
 {
 	for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
 	{
-		OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier);
+		OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
 	}
 }
 

@@ -17,15 +17,15 @@ struct FAbilityMapData{
 	GENERATED_BODY()
 
 	// Ability Tag
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	FGameplayTag InputTag;
 
 	// Ability Objects that the tag should execute
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	TArray<TSubclassOf<UGMCAbility>> Abilities;
 
 	// Whether or not this ability should be automatically granted to the owning Ability Component
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	bool bGrantedByDefault{true};
 };
 
@@ -33,7 +33,7 @@ UCLASS()
 class GMCABILITYSYSTEM_API UGMCAbilityMapData : public UPrimaryDataAsset{
 	GENERATED_BODY()
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	TArray<FAbilityMapData> AbilityMapData;
 
 public:

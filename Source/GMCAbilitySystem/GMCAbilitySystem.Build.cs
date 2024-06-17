@@ -18,7 +18,8 @@ public class GMCAbilitySystem : ModuleRules
 				"GameplayTasks",
 				"GameplayTags",
 				"GameplayDebugger",
-				"StructUtils"
+				"StructUtils",
+				"NetCore"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -44,6 +45,7 @@ public class GMCAbilitySystem : ModuleRules
 		
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Attributes"));
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 	}
 }

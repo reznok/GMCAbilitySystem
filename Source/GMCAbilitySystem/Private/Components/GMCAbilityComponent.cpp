@@ -12,7 +12,6 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/UnrealNetwork.h"
 
-
 // Sets default values for this component's properties
 UGMC_AbilitySystemComponent::UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
@@ -77,6 +76,40 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// Attribute Binds
 	//
 	InstantiateAttributes();
+
+	// We sort our attributes alphabetically by tag so that it's deterministic.
+	for (auto& AttributeForBind : BoundAttributes.Attributes)
+	{
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.BaseValue,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.AdditiveModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.MultiplyModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+		
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.DivisionModifier,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+	}
 	
 	// Sync'd Action Timer
 	GMCMovementComponent->BindDoublePrecisionFloat(ActionTimer,
@@ -99,13 +132,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
-	// Attributes
-	GMCMovementComponent->BindInstancedStruct(BoundAttributes,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::Periodic_Output,
-		EGMC_InterpolationFunction::TargetValue);
-	
 	// AbilityData Binds
 	// These are mostly client-inputs made to the server as Ability Requests
 	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
@@ -138,6 +164,20 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 {
 	OnAncillaryTick.Broadcast(DeltaTime);
 	CheckActiveTagsChanged();
+	TickActiveEffects(DeltaTime);
+	TickActiveCooldowns(DeltaTime);
+	TickAncillaryActiveAbilities(DeltaTime);
+	
+	
+	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
+	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
+	{
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
+	}
+
+	SendTaskDataToActiveAbility(false);
+	
+	ClearAbilityAndTaskData();
 }
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
@@ -231,22 +271,44 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 	return MatchedTags;
 }
 
-void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
-	// UE_LOG(LogTemp, Warning, TEXT("Trying To Activate Ability: %d"), AbilityData.GrantedAbilityIndex);
+	
 	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
-		TryActivateAbility(ActivatedAbility, InputAction);
+		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
+		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Trying to Activate Ability: %s from %s"), *GetNameSafe(ActivatedAbility), bFromMovementTick ? TEXT("Movement") : TEXT("Ancillary"));
+			TryActivateAbility(ActivatedAbility, InputAction);
+		}
 	}
 }
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction)
 {
+	
 	if (ActivatedAbility == nullptr) return false;
+	
 	
 	// Generated ID is based on ActionTimer so it always lines up on client/server
 	// Also helps when dealing with replays
 	int AbilityID = GenerateAbilityID();
+
+	const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
+	if (!AbilityCDO->bAllowMultipleInstances)
+	{
+		// Enforce only one active instance of the ability at a time.
+		if (GetActiveAbilityCount(ActivatedAbility) > 0) {
+			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Ability Activation for %s Stopped (Already Instanced)"), *GetNameSafe(ActivatedAbility));
+			return false;
+		}
+	}
+
+	// Check Activation Tags
+	if (!CheckActivationTags(AbilityCDO)){
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
+		return false;
+	}
 
 	// If multiple abilities are activated on the same frame, add 1 to the ID
 	// This should never actually happen as abilities get queued
@@ -270,11 +332,75 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
-	
+
 	FGMCAbilityData Data;
 	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
 	QueuedAbilities.Push(Data);
+}
+
+int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
+{
+	int32 Result = 0;
+
+	for (const auto& QueuedData : QueuedAbilities)
+	{
+		if (QueuedData.InputTag == AbilityTag) Result++;
+	}
+	return Result;
+}
+
+int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass)
+{
+	int32 Result = 0;
+
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->IsA(AbilityClass) && ActiveAbilityData.Value->AbilityState != EAbilityState::Ended) Result++;
+	}
+
+	return Result;
+}
+
+
+int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
+	int AbilitiesEnded = 0;
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
+		{
+			ActiveAbilityData.Value->EndAbility();
+			AbilitiesEnded++;
+		}
+	}
+	return AbilitiesEnded;
+}
+
+
+int UGMC_AbilitySystemComponent::EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass) {
+	int AbilitiesEnded = 0;
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (ActiveAbilityData.Value->IsA(AbilityClass))
+		{
+			ActiveAbilityData.Value->EndAbility();
+			AbilitiesEnded++;
+		}
+	}
+	return AbilitiesEnded;
+}
+
+
+int32 UGMC_AbilitySystemComponent::GetActiveAbilityCountByTag(FGameplayTag AbilityTag)
+{
+	int32 Result = 0;
+
+	for (const auto& Ability : GetGrantedAbilitiesByTag(AbilityTag))
+	{
+		Result += GetActiveAbilityCount(Ability);
+	}
+
+	return Result;
 }
 
 void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskData)
@@ -354,33 +480,21 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		StartingEffects.Empty();
 	}
 	
-	TickActiveEffects(DeltaTime);
+	
 	TickActiveAbilities(DeltaTime);
-	TickActiveCooldowns(DeltaTime);
 	
 	// Abilities
 	CleanupStaleAbilities();
-
-	
 	
 	// Was an ability used?
 	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
 	{
-		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput);
+		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, true);
 	}
 
-	// Ability Task Data
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
-	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
-	{
-		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
-		{
-			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
-		}
-	}
+	SendTaskDataToActiveAbility(true);
+
 	
-	AbilityData = FGMCAbilityData{};
-	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -419,26 +533,46 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
-	BoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
-	UnBoundAttributes = FInstancedStruct::Make<FGMCAttributeSet>();
+	BoundAttributes = FGMCAttributeSet();
+	UnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
 	// Loop through each of the data assets inputted into the component to create new attributes.
 	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
+
+		// Avoid crashing in an editor preview if we're actually editing the ability component's attribute table.
+		if (!AttributeDataAsset) continue;
+		
 		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.BaseValue = AttributeData.DefaultValue;
+			NewAttribute.Clamp = AttributeData.Clamp;
+			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
-			NewAttribute.CalculateValue();
+			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
-				BoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+				BoundAttributes.AddAttribute(NewAttribute);
 			}
-			else{
-				UnBoundAttributes.GetMutable<FGMCAttributeSet>().AddAttribute(NewAttribute);
+			else if (GetOwnerRole() == ROLE_Authority) {
+				// FFastArraySerializer will duplicate all attributes on first replication if we
+				// add the attributes on the clients as well.
+				UnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
+	}
+
+	// After all attributes are initialized, calc their values which will primarily apply their Clamps
+	
+	for (const FAttribute& Attribute : BoundAttributes.Attributes)
+	{
+		Attribute.CalculateValue();
+	}
+
+	for (const FAttribute& Attribute : UnBoundAttributes.Items)
+	{
+		Attribute.CalculateValue();
 	}
 }
 
@@ -554,6 +688,13 @@ void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 	}
 }
 
+void UGMC_AbilitySystemComponent::TickAncillaryActiveAbilities(float DeltaTime){
+	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	{
+		Ability.Value->AncillaryTick(DeltaTime);
+	}
+}
+
 void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
 {
 	for (auto It = ActiveCooldowns.CreateIterator(); It; ++It)
@@ -655,9 +796,62 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 	return AbilityMap[AbilityTag].Abilities;
 }
 
+
+void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
+	AbilityData = FGMCAbilityData{};
+	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
+}
+
+
+void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
+	
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
+	{
+		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID) && ActiveAbilities[TaskDataFromInstance.AbilityID]->bActivateOnMovementTick == bFromMovement)
+		{
+			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
+	}
+}
+
+
+bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability) const {
+
+	if (!Ability) return false;
+
+	// Required Tags
+	for (const FGameplayTag Tag : Ability->ActivationRequiredTags)
+	{
+		if (!HasActiveTag(Tag))
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, missing required tag:  %s"), *Tag.ToString());
+			return false;
+		}
+	}
+
+	// Blocking Tags
+	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
+	{
+		if (HasActiveTag(Tag))
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, blocked by tag: %s"), *Tag.ToString());
+			return false;
+		}
+	}
+
+	return true;
+	
+}
+
+
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
 	for (UGMCAbilityMapData* StartingAbilityMap : AbilityMaps)
 	{
+
+		// Avoid crashing if we're adding a new entry to the ability map in the editor.
+		if (!StartingAbilityMap) continue;
+		
 		for (const FAbilityMapData& Data : StartingAbilityMap->GetAbilityMapData())
 		{
 			AddAbilityMapData(Data);
@@ -704,10 +898,10 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct PreviousAttributes)
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes)
 {
-	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Get<FGMCAttributeSet>().Attributes;
-	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Get<FGMCAttributeSet>().Attributes;
+	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Items;
+	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
 	TMap<FGameplayTag, float> OldValues;
 	
@@ -719,6 +913,8 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FInstancedStruct Previ
 		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
 			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
+
+			UnBoundAttributes.MarkAttributeDirty(Attribute);
 		}
 	}
 }
@@ -826,26 +1022,12 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	if (UnBoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : UnBoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing unbound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : UnBoundAttributes.Items){
+		AllAttributes.Add(&Attribute);
 	}
 
-	if (BoundAttributes.IsValid())
-	{
-		for (const FAttribute& Attribute : BoundAttributes.Get<FGMCAttributeSet>().Attributes){
-			AllAttributes.Add(&Attribute);
-		}
-	}
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("UGMC_AbilitySystemComponent: %s (%s) is missing bound attributes!"), *(GetOwner()->GetName()), *(GetOwner()->GetClass()->GetName()));
+	for (const FAttribute& Attribute : BoundAttributes.Attributes){
+		AllAttributes.Add(&Attribute);
 	}
 	return AllAttributes;
 }
@@ -882,7 +1064,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
-		Att->Value = NewValue;
+		Att->SetBaseValue(NewValue);
 
 		if (bResetModifiers)
 		{
@@ -935,14 +1117,14 @@ FString UGMC_AbilitySystemComponent::GetActiveEffectsString() const{
 FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 	FString FinalString = TEXT("\n");
 	for(const TTuple<int, UGMCAbility*> ActiveAbility : ActiveAbilities){
-		FinalString += ActiveAbility.Value->ToString() + TEXT("\n");
+		FinalString += FString::Printf(TEXT("%d: "), ActiveAbility.Key) + ActiveAbility.Value->ToString() + TEXT("\n");
 	}
 	return FinalString;
 }
 
 #pragma endregion  ToStringHelpers
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bNegateValue, UGMC_AbilitySystemComponent* SourceAbilityComponent)
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bModifyBaseValue, bool bNegateValue,  UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
 	// Provide an opportunity to modify the attribute modifier before applying it
 	UGMCAttributeModifierContainer* AttributeModifierContainer = NewObject<UGMCAttributeModifierContainer>(this);
@@ -965,10 +1147,13 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		{
 			AttributeModifier.Value = -AttributeModifier.Value;
 		}
-		AffectedAttribute->ApplyModifier(AttributeModifier);
+		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
 
 		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+
+		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
+		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 	}
 }
 

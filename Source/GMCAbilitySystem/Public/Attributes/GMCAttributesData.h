@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "Engine/DataAsset.h"
+#include "Attributes/GMCAttributeClamp.h"
 #include "GMCAttributesData.generated.h"
 
 /** Used only in the AttributesData Data Asset to instantiate attributes. */
@@ -13,15 +14,18 @@ struct FAttributeData{
 	GENERATED_BODY()
 	
 	/** i.e. Attribute.Health */
-	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"))
+	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"), Category = "GMCAbilitySystem")
 	FGameplayTag AttributeTag;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	float DefaultValue = 0.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	FAttributeClamp Clamp;
 
 	/** Should the variable be bound to the GMC? If False, it will be replicated normally and CANNOT be used for
 	 * prediction. */
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	bool bGMCBound = true;
 };
 

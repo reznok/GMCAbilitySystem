@@ -46,6 +46,10 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 
 }
 
+void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
+	
+}
+
 void UGMCAbilityTaskBase::ClientProgressTask()
 {
 	FGMCAbilityTaskData TaskData;

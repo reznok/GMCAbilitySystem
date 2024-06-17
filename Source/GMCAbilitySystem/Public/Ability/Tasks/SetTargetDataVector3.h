@@ -13,7 +13,7 @@ struct FGMCAbilityTaskTargetDataVector3 : public FGMCAbilityTaskData
 {
 	GENERATED_BODY()
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FVector Target{FVector::Zero()};
 };
 
@@ -26,7 +26,7 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FUGMCAbilityTaskTargetDataVector3AsyncActionPin	Completed;
 	
-	UPROPERTY(BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FVector Target;
 	
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;

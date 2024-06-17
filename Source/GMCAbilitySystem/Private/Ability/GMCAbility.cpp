@@ -6,13 +6,29 @@
 
 UWorld* UGMCAbility::GetWorld() const
 {
+	if (HasAllFlags(RF_ClassDefaultObject))
+	{
+		// If we're a CDO, we *must* return nullptr to avoid causing issues with
+		// UObject::ImplementsGetWorld(), which just blithely and blindly calls GetWorld().
+		return nullptr;
+	}
+	
 #if WITH_EDITOR
 	if (GIsEditor)
 	{
 		return GWorld;
 	}
 #endif // WITH_EDITOR
-	return GEngine->GetWorldContexts()[0].World();
+
+	// Sanity check rather than blindly accessing the world context array.
+	auto Contexts = GEngine->GetWorldContexts();
+	if (Contexts.Num() == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("%s: instanciated class with no valid world!"), *GetClass()->GetName())
+		return nullptr;
+	}
+	
+	return Contexts[0].World();
 }
 
 void UGMCAbility::Tick(float DeltaTime)
@@ -31,6 +47,11 @@ void UGMCAbility::Tick(float DeltaTime)
 	TickEvent(DeltaTime);
 }
 
+void UGMCAbility::AncillaryTick(float DeltaTime){
+	AncillaryTickTasks(DeltaTime);
+	AncillaryTickEvent(DeltaTime);
+}
+
 void UGMCAbility::TickTasks(float DeltaTime)
 {
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
@@ -40,13 +61,21 @@ void UGMCAbility::TickTasks(float DeltaTime)
 	}
 }
 
+void UGMCAbility::AncillaryTickTasks(float DeltaTime){
+	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	{
+		if (Task.Value == nullptr) {continue;}
+		Task.Value->AncillaryTick(DeltaTime);
+	}
+}
+
 void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction)
 {
 	this->AbilityInputAction = InputAction;
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
-	BeginAbility();
+	PreBeginAbility();
 }
 
 bool UGMCAbility::CanAffordAbilityCost() const
@@ -163,50 +192,55 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 	ActiveTasks.Remove(&Task);
 }
 
-bool UGMCAbility::CheckActivationTags()
-{
-	// Required Tags
-	for (const FGameplayTag Tag : ActivationRequiredTags)
-	{
-		if (!OwnerAbilityComponent->HasActiveTag(Tag))
-		{
-			return false;
-		}
-	}
 
-	// Blocking Tags
-	for (const FGameplayTag Tag : ActivationBlockedTags)
+void UGMCAbility::FinishEndAbility() {
+	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
-		if (OwnerAbilityComponent->HasActiveTag(Tag))
-		{
-			return false;
-		}
+		if (Task.Value == nullptr) continue;
+		Task.Value->EndTaskGMAS();
 	}
-
-	return true;
+	
+	AbilityState = EAbilityState::Ended;
 }
+
 
 bool UGMCAbility::IsOnCooldown() const
 {
 	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
 }
 
-void UGMCAbility::BeginAbility()
-{
-	// Check Activation Tags
-	if (!CheckActivationTags()){
-		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *AbilityTag.ToString());
-		EndAbility();
-		return;
-	}
 
+
+bool UGMCAbility::PreExecuteCheckEvent_Implementation() {
+	return true;
+}
+
+
+bool UGMCAbility::PreBeginAbility() {
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
-		EndAbility();
-		return;
+		CancelAbility();
+		return false;
 	}
 
+	// PreCheck
+	if (!PreExecuteCheckEvent())
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Failing PreExecution check"), *AbilityTag.ToString());
+		CancelAbility();
+		return false;
+	}
+
+	BeginAbility();
+
+	return true;
+}
+
+
+void UGMCAbility::BeginAbility()
+{
+	
 	if (bApplyCooldownAtAbilityBegin)
 	{
 		CommitAbilityCooldown();
@@ -215,21 +249,37 @@ void UGMCAbility::BeginAbility()
 	// Initialize Ability
 	AbilityState = EAbilityState::Initialized;
 
+	// Cancel Abilities in CancelAbilitiesWithTag container
+	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
+		if (AbilityTag == AbilityToCancelTag) {
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
+			continue;
+		}
+		
+		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
+		}
+	}
+
 	// Execute BP Event
 	BeginAbilityEvent();
 }
 
 void UGMCAbility::EndAbility()
 {
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
-	{
-		if (Task.Value == nullptr) continue;
-		Task.Value->EndTaskGMAS();
+	if (AbilityState != EAbilityState::Ended) {
+		FinishEndAbility();
+		EndAbilityEvent();
 	}
-	
-	AbilityState = EAbilityState::Ended;
-	EndAbilityEvent();
 }
+
+
+void UGMCAbility::CancelAbility() {
+	if (AbilityState != EAbilityState::Ended) {
+		FinishEndAbility();
+	}
+}
+
 
 AActor* UGMCAbility::GetOwnerActor() const
 {

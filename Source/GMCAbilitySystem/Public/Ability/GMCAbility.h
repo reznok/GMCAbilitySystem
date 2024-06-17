@@ -28,17 +28,18 @@ class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwn
 {
 	GENERATED_BODY()
 
-	UFUNCTION(BlueprintCallable)
+public:
+	
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual UWorld* GetWorld() const override;
 	
-public:
-		//// Ability State
+	//// Ability State
 	// EAbilityState. Use Getters/Setters
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	EAbilityState AbilityState;
 
 	// Data used to execute this ability
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAbilityData AbilityData;
 
 	// Assign a new, incrementing, Task ID
@@ -54,14 +55,27 @@ public:
 
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
+	void AncillaryTickTasks(float DeltaTime);
 	
 	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
 	
-	// Called by AbilityComponent
+	// Called by AbilityComponent (this is a prediction tick so should be used for movement)
 	virtual void Tick(float DeltaTime);
+	
+	// Called by AbilityComponent from AncillaryTick (won't be rolled back on mispredictions)
+	virtual void AncillaryTick(float DeltaTime);
 	
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void TickEvent(float DeltaTime);
+
+	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Ancillary Tick Ability"), Category="GMCAbilitySystem|Ability")
+	void AncillaryTickEvent(float DeltaTime);
+
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
+	bool PreExecuteCheckEvent();
+
+	UFUNCTION()
+	virtual bool PreBeginAbility();
 	
 	UFUNCTION()
 	virtual void BeginAbility();
@@ -71,6 +85,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void EndAbility();
+
+	/** End an ability without triggering the EndAbilityEvent.
+	 * This is useful for abilities that need to end immediately without any additional logic, usual for dead born abilities. */
+	UFUNCTION(BlueprintCallable, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
+	virtual void CancelAbility();
 
 	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
@@ -94,55 +113,60 @@ public:
 	void SetOwnerJustTeleported(bool bValue);
 
 	// Tag to identify this ability. Required for setting cooldowns.
-	UPROPERTY(EditAnywhere, meta=(Categories="Ability"))
+	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
 	// An Effect that modifies attributes when the ability is activated
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
 	// How long in seconds ability should go on cooldown when activated
 	// Requires AbilityTag to be set
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	float CooldownTime;
 
 	// If true, the ability will apply the Cooldown when activated
 	// If false, the ability will NOT apply the Cooldown when the ability begins
 	// You can still apply the cooldown manually with CommitAbilityCooldown or CommitAbilityCostAndCooldown
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	bool bApplyCooldownAtAbilityBegin{true};
 
+	// If true, more than one instance of this ability can be active at once. If false, the actual activation (but not
+	// the queuing) of an ability will fail if the ability already is active.
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
+	bool bAllowMultipleInstances {false};
+	
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	virtual bool CanAffordAbilityCost() const;
 
 	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCostAndCooldown();
 	
 	// (Re-)Apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCooldown();
 	
 	// Apply the effects in AbilityCost
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCost();
 
 	// Remove the ability cost effect (if applicable)
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void RemoveAbilityCost();
 
 	// GMC_AbilitySystemComponent that owns this ability
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 	// The GMC Movement Component on the same actor as OwnerAbilityComponent
-	UFUNCTION(BlueprintPure)
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
 	
-	UPROPERTY(BlueprintReadOnly)
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	TObjectPtr<const UInputAction> AbilityInputAction;
 
 	// Pass data into the Task
@@ -153,17 +177,28 @@ public:
 	// UFUNCTION(BlueprintCallable)
 	// bool HasAuthority();
 
-	UFUNCTION(BlueprintCallable, BlueprintPure)
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "GMCAbilitySystem")
 	bool AbilityEnded() {return AbilityState == EAbilityState::Ended;};
 
 	// Tags
 	// Tags that the owner must have to activate the ability. BeginAbility will not be called if the owner does not have these tags.
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	FGameplayTagContainer ActivationRequiredTags;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	// Tags that the owner must not have to activate ability. BeginAbility will not be called if the owner has these tags.
 	FGameplayTagContainer ActivationBlockedTags;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	// Cancel Abilities with these tags when this ability is activated
+	FGameplayTagContainer CancelAbilitiesWithTag;
+
+	/** 
+	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.
+	 * Should be set to false for actions that should not be replayed on mispredictions. i.e. firing a weapon
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
+	bool bActivateOnMovementTick = true; 
 
 	UFUNCTION()
 	void ServerConfirm();
@@ -180,6 +215,8 @@ public:
 	
 private:
 
+	void FinishEndAbility();
+
 	int AbilityID = -1;
 	int TaskIDCounter = -1;
 
@@ -193,8 +230,6 @@ private:
 	/** List of currently active tasks, do not modify directly */
 	UPROPERTY()
 	TArray<TObjectPtr<UGameplayTask>> ActiveTasks;
-
-	bool CheckActivationTags();
 
 	UPROPERTY()
 	UGMCAbilityEffect* AbilityCostInstance = nullptr;
