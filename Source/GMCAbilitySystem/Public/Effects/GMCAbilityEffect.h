@@ -123,6 +123,10 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer PausePeriodicEffect;
 
+	// On activation, will end ability present in this container
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTagContainer CancelAbilityOnActivation;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
 	
@@ -216,6 +220,7 @@ private:
 
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();
+	void EndActiveAbilitiesFromOwner();
 
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
