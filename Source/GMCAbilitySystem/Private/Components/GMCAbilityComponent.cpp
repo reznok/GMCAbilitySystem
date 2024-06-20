@@ -435,6 +435,23 @@ int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility
 }
 
 
+bool UGMC_AbilitySystemComponent::IsAbilityTagBlocked(const FGameplayTag AbilityTag) const {
+	
+	for (const auto& ActiveAbility : ActiveAbilities) {
+		if (IsValid(ActiveAbility.Value) && ActiveAbility.Value->AbilityState != EAbilityState::Ended)
+		{
+			for (auto& Tag : ActiveAbility.Value->BlockOtherAbility) {
+				if (Tag.MatchesTag(AbilityTag)) {
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+
 int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
 	int AbilitiesEnded = 0;
 	for (const auto& ActiveAbilityData : ActiveAbilities)
@@ -1066,16 +1083,8 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 		}
 	}
 
-	for (const FGameplayTag Tag : Ability->ActivationBlockedByActiveAbility)
-	{
-		for (const auto& ActiveAbility : ActiveAbilities) {
-			if (IsValid(ActiveAbility.Value)
-				&& ActiveAbility.Value->AbilityTag.MatchesTag(Tag)
-				&& ActiveAbility.Value->AbilityState != EAbilityState::Ended)
-			{
-				return false;
-			}
-		}
+	if (IsAbilityTagBlocked(Ability->AbilityTag)) {
+		return false;
 	}
 
 	return true;

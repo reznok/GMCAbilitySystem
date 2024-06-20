@@ -154,6 +154,9 @@ public:
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass);
 
+	// Perform a check in every active ability against BlockOtherAbility and check if the tag provided is present
+	bool IsAbilityTagBlocked(const FGameplayTag AbilityTag) const;
+
 	UFUNCTION(BlueprintCallable, DisplayName="End Abilities (By Tag)", Category="GMAS|Abilities")
 	// End all abilities with the corresponding tag, returns the number of abilities ended
 	int EndAbilitiesByTag(FGameplayTag AbilityTag);

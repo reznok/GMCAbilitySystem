@@ -125,6 +125,23 @@ void UGMCAbility::RemoveAbilityCost(){
 	}
 }
 
+
+void UGMCAbility::ModifyBlockOtherAbility(FGameplayTagContainer& TagToAdd, FGameplayTagContainer& TagToRemove) {
+	for (auto Tag : TagToAdd) {
+		TagToAdd.AddTag(Tag);
+	}
+
+	for (auto Tag : TagToRemove) {
+		TagToRemove.RemoveTag(Tag);
+	}
+}
+
+
+void UGMCAbility::ResetBlockOtherAbility() {
+	BlockOtherAbility = GetClass()->GetDefaultObject<UGMCAbility>()->BlockOtherAbility;
+}
+
+
 void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 {
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
