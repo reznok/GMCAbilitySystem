@@ -25,26 +25,32 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY()
 	mutable float DivisionModifier{1};
 
-	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue) const
+	void ApplyModifier(UGMC_AbilitySystemComponent* AbilityComponent, const FGMCAttributeModifier& Modifier, bool bModifyBaseValue, bool bNegateValue) const
 	{
+		float ModifierValue = Modifier.GetValue(AbilityComponent);
+		if (bNegateValue)
+		{
+			ModifierValue = -ModifierValue;
+		}
+		
 		switch(Modifier.ModifierType)
 		{
 		case EModifierType::Add:
 			if (bModifyBaseValue)
 			{
-				BaseValue += Modifier.Value;
+				BaseValue += ModifierValue;
 				BaseValue = Clamp.ClampValue(BaseValue);
 			}
 			else
 			{
-				AdditiveModifier += Modifier.Value;
+				AdditiveModifier += ModifierValue;
 			}
 			break;
 		case EModifierType::Multiply:
-			MultiplyModifier += Modifier.Value;
+			MultiplyModifier += ModifierValue;
 			break;
 		case EModifierType::Divide:
-			DivisionModifier += Modifier.Value;
+			DivisionModifier += ModifierValue;
 			break;
 		default:
 			break;

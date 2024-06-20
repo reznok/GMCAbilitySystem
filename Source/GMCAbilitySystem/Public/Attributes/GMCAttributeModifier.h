@@ -2,6 +2,8 @@
 #include "GameplayTags.h"
 #include "GMCAttributeModifier.generated.h"
 
+class UGMC_AbilitySystemComponent;
+
 UENUM(BlueprintType)
 enum class EModifierType : uint8
 {
@@ -17,7 +19,8 @@ USTRUCT(BlueprintType)
 struct FGMCAttributeModifier
 {
 	GENERATED_BODY()
-		
+
+	// Attribute to apply modifier to
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag AttributeTag;
 
@@ -25,6 +28,12 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	float Value{0};
 
+	// Instead of hard-coding a value, you can use another attribute to get the value from
+	// If set, this will take priority over Value
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="GMCAbilitySystem", meta = (Categories="Attribute"))
+	FGameplayTag ValueAttributeTag;
+
+	// Type of modifier to apply
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EModifierType ModifierType{EModifierType::Add};
 
@@ -32,5 +41,6 @@ struct FGMCAttributeModifier
 	// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MetaTags;
-	
+
+	float GetValue(UGMC_AbilitySystemComponent* AbilityComponent) const;
 };
