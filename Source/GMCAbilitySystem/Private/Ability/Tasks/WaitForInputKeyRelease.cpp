@@ -48,7 +48,6 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 	}
 	else
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_WaitForInputKeyRelease::Activate: AbilityInputAction is nullptr!"));
 		ClientProgressTask();
 	}
 }

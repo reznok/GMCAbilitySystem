@@ -46,6 +46,7 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 	{
 		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout, Cancelling Ability: %s"), *Ability->GetName());
 		Ability->EndAbility();
+		EndTask();
 	}
 
 }
