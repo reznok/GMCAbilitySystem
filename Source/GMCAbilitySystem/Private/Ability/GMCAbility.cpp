@@ -42,6 +42,11 @@ void UGMCAbility::Tick(float DeltaTime)
 			return;
 		}
 	}
+
+	if (bEndPending) {
+		EndAbility();
+		return;
+	}
 	
 	TickTasks(DeltaTime);
 	TickEvent(DeltaTime);
@@ -166,6 +171,12 @@ void UGMCAbility::ServerConfirm()
 {
 	bServerConfirmed = true;
 }
+
+
+void UGMCAbility::SetPendingEnd() {
+	bEndPending = true;
+}
+
 
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const
 {
