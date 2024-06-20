@@ -158,6 +158,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void RemoveAbilityCost();
 
+	// Live modifying the BlockOtherAbility tags
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	virtual void ModifyBlockOtherAbility(FGameplayTagContainer& TagToAdd, FGameplayTagContainer& TagToRemove);
+
+	// Reset the BlockOtherAbility tags to the default values
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	virtual void ResetBlockOtherAbility();
+
 	// GMC_AbilitySystemComponent that owns this ability
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
@@ -194,8 +202,8 @@ public:
 	FGameplayTagContainer CancelAbilitiesWithTag;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
-	// Ability Tag that the owner must not have to activate ability. BeginAbility will not be called if the owner has these abilities tags.
-	FGameplayTagContainer ActivationBlockedByActiveAbility;
+	// Prevent Abilities with these tags from activating when this ability is activated
+	FGameplayTagContainer BlockOtherAbility;
 
 	/** 
 	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.
