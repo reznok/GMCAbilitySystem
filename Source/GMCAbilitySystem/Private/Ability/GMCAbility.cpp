@@ -115,13 +115,13 @@ void UGMCAbility::RemoveAbilityCost(){
 }
 
 
-void UGMCAbility::ModifyBlockOtherAbility(FGameplayTagContainer& TagToAdd, FGameplayTagContainer& TagToRemove) {
+void UGMCAbility::ModifyBlockOtherAbility(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove) {
 	for (auto Tag : TagToAdd) {
-		TagToAdd.AddTag(Tag);
+		BlockOtherAbility.AddTag(Tag);
 	}
 
 	for (auto Tag : TagToRemove) {
-		TagToRemove.RemoveTag(Tag);
+		BlockOtherAbility.RemoveTag(Tag);
 	}
 }
 
@@ -252,6 +252,12 @@ bool UGMCAbility::PreBeginAbility() {
 
 void UGMCAbility::BeginAbility()
 {
+	
+	if (OwnerAbilityComponent->IsAbilityTagBlocked(AbilityTag)) {
+		CancelAbility();
+		return;
+	}
+
 	
 	if (bApplyCooldownAtAbilityBegin)
 	{

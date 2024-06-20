@@ -160,7 +160,7 @@ public:
 
 	// Live modifying the BlockOtherAbility tags
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	virtual void ModifyBlockOtherAbility(FGameplayTagContainer& TagToAdd, FGameplayTagContainer& TagToRemove);
+	virtual void ModifyBlockOtherAbility(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove);
 
 	// Reset the BlockOtherAbility tags to the default values
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
