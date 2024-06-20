@@ -67,6 +67,7 @@ void UGMCAbilityEffect::StartEffect()
 	
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
+	EndActiveAbilitiesFromOwner();
 
 	// Instant effects modify base value and end instantly
 	if (EffectData.bIsInstant)
@@ -226,6 +227,16 @@ void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
 		OwnerAbilityComponent->RemoveGrantedAbilityByTag(Tag);
 	}
 }
+
+
+void UGMCAbilityEffect::EndActiveAbilitiesFromOwner() {
+	
+	for (const FGameplayTag Tag : EffectData.CancelAbilityOnActivation)
+	{
+		OwnerAbilityComponent->EndAbilitiesByTag(Tag);
+	}
+}
+
 
 bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const
 {
