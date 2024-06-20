@@ -426,7 +426,7 @@ int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
 	{
 		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
 		{
-			ActiveAbilityData.Value->EndAbility();
+			ActiveAbilityData.Value->SetPendingEnd();
 			AbilitiesEnded++;
 		}
 	}

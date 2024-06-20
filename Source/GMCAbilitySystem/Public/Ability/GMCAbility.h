@@ -214,6 +214,9 @@ public:
 
 	UFUNCTION()
 	void ServerConfirm();
+
+	UFUNCTION()
+	void SetPendingEnd();
 	
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
@@ -233,6 +236,8 @@ private:
 	int TaskIDCounter = -1;
 
 	bool bServerConfirmed = false;
+
+	bool bEndPending = false;
 
 	float ClientStartTime;
 	
