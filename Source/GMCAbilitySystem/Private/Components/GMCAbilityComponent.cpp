@@ -45,12 +45,22 @@ FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const 
 void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
 	FDelegateHandle Handle)
 {
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Passed an invalid delegate to unbind for tag changes on %s"), *Tags.ToString())
+		return;
+	}
+	
 	for (int32 Index = FilteredTagDelegates.Num() - 1; Index >= 0; --Index)
 	{
 		TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>& SearchPair = FilteredTagDelegates[Index];
 		if (SearchPair.Key == Tags)
 		{
-			SearchPair.Value.Remove(Handle);
+			if (!SearchPair.Value.Remove(Handle))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Unable to unbind a tag change delegate for %s"), *Tags.ToString())
+			}
+			
 			if (!SearchPair.Value.IsBound())
 			{
 				FilteredTagDelegates.RemoveAt(Index);
@@ -555,7 +565,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			if(AttributeData.bGMCBound){
 				BoundAttributes.AddAttribute(NewAttribute);
 			}
-			else if (GetOwnerRole() == ROLE_Authority) {
+			else if (GetOwnerRole() == ROLE_Authority || GetNetMode() == NM_Standalone) {
 				// FFastArraySerializer will duplicate all attributes on first replication if we
 				// add the attributes on the clients as well.
 				UnBoundAttributes.AddAttribute(NewAttribute);
@@ -570,11 +580,12 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		Attribute.CalculateValue();
 	}
 
-	for (const FAttribute& Attribute : UnBoundAttributes.Items)
+	// We need to be non-const to ensure we can mark the item dirty.
+	for (FAttribute& Attribute : UnBoundAttributes.Items)
 	{
 		Attribute.CalculateValue();
+		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
-	UnBoundAttributes.MarkArrayDirty();
 }
 
 void UGMC_AbilitySystemComponent::SetStartingTags()
@@ -1150,8 +1161,12 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		}
 		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
 
-		OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
-		NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+		// Only broadcast a change if we've genuinely changed.
+		if (OldValue != AffectedAttribute->Value)
+		{
+			OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+			NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
+		}
 
 		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);

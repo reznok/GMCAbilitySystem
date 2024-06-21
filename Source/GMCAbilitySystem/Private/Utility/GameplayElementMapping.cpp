@@ -14,7 +14,7 @@ FGMCGameplayElementTagPropertyMap::FGMCGameplayElementTagPropertyMap(const FGMCG
 
 FGMCGameplayElementTagPropertyMap::~FGMCGameplayElementTagPropertyMap()
 {
-	Unregister();
+	Reset();
 }
 
 #if WITH_EDITOR
@@ -245,8 +245,14 @@ void FGMCGameplayElementTagPropertyMap::Unregister()
 	CachedAbilityComponent = nullptr;
 }
 
+void FGMCGameplayElementTagPropertyMap::Reset()
+{
+	Unregister();
+	AttributeHandle.Reset();
+}
+
 void FGMCGameplayElementTagPropertyMap::GameplayTagChangedCallback(const FGameplayTagContainer& AddedTags,
-	const FGameplayTagContainer& RemovedTags)
+                                                                   const FGameplayTagContainer& RemovedTags)
 {
 	UObject* Owner = CachedOwner.Get();
 	const UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get();
@@ -274,9 +280,23 @@ void FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback(const F
 {
 	UObject* Owner = CachedOwner.Get();
 	const UGMC_AbilitySystemComponent* AbilityComponent = CachedAbilityComponent.Get();
-
+	
 	if (!Owner || !AbilityComponent)
 	{
+		// Get an object pointer even if it's prepped for garbage collection.
+		UObject *TrueOwner = CachedOwner.Get(true);
+		if (TrueOwner != nullptr && TrueOwner->HasAnyFlags(RF_MirroredGarbage))
+		{
+			// This happens if our animation blueprint is being used as a child layer; it will be marked for garbage
+			// collection, but not deallocated (so the Reset() function hasn't yet been called).
+			//
+			// In this case, we want to just reset ourselves as though we were being deallocated and bail.
+			
+			Reset();
+			return;
+		}
+
+		// We don't have even a pending-delete object, meaning something has gone VERY wrong.
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("FGMCGameplayElementTagPropertyMap: Received callback on uninitialized map!"));
 		return;
 	}
