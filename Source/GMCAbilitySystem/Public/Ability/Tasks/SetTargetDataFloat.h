@@ -18,7 +18,7 @@ struct FGMCAbilityTaskTargetDataFloat : public FGMCAbilityTaskData
 };
 
 UCLASS()
-class UGMCAbilityTask_SetTargetDataFloat : public UGMCAbilityTaskBase
+class GMCABILITYSYSTEM_API UGMCAbilityTask_SetTargetDataFloat : public UGMCAbilityTaskBase
 {
 	GENERATED_BODY()
 	

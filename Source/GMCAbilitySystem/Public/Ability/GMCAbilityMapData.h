@@ -37,5 +37,5 @@ class GMCABILITYSYSTEM_API UGMCAbilityMapData : public UPrimaryDataAsset{
 	TArray<FAbilityMapData> AbilityMapData;
 
 public:
-	TArray<FAbilityMapData> GetAbilityMapData() {return AbilityMapData;}
+	const TArray<FAbilityMapData>& GetAbilityMapData() const { return AbilityMapData; }
 };

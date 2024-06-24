@@ -29,7 +29,7 @@ public:
 	 * @return 
 	 */
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait For Input Key Release",Category = "GMCAbilitySystem/Tasks")
-	static UGMCAbilityTask_WaitForInputKeyRelease* WaitForKeyRelease(UGMCAbility* OwningAbility, bool bCheckForReleaseDuringActivation);
+	static UGMCAbilityTask_WaitForInputKeyRelease* WaitForKeyRelease(UGMCAbility* OwningAbility, bool bCheckForReleaseDuringActivation = true);
 
 	//Overriding BP async action base
 	virtual void Activate() override;
@@ -43,7 +43,7 @@ protected:
 
 	/** If true, we may complete this task during activation if the ability's input action key is already released. */
 	UPROPERTY(Transient)
-	bool bShouldCheckForReleaseDuringActivation;
+	bool bShouldCheckForReleaseDuringActivation = true;
 
 private:
 	

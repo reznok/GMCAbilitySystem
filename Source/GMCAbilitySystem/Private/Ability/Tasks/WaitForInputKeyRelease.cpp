@@ -1,6 +1,7 @@
 ﻿#include "Ability/Tasks/WaitForInputKeyRelease.h"
 
 #include "EnhancedInputComponent.h"
+#include "EnhancedInputSubsystems.h"
 #include "Components/GMCAbilityComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -29,9 +30,15 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		// Check that the value isn't currently false.
 		if (bShouldCheckForReleaseDuringActivation)
 		{
-			const FInputActionValue ActionValue = InputComponent->GetBoundActionValue(Ability->AbilityInputAction);
-			if (!ActionValue.Get<bool>())
+			FInputActionValue ActionValue = FInputActionValue();
+			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
+			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer())) {
+				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
+			}
+			
+			if (ActionValue.GetMagnitude() == 0)
 			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_WaitForInputKeyRelease::Activate: EndOnStart!"));
 				// We'll want to immediately unbind the binding.
 				InputComponent->RemoveActionBindingForHandle(Binding.GetHandle());
 				InputBindingHandle = -1;
