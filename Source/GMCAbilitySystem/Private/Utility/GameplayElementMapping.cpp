@@ -1,6 +1,7 @@
 ﻿#include "Utility/GameplayElementMapping.h"
 #include "GMCAbilityComponent.h"
 #include "Misc/DataValidation.h"
+#include "Misc/EngineVersionComparison.h"
 
 FGMCGameplayElementTagPropertyMap::FGMCGameplayElementTagPropertyMap()
 {
@@ -275,6 +276,12 @@ void FGMCGameplayElementTagPropertyMap::GameplayTagChangedCallback(const FGamepl
 	}
 }
 
+#if UE_VERSION_OLDER_THAN(5, 4, 0)
+#define GARBAGE_FLAG RF_Garbage
+#else
+#define GARBAGE_FLAG RF_MirroredGarbage
+#endif
+
 void FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback(const FGameplayTag& AttributeTag,
 	const float OldValue, const float NewValue)
 {
@@ -285,7 +292,11 @@ void FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback(const F
 	{
 		// Get an object pointer even if it's prepped for garbage collection.
 		UObject *TrueOwner = CachedOwner.Get(true);
-		if (TrueOwner != nullptr && TrueOwner->HasAnyFlags(RF_MirroredGarbage))
+
+		// Disable deprecation warnings since we need to use RF_Garbage (deprecated) prior to 5.4 introducing
+		// RF_MirroredGarbage.
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		if (TrueOwner != nullptr && TrueOwner->HasAnyFlags(GARBAGE_FLAG))
 		{
 			// This happens if our animation blueprint is being used as a child layer; it will be marked for garbage
 			// collection, but not deallocated (so the Reset() function hasn't yet been called).
@@ -295,6 +306,7 @@ void FGMCGameplayElementTagPropertyMap::GameplayAttributeChangedCallback(const F
 			Reset();
 			return;
 		}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// We don't have even a pending-delete object, meaning something has gone VERY wrong.
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("FGMCGameplayElementTagPropertyMap: Received callback on uninitialized map!"));
