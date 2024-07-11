@@ -150,16 +150,16 @@ public:
 	FGMCAbilityEffectData EffectData;
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	void InitializeEffect(FGMCAbilityEffectData InitializationData);
+	virtual void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
-	void EndEffect();
+	virtual void EndEffect();
 	
 	virtual void Tick(float DeltaTime);
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
 	
-	void PeriodTick();
+	virtual void PeriodTick();
 	
 	void UpdateState(EEffectState State, bool Force=false);
 
@@ -178,14 +178,6 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
-private:
-	bool bHasStarted;
-
-	// Used for calculating when to tick Period effects
-	float PrevPeriodMod = 0;
-	
-	void CheckState();
-
 	// Tags
 	void AddTagsToOwner();
 	void RemoveTagsFromOwner();
@@ -199,7 +191,17 @@ private:
 	bool DuplicateEffectAlreadyApplied();
 
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
-	void StartEffect();
+	virtual void StartEffect();
+
+	bool bHasStarted;
+
+private:
+	// Used for calculating when to tick Period effects
+	float PrevPeriodMod = 0;
+	
+	void CheckState();
+
+	
 
 
 public:
