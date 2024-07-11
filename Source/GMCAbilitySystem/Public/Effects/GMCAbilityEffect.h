@@ -201,9 +201,6 @@ private:
 	
 	void CheckState();
 
-	
-
-
 public:
 	FString ToString() {
 		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
