@@ -98,13 +98,21 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
+	// Tags that the owner must have to apply this effect
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTagContainer ApplicationMustHaveTags;
+
+	// Tags that the owner must not have to apply this effect
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTagContainer ApplicationMustNotHaveTags;
+
 	// Tags that the owner must have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer MustHaveTags;
+	FGameplayTagContainer OngoingMustHaveTags;
 
 	// Tags that the owner must not have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer MustNotHaveTags;
+	FGameplayTagContainer OngoingMustNotHaveTags;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
@@ -125,7 +133,7 @@ struct FGMCAbilityEffectData
 	bool IsValid()
 	{
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
-				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
+				|| OngoingMustHaveTags != FGameplayTagContainer() || OngoingMustNotHaveTags != FGameplayTagContainer();
 	}
 
 	FString ToString() const{

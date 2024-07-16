@@ -55,8 +55,10 @@ void UGMCAbilityEffect::StartEffect()
 	bHasStarted = true;
 
 	// Ensure tag requirements are met before applying the effect
-	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
-		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
+	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
+	DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustNotHaveTags) ||
+	( EffectData.OngoingMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.OngoingMustHaveTags) ) ||
+	DoesOwnerHaveTagFromContainer(EffectData.OngoingMustNotHaveTags) )
 	{
 		EndEffect();
 		return;
@@ -133,8 +135,8 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
-	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
-		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
+	if( ( EffectData.OngoingMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.OngoingMustHaveTags) ) ||
+		DoesOwnerHaveTagFromContainer(EffectData.OngoingMustNotHaveTags) )
 	{
 		EndEffect();
 	}
