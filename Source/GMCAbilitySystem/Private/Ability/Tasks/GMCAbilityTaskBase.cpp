@@ -42,7 +42,7 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 			ClientLastHeartbeatSentTime = AbilitySystemComponent->ActionTimer;
 		}
 	}
-	if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
+	else if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
 	{
 		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout, Cancelling Ability: %s"), *Ability->GetName());
 		Ability->EndAbility();

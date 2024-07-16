@@ -36,9 +36,8 @@ void UGMCAbilityTask_WaitDelay::Tick(float DeltaTime)
 
 void UGMCAbilityTask_WaitDelay::OnTimeFinish()
 {
-	if (!bTaskCompleted)
+	if (GetState() != EGameplayTaskState::Finished)
 	{
-		bTaskCompleted = true;
 		Completed.Broadcast();
 		EndTask();
 	}
