@@ -52,8 +52,6 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 
 void UGMCAbilityEffect::StartEffect()
 {
-	bHasStarted = true;
-
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
 	DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustNotHaveTags) ||
@@ -63,6 +61,8 @@ void UGMCAbilityEffect::StartEffect()
 		EndEffect();
 		return;
 	}
+
+	bHasStarted = true;
 	
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
