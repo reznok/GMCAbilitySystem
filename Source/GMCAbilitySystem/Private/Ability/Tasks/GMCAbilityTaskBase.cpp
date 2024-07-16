@@ -30,6 +30,10 @@ void UGMCAbilityTaskBase::RegisterTask(UGMCAbilityTaskBase* Task)
 
 void UGMCAbilityTaskBase::Tick(float DeltaTime)
 {
+	// Locally controlled server pawns don't need to send heartbeats
+	if (AbilitySystemComponent->GMCMovementComponent->IsLocallyControlledServerPawn()) return;
+	
+	// If not the server version of the component, send heartbeats
 	if (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer)
 	{
 		if (ClientLastHeartbeatSentTime + HeartbeatInterval < AbilitySystemComponent->ActionTimer)
@@ -38,7 +42,7 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 			ClientLastHeartbeatSentTime = AbilitySystemComponent->ActionTimer;
 		}
 	}
-	else if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
+	if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
 	{
 		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout, Cancelling Ability: %s"), *Ability->GetName());
 		Ability->EndAbility();
