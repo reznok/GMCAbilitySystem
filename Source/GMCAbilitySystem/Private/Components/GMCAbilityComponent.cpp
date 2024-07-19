@@ -340,7 +340,7 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
 	
-	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
+	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
 		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
@@ -569,7 +569,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	// and reconcile.
 	if (HasAuthority() && StartingEffects.Num() > 0)
 	{
-		for (const TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
+		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
 		{
 			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
 		}
