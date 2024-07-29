@@ -164,11 +164,19 @@ void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
 {
 }
 
+
+bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
+	return true;
+}
+
+
 void UGMCAbilityEffect::PeriodTick()
 {
-	for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
-	{
-		OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+	if (AttributeDynamicCondition()) {
+		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
+		{
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+		}
 	}
 }
 
