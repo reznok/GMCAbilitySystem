@@ -750,6 +750,13 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// Tick Effects
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
+		
+		if (!Effect.Value) {
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null, removing from the list."), Effect.Key);
+			CompletedActiveEffects.Push(Effect.Key);
+			continue;	
+		}
+		
 		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
 
