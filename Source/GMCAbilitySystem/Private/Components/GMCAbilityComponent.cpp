@@ -1172,11 +1172,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
 		float OldValue = AffectedAttribute->Value;
 		
-		if (bNegateValue)
-		{
-			AttributeModifier.Value = -AttributeModifier.Value;
-		}
-		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
+		AffectedAttribute->ApplyModifier(this, AttributeModifier, bModifyBaseValue, bNegateValue);
 
 		// Only broadcast a change if we've genuinely changed.
 		if (OldValue != AffectedAttribute->Value)

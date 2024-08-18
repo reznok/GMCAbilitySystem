@@ -125,6 +125,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	float CooldownTime;
 
+	// Instead of hard-coding a cooldown time, you can use another attribute to get the cooldown time from
+	// If set, this will take priority over CooldownTime
+	// Requires AbilityTag to be set
+	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
+	FGameplayTag CooldownTimeAttributeTag;
+
 	// If true, the ability will apply the Cooldown when activated
 	// If false, the ability will NOT apply the Cooldown when the ability begins
 	// You can still apply the cooldown manually with CommitAbilityCooldown or CommitAbilityCostAndCooldown
@@ -198,7 +204,19 @@ public:
 	 * Should be set to false for actions that should not be replayed on mispredictions. i.e. firing a weapon
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
-	bool bActivateOnMovementTick = true; 
+	bool bActivateOnMovementTick = true;
+
+	float GetCooldownTime() const
+	{
+		// Return value from attribute if set
+		if (CooldownTimeAttributeTag.IsValid())
+		{
+			return GetOwnerAttributeValueByTag(CooldownTimeAttributeTag);
+		}
+
+		// Otherwise, fall back to the hard-coded value
+		return CooldownTime;
+	}
 
 	UFUNCTION()
 	void ServerConfirm();
