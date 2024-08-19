@@ -55,6 +55,11 @@ public:
 	// Sets default values for this component's properties
 	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
+	// Will apply the starting effects and abilities to the component,
+	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
+	// Must be called on the server only
+	virtual void ApplyStartingEffects(bool bForce = false);
+
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double ActionTimer;
@@ -404,6 +409,9 @@ protected:
 	void SendTaskDataToActiveAbility(bool bFromMovement);
 
 private:
+
+	bool bStartingEffectsApplied = false;
+	
 	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	TArray<TObjectPtr<UGMCAbilityMapData>> AbilityMaps;

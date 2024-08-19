@@ -532,17 +532,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	bJustTeleported = false;
 	ActionTimer += DeltaTime;
 	
-	// Startup Effects
-	// Only applied on server. There's large desync if client tries to predict this, so just let server apply
-	// and reconcile.
-	if (HasAuthority() && StartingEffects.Num() > 0)
-	{
-		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
-		{
-			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
-		}
-		StartingEffects.Empty();
-	}
+	ApplyStartingEffects();
 	
 	TickActiveAbilities(DeltaTime);
 	
@@ -993,6 +983,19 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Long-Running Ability Activation: %d"), AbilityID);
 	}
 }
+
+
+void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
+	if (HasAuthority() && StartingEffects.Num() > 0 && (bForce || !bStartingEffectsApplied))
+	{
+		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
+		{
+			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+		}
+		bStartingEffectsApplied = true;
+	}
+}
+
 
 TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitiesByTag(FGameplayTag AbilityTag)
 {
