@@ -167,6 +167,8 @@ public:
 	void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
 	void EndEffect();
+
+	virtual void BeginDestroy() override;
 	
 	virtual void Tick(float DeltaTime);
 
@@ -234,6 +236,8 @@ private:
 
 	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
 	void StartEffect();
+
+	
 	
 
 public:

@@ -130,6 +130,32 @@ void UGMCAbilityEffect::EndEffect()
 	RemoveAbilitiesFromOwner();
 }
 
+
+void UGMCAbilityEffect::BeginDestroy() {
+
+
+	// This is addition is mostly to catch ghost effect who are still in around.
+	// it's a bug, and ideally should not happen but that happen. a check in engine is added to catch this, and an error log for packaged game.
+	/*if (OwnerAbilityComponent) {
+		for (TTuple<int, UGMCAbilityEffect*> Effect : OwnerAbilityComponent->GetActiveEffects())
+		{
+			if (Effect.Value == this) {
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect %s is still in the active effect list of %s"), *Effect.Value->EffectData.EffectTag.ToString(), *OwnerAbilityComponent->GetOwner()->GetName());
+				
+				if (!bCompleted) {
+					UE_LOG(	LogGMCAbilitySystem, Error, TEXT("Effect %s is being destroyed without being completed"), *Effect.Value->EffectData.EffectTag.ToString());
+					EndEffect();
+				}
+				
+				Effect.Value = nullptr;
+			}
+		}
+	}*/
+	
+	UObject::BeginDestroy();
+}
+
+
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
 	if (bCompleted) return;
