@@ -175,6 +175,8 @@ public:
 	virtual void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
 	virtual void EndEffect();
+
+	virtual void BeginDestroy() override;
 	
 	virtual void Tick(float DeltaTime);
 
