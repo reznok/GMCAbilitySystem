@@ -200,7 +200,7 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActivesEffectByTag(FG
 	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
 
 	for (auto& EffectFound : ActiveEffects) {
-		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+		if (IsValid(EffectFound.Value) && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
 			ActiveEffectsFound.Add(EffectFound.Value);
 		}
 	}
