@@ -211,7 +211,7 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActivesEffectByTag(FG
 
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Searching for Active Effects with Tag: %s"), *GameplayTag.ToString());
 	
-	for (auto& EffectFound : ActiveEffects) {
+	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
 		if (IsValid(EffectFound.Value) && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
 			ActiveEffectsFound.Add(EffectFound.Value);
 		}
