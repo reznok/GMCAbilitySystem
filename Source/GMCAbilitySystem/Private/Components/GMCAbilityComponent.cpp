@@ -1026,7 +1026,12 @@ void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
 	{
 		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
 		{
-			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+			// Dont apply the same effect twice
+			if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
+				return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
+			})) {
+				ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+			}
 		}
 		bStartingEffectsApplied = true;
 	}
