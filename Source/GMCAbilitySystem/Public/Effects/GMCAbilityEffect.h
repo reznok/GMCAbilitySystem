@@ -147,7 +147,7 @@ struct FGMCAbilityEffectData
 	bool IsValid() const
 	{
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
-				|| OngoingMustHaveTags != FGameplayTagContainer() || OngoingMustNotHaveTags != FGameplayTagContainer();
+				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
 	}
 
 	FString ToString() const{
