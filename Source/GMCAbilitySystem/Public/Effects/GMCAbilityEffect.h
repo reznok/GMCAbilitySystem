@@ -12,7 +12,7 @@
 class UGMC_AbilitySystemComponent;
 
 UENUM(BlueprintType)
-enum class EEffectType : uint8
+enum class EGMASEffectType : uint8
 {
 	Instant,  // Applies Instantly
 	Duration, // Lasts for X time
@@ -20,7 +20,7 @@ enum class EEffectType : uint8
 };
 
 UENUM(BlueprintType)
-enum class EEffectState : uint8
+enum class EGMASEffectState : uint8
 {
 	Initialized,  // Applies Instantly
 	Started, // Lasts for X time
@@ -60,11 +60,14 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	int EffectID;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
 	
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double EndTime;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	double CurrentDuration{0.f};
 
 	// Instantly applies effect then exits. Will not tick.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -91,6 +94,13 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bPeriodTickAtStart = false;
 
+	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
+	float ClientGraceTime = 1.f;
+	
+	UPROPERTY()
+	int LateApplicationID = -1;
+
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTag EffectTag;
@@ -108,11 +118,11 @@ struct FGMCAbilityEffectData
 
 	// Tags that the owner must have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer OngoingMustHaveTags;
+	FGameplayTagContainer MustHaveTags;
 
 	// Tags that the owner must not have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer OngoingMustNotHaveTags;
+	FGameplayTagContainer MustNotHaveTags;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
@@ -120,6 +130,10 @@ struct FGMCAbilityEffectData
 	// If tag is present, periodic effect will not tick. Duration is not affected.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer PausePeriodicEffect;
+
+	// On activation, will end ability present in this container
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	FGameplayTagContainer CancelAbilityOnActivation;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
@@ -130,14 +144,14 @@ struct FGMCAbilityEffectData
 		return StartTime == Other.StartTime && EndTime == Other.EndTime;
 	};
 
-	bool IsValid()
+	bool IsValid() const
 	{
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
-				|| OngoingMustHaveTags != FGameplayTagContainer() || OngoingMustNotHaveTags != FGameplayTagContainer();
+				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
 	}
 
 	FString ToString() const{
-		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %f)"), EffectID, *EffectTag.ToString(), Duration);
+		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %.3lf) (CurrentDuration: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
 	}
 };
 
@@ -152,7 +166,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 	GENERATED_BODY()
 
 public:
-	EEffectState CurrentState;
+	EGMASEffectState CurrentState;
 
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
@@ -161,15 +175,34 @@ public:
 	virtual void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
 	virtual void EndEffect();
+
+	virtual void BeginDestroy() override;
 	
 	virtual void Tick(float DeltaTime);
 
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
+
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
+
+	// Return the current duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	float GetEffectTotalDuration() const { return EffectData.Duration; }
+
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
+
+	// Dynamic Condition allow you to avoid applying the attribute modifier if a condition is not met, for example, a sprint effect with attribute cost when the player is below a certain speed.
+	// However, this is not stopping the effect.
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Dynamic Condition"), Category="GMCAbilitySystem")
+	bool AttributeDynamicCondition() const;
 	
 	virtual void PeriodTick();
 	
-	void UpdateState(EEffectState State, bool Force=false);
+	void UpdateState(EGMASEffectState State, bool Force=false);
 
 	virtual bool IsPeriodPaused();
 	
@@ -188,10 +221,13 @@ protected:
 
 	// Tags
 	void AddTagsToOwner();
-	void RemoveTagsFromOwner();
+
+	// bPreserveOnMultipleInstances: If true, will not remove tags if there are multiple instances of the same effect
+	void RemoveTagsFromOwner(bool bPreserveOnMultipleInstances = true);
 
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();
+	void EndActiveAbilitiesFromOwner();
 
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;

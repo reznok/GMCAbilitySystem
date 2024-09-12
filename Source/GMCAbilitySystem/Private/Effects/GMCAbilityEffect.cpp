@@ -5,6 +5,7 @@
 
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
@@ -55,8 +56,8 @@ void UGMCAbilityEffect::StartEffect()
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
 	DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustNotHaveTags) ||
-	( EffectData.OngoingMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.OngoingMustHaveTags) ) ||
-	DoesOwnerHaveTagFromContainer(EffectData.OngoingMustNotHaveTags) )
+	( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
+	DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
 		return;
@@ -66,6 +67,7 @@ void UGMCAbilityEffect::StartEffect()
 	
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
+	EndActiveAbilitiesFromOwner();
 
 	// Instant effects modify base value and end instantly
 	if (EffectData.bIsInstant)
@@ -100,8 +102,9 @@ void UGMCAbilityEffect::StartEffect()
 		EndEffect();
 	}
 
-	UpdateState(EEffectState::Started, true);
+	UpdateState(EGMASEffectState::Started, true);
 }
+
 
 void UGMCAbilityEffect::EndEffect()
 {
@@ -109,9 +112,9 @@ void UGMCAbilityEffect::EndEffect()
 	if (bCompleted) return;
 	
 	bCompleted = true;
-	if (CurrentState != EEffectState::Ended)
+	if (CurrentState != EGMASEffectState::Ended)
 	{
-		UpdateState(EEffectState::Ended, true);
+		UpdateState(EGMASEffectState::Ended, true);
 	}
 
 	// Only remove tags and abilities if the effect has started
@@ -129,21 +132,48 @@ void UGMCAbilityEffect::EndEffect()
 	RemoveAbilitiesFromOwner();
 }
 
+
+void UGMCAbilityEffect::BeginDestroy() {
+
+
+	// This is addition is mostly to catch ghost effect who are still in around.
+	// it's a bug, and ideally should not happen but that happen. a check in engine is added to catch this, and an error log for packaged game.
+	/*if (OwnerAbilityComponent) {
+		for (TTuple<int, UGMCAbilityEffect*> Effect : OwnerAbilityComponent->GetActiveEffects())
+		{
+			if (Effect.Value == this) {
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect %s is still in the active effect list of %s"), *Effect.Value->EffectData.EffectTag.ToString(), *OwnerAbilityComponent->GetOwner()->GetName());
+				
+				if (!bCompleted) {
+					UE_LOG(	LogGMCAbilitySystem, Error, TEXT("Effect %s is being destroyed without being completed"), *Effect.Value->EffectData.EffectTag.ToString());
+					EndEffect();
+				}
+				
+				Effect.Value = nullptr;
+			}
+		}
+	}*/
+	
+	UObject::BeginDestroy();
+}
+
+
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
 	if (bCompleted) return;
+	EffectData.CurrentDuration += DeltaTime;
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
-	if( ( EffectData.OngoingMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.OngoingMustHaveTags) ) ||
-		DoesOwnerHaveTagFromContainer(EffectData.OngoingMustNotHaveTags) )
+	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
+		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
 	}
 
 
 	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EEffectState::Started)
+	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EGMASEffectState::Started)
 	{
 		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
 		if (Mod < PrevPeriodMod)
@@ -160,17 +190,25 @@ void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
 {
 }
 
+
+bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
+	return true;
+}
+
+
 void UGMCAbilityEffect::PeriodTick()
 {
-	for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
-	{
-		OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+	if (AttributeDynamicCondition()) {
+		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
+		{
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+		}
 	}
 }
 
-void UGMCAbilityEffect::UpdateState(EEffectState State, bool Force)
+void UGMCAbilityEffect::UpdateState(EGMASEffectState State, bool Force)
 {
-	if (State == EEffectState::Ended)
+	if (State == EGMASEffectState::Ended)
 	{
 	//	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Ended"));
 	}
@@ -191,8 +229,17 @@ void UGMCAbilityEffect::AddTagsToOwner()
 	}
 }
 
-void UGMCAbilityEffect::RemoveTagsFromOwner()
+void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
+
+	if (bPreserveOnMultipleInstances && EffectData.EffectTag.IsValid()) {
+		TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActivesEffectByTag(EffectData.EffectTag);
+		
+		if (ActiveEffect.Num() > 1) {
+			return;
+		}
+	}
+	
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
 		OwnerAbilityComponent->RemoveActiveTag(Tag);
@@ -214,6 +261,16 @@ void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
 		OwnerAbilityComponent->RemoveGrantedAbilityByTag(Tag);
 	}
 }
+
+
+void UGMCAbilityEffect::EndActiveAbilitiesFromOwner() {
+	
+	for (const FGameplayTag Tag : EffectData.CancelAbilityOnActivation)
+	{
+		OwnerAbilityComponent->EndAbilitiesByTag(Tag);
+	}
+}
+
 
 bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const
 {
@@ -249,20 +306,20 @@ void UGMCAbilityEffect::CheckState()
 {
 	switch (CurrentState)
 	{
-		case EEffectState::Initialized:
+		case EGMASEffectState::Initialized:
 			if (OwnerAbilityComponent->ActionTimer >= EffectData.StartTime)
 			{
 				StartEffect();
-				UpdateState(EEffectState::Started, true);
+				UpdateState(EGMASEffectState::Started, true);
 			}
 			break;
-		case EEffectState::Started:
+		case EGMASEffectState::Started:
 			if (EffectData.Duration != 0 && OwnerAbilityComponent->ActionTimer >= EffectData.EndTime)
 			{
 				EndEffect();
 			}
 			break;
-		case EEffectState::Ended:
+		case EGMASEffectState::Ended:
 			break;
 	default: break;
 	}

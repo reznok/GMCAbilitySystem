@@ -10,6 +10,7 @@
 #include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Net/UnrealNetwork.h"
 
 // Sets default values for this component's properties
@@ -168,12 +169,25 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(AcknowledgeId,
+	EGMC_PredictionMode::ClientAuth_Input,
+	EGMC_CombineMode::CombineIfUnchanged,
+	EGMC_SimulationMode::None,
+	EGMC_InterpolationFunction::TargetValue);
 	
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
+
 	OnAncillaryTick.Broadcast(DeltaTime);
+
+	ClientHandlePendingEffect();
+	ServerHandlePendingEffect(DeltaTime);
+	
 	CheckActiveTagsChanged();
+	CheckAttributeChanged();
+
 	TickActiveEffects(DeltaTime);
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
@@ -188,7 +202,35 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	SendTaskDataToActiveAbility(false);
 	
 	ClearAbilityAndTaskData();
+	bInGMCTime = false;
 }
+
+
+TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActivesEffectByTag(FGameplayTag GameplayTag) const {
+	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
+
+	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Searching for Active Effects with Tag: %s"), *GameplayTag.ToString());
+	
+	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
+		if (IsValid(EffectFound.Value) && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+			ActiveEffectsFound.Add(EffectFound.Value);
+		}
+	}
+
+	return ActiveEffectsFound;
+}
+
+
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const {
+	for (auto& EffectFound : ActiveEffects) {
+		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+			return EffectFound.Value;
+		}
+	}
+
+	return nullptr;
+}
+
 
 void UGMC_AbilitySystemComponent::AddAbilityMapData(UGMCAbilityMapData* AbilityMapData)
 {
@@ -300,7 +342,7 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
 	
-	for (const TSubclassOf<UGMCAbility> ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
+	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
 		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
@@ -328,6 +370,12 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Ability Activation for %s Stopped (Already Instanced)"), *GetNameSafe(ActivatedAbility));
 			return false;
 		}
+	}
+
+	// Check Activation Tags
+	if (!CheckActivationTags(AbilityCDO)){
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
+		return false;
 	}
 
 	// Check Activation Tags
@@ -389,13 +437,31 @@ int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility
 }
 
 
+bool UGMC_AbilitySystemComponent::IsAbilityTagBlocked(const FGameplayTag AbilityTag) const {
+	
+	for (const auto& ActiveAbility : ActiveAbilities) {
+		if (IsValid(ActiveAbility.Value) && ActiveAbility.Value->AbilityState != EAbilityState::Ended)
+		{
+			for (auto& Tag : ActiveAbility.Value->BlockOtherAbility) {
+				if (Tag.MatchesTag(AbilityTag)) {
+					UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, blocked by Ability: %s"), *ActiveAbility.Value->GetName());
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+
 int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
 	int AbilitiesEnded = 0;
 	for (const auto& ActiveAbilityData : ActiveAbilities)
 	{
 		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
 		{
-			ActiveAbilityData.Value->EndAbility();
+			ActiveAbilityData.Value->SetPendingEnd();
 			AbilitiesEnded++;
 		}
 	}
@@ -455,6 +521,12 @@ float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag Abil
 	return 0.f;
 }
 
+
+float UGMC_AbilitySystemComponent::GetMaxCooldownForAbility(TSubclassOf<UGMCAbility> Ability) const {
+	return Ability ? Ability.GetDefaultObject()->CooldownTime : 0.f;
+}
+
+
 TMap<FGameplayTag, float> UGMC_AbilitySystemComponent::GetCooldownsForInputTag(const FGameplayTag InputTag)
 {
 	TArray<TSubclassOf<UGMCAbility>> Abilities = GetGrantedAbilitiesByTag(InputTag);
@@ -494,18 +566,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	bJustTeleported = false;
 	ActionTimer += DeltaTime;
 	
-	// Startup Effects
-	// Only applied on server. There's large desync if client tries to predict this, so just let server apply
-	// and reconcile.
-	if (HasAuthority() && StartingEffects.Num() > 0)
-	{
-		for (const TSubclassOf<UGMCAbilityEffect> Effect : StartingEffects)
-		{
-			ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
-		}
-		StartingEffects.Empty();
-	}
-	
+	ApplyStartingEffects();
 	
 	TickActiveAbilities(DeltaTime);
 	
@@ -526,6 +587,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
 	CheckActiveTagsChanged();
+	CheckAttributeChanged();
 	
 	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
@@ -547,6 +609,8 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 	{
 		TaskData = QueuedTaskData.Pop();
 	}
+
+	
 }
 
 void UGMC_AbilitySystemComponent::BeginPlay()
@@ -585,6 +649,12 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 				// FFastArraySerializer will duplicate all attributes on first replication if we
 				// add the attributes on the clients as well.
 				UnBoundAttributes.AddAttribute(NewAttribute);
+				
+			}
+			
+			if (!AttributeData.bGMCBound) {
+				// Initiate old unbound attributes
+				OldUnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
 	}
@@ -603,6 +673,14 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
 	UnBoundAttributes.MarkArrayDirty();
+	
+
+	for (const FAttribute& Attribute : OldUnBoundAttributes.Items)
+	{
+		Attribute.CalculateValue();
+	}
+
+	OldBoundAttributes = BoundAttributes;
 }
 
 void UGMC_AbilitySystemComponent::SetStartingTags()
@@ -658,6 +736,22 @@ void UGMC_AbilitySystemComponent::CheckActiveTagsChanged()
 	}
 }
 
+
+void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
+	// Check Bound Attributes
+	for (int i = 0; i < BoundAttributes.Attributes.Num(); i++)
+	{
+		FAttribute& Attribute = BoundAttributes.Attributes[i];
+		FAttribute& OldAttribute = OldBoundAttributes.Attributes[i];
+		if (Attribute.Value != OldAttribute.Value)
+		{
+			OnAttributeChanged.Broadcast(Attribute.Tag, OldAttribute.Value, Attribute.Value);
+			OldAttribute.Value = Attribute.Value;
+		}
+	}
+}
+
+
 void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 {
 	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
@@ -684,15 +778,22 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// Tick Effects
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
+		
+		if (!IsValid(Effect.Value)) {
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null or pending kill, removing from the list."), Effect.Key);
+			CompletedActiveEffects.Push(Effect.Key);
+			continue;	
+		}
+		
 		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted) {CompletedActiveEffects.Push(Effect.Key);}
 
 		// Check for predicted effects that have not been server confirmed
-		if (!HasAuthority() && 
+		if (!HasAuthority() &&
 			ProcessedEffectIDs.Contains(Effect.Key) &&
 			!ProcessedEffectIDs[Effect.Key] && Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Not Confirmed By Server: %d, Removing..."), Effect.Key);
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(Effect.Value), Effect.Key);
 			Effect.Value->EndEffect();
 			CompletedActiveEffects.Push(Effect.Key);
 		}
@@ -773,6 +874,119 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 	}
 }
 
+void UGMC_AbilitySystemComponent::AddPendingEffectApplications(FGMCOuterApplicationWrapper& Wrapper) {
+	check(HasAuthority())
+
+	Wrapper.ClientGraceTimeRemaining = 1.f;
+	Wrapper.LateApplicationID = GenerateLateApplicationID();
+
+	PendingApplicationServer.Add(Wrapper);
+	RPCClientAddPendingEffectApplication(Wrapper);
+}
+
+
+void UGMC_AbilitySystemComponent::RPCClientAddPendingEffectApplication_Implementation(
+		FGMCOuterApplicationWrapper Wrapper) {
+	PendingApplicationClient.Add(Wrapper);
+}
+
+
+
+void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
+	if (!HasAuthority()) {
+		return;
+	}
+
+	FGMCAcknowledgeId& AckId =	AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
+
+
+	for (int i = PendingApplicationServer.Num() - 1; i >= 0; i--) {
+		FGMCOuterApplicationWrapper& Wrapper = PendingApplicationServer[i];
+
+		if (Wrapper.ClientGraceTimeRemaining <= 0.f || AckId.Id.Contains(Wrapper.LateApplicationID)) {
+
+			switch (Wrapper.Type) {
+				case EGMC_AddEffect: {
+					const FGMCOuterEffectAdd& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectAdd>();
+					UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+					AbilityEffect->EffectData.EffectID = Wrapper.LateApplicationID;
+					FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
+					UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
+					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
+						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Add Effect `%s ` Missed Grace time, Force application : id: %d"), *GetNameSafe(Data.EffectClass), FX->EffectData.EffectID);
+					}
+				} break;
+				case EGMC_RemoveEffect: {
+					const FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectRemove>();
+					RemoveEffectById(Data.Ids);
+					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
+						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Remove Effect Missed Grace time, Force remove"));
+					}
+				} break;
+			}
+			PendingApplicationServer.RemoveAt(i);
+		}
+		else {
+			Wrapper.ClientGraceTimeRemaining -= DeltaTime;
+		}
+
+		
+	}
+	
+}
+
+
+void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
+
+
+	for (int i = PendingApplicationClient.Num() - 1; i >= 0; i--)
+	{
+		FGMCOuterApplicationWrapper& LateApplicationData = PendingApplicationClient[i];
+
+			switch (LateApplicationData.Type) {
+				case EGMC_AddEffect: {
+						const FGMCOuterEffectAdd& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectAdd>();
+
+						if (Data.EffectClass == nullptr) {
+							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: EffectClass is null"));
+							break;
+						}
+					
+						UGMCAbilityEffect* CDO = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>();
+
+						if (CDO == nullptr) {
+							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: CDO is null"));
+							break;
+						}
+					
+						UGMCAbilityEffect* AbilityEffect = DuplicateObject(CDO, this);
+						AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
+						FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
+						ApplyAbilityEffect(AbilityEffect, EffectData);
+					} break;
+				case EGMC_RemoveEffect: {
+						const FGMCOuterEffectRemove& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectRemove>();
+						RemoveEffectById(Data.Ids);
+					} break;
+			}
+		
+			PendingApplicationClient.RemoveAt(i);
+			AcknowledgeId.GetMutable<FGMCAcknowledgeId>().Id.Add(LateApplicationData.LateApplicationID);
+		}
+}
+
+
+int UGMC_AbilitySystemComponent::GenerateLateApplicationID() {
+	int NewEffectID = static_cast<int>(ActionTimer * 100);
+	while (ActiveEffects.Contains(NewEffectID))
+	{
+		NewEffectID++;
+	}
+
+	return NewEffectID;
+}
+
+
 void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID, int TaskID)
 {
 	if (ActiveAbilities.Contains(AbilityID) && ActiveAbilities[AbilityID] != nullptr)
@@ -807,6 +1021,24 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Long-Running Ability Activation: %d"), AbilityID);
 	}
 }
+
+
+void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
+	if (HasAuthority() && StartingEffects.Num() > 0 && (bForce || !bStartingEffectsApplied))
+	{
+		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
+		{
+			// Dont apply the same effect twice
+			if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
+				return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
+			})) {
+				ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+			}
+		}
+		bStartingEffectsApplied = true;
+	}
+}
+
 
 TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitiesByTag(FGameplayTag AbilityTag)
 {
@@ -927,31 +1159,62 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes(FGMCUnboundAttributeSet PreviousAttributes)
+void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 {
-	const TArray<FAttribute>& OldAttributes = PreviousAttributes.Items;
+	
+	if (OldUnBoundAttributes.Items.Num() != UnBoundAttributes.Items.Num())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OnRep_UnBoundAttributes: Mismatched Attribute Old != New Value !"));
+	}
+
+	TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
 	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
-	TMap<FGameplayTag, float> OldValues;
+	TMap<FGameplayTag, float*> OldValues;
+
+	// If this mitchmatch, that mean we need to reset the number of attributes
+
 	
-	for (const FAttribute& Attribute : OldAttributes){
-		OldValues.Add(Attribute.Tag, Attribute.Value);
+	for (FAttribute& Attribute : OldAttributes){
+		OldValues.Add(Attribute.Tag, &Attribute.Value);
 	}
+
+	
 
 	for (const FAttribute& Attribute : CurrentAttributes){
-		if (OldValues.Contains(Attribute.Tag) && OldValues[Attribute.Tag] != Attribute.Value){
-			OnAttributeChanged.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
-			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, OldValues[Attribute.Tag], Attribute.Value);
-
+		if (OldValues.Contains(Attribute.Tag) && *OldValues[Attribute.Tag] != Attribute.Value){
+			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
+			OnAttributeChanged.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
 			UnBoundAttributes.MarkAttributeDirty(Attribute);
+
+			// Update Old Value
+			*OldValues[Attribute.Tag] = Attribute.Value;
 		}
 	}
+
+	
 }
 
 //BP Version
-UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData)
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation)
 {
-	if (Effect == nullptr) return nullptr;
+	if (Effect == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
+		return nullptr;
+	}
+
+	
+	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
+	if (bOuterActivation) {
+		if (HasAuthority()) {
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectAdd>(Effect, InitializationData);
+			AddPendingEffectApplications(Wrapper);
+		}
+		return nullptr;
+	}
+	
+
 	
 	UGMCAbilityEffect* AbilityEffect = DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this);
 	
@@ -971,7 +1234,12 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
 {
-	if (Effect == nullptr) return nullptr;
+	if (Effect == nullptr) {
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
+		return nullptr;
+	}
+	
+	
 	// Force the component this is being applied to to be the owner
 	InitializationData.OwnerAbilityComponent = this;
 	
@@ -1019,23 +1287,81 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	Effect->EndEffect();
 }
 
-int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove){
-	if(NumToRemove < -1 || !InEffectTag.IsValid()) return 0;
+int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, int32 NumToRemove, bool bOuterActivation) {
+	
+	if (NumToRemove < -1 || !InEffectTag.IsValid()) {
+		return 0;
+	}
 
+	TMap<int, UGMCAbilityEffect*> EffectsToRemove;
 	int32 NumRemoved = 0;
-	// Using this iterator allows us to remove while iterating
+	
 	for(const TTuple<int, UGMCAbilityEffect*> Effect : ActiveEffects)
 	{
 		if(NumRemoved == NumToRemove){
 			break;
 		}
+		
 		if(Effect.Value->EffectData.EffectTag.IsValid() && Effect.Value->EffectData.EffectTag.MatchesTagExact(InEffectTag)){
-			Effect.Value->EndEffect();
+			EffectsToRemove.Add(Effect.Key, Effect.Value);
 			NumRemoved++;
 		}
 	}
+	
+
+	if (bOuterActivation) {
+		if (HasAuthority() && EffectsToRemove.Num() > 0) {
+
+			TArray<int> EffectIDsToRemove;
+			for (const auto& ToRemove : EffectsToRemove) {
+				EffectIDsToRemove.Add(ToRemove.Key);
+			}
+			
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(EffectIDsToRemove);
+			AddPendingEffectApplications(Wrapper);
+		}
+		return 0;
+	}
+
+	for (auto& ToRemove : EffectsToRemove) {
+		ToRemove.Value->EndEffect();
+	}
+	
 	return NumRemoved;
 }
+
+
+bool UGMC_AbilitySystemComponent::RemoveEffectById(TArray<int> Ids, bool bOuterActivation) {
+
+	if (!Ids.Num()) {
+		return true;
+	}
+
+	// check all IDs exists
+	for (int Id : Ids) {
+		if (!ActiveEffects.Contains(Id)) {
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Trying to remove effect with ID %d, but it doesn't exist!"), Id);
+			return false;
+		}
+	}
+
+	if (bOuterActivation) {
+		if (HasAuthority()) {
+			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(Ids);
+			AddPendingEffectApplications(Wrapper);
+		}
+		return true;
+	}
+
+	for (auto& Effect : ActiveEffects) {
+		if (Ids.Contains(Effect.Key)) {
+			Effect.Value->EndEffect();
+		}
+	}
+
+	return true;
+}
+
 
 int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 	if(!InEffectTag.IsValid()) return -1;
@@ -1089,6 +1415,16 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0;
 }
 
+
+FAttributeClamp UGMC_AbilitySystemComponent::GetAttributeClampByTag(FGameplayTag AttributeTag) const {
+	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
+	{
+		return Att->Clamp;
+	}
+	return FAttributeClamp();
+}
+
+
 bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeTag, float NewValue, bool bResetModifiers)
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
@@ -1099,7 +1435,8 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 		{
 			Att->ResetModifiers();
 		}
-		
+
+		Att->CalculateValue();
 		return true;
 	}
 	return false;
@@ -1171,6 +1508,7 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		// If we are unbound that means we shouldn't predict.
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
 		float OldValue = AffectedAttribute->Value;
+		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
 		if (bNegateValue)
 		{
@@ -1187,6 +1525,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 
 		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
+		if (!AffectedAttribute->bIsGMCBound) {
+			OnRep_UnBoundAttributes();
+		}
 	}
 }
 
