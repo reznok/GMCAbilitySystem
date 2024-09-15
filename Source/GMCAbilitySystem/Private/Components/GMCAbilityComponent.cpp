@@ -673,7 +673,6 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
 	UnBoundAttributes.MarkArrayDirty();
-	
 
 	for (const FAttribute& Attribute : OldUnBoundAttributes.Items)
 	{
