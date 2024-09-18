@@ -5,13 +5,13 @@
 
 class UGMC_AbilitySystemComponent;
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FAttributeClamp
 {
 	GENERATED_BODY()
 
 	// Minimum attribute value
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
 	float Min { 0.f };
 
 	// Value will be clamped to the value of this attribute
@@ -20,7 +20,7 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 	FGameplayTag MinAttributeTag { FGameplayTag::EmptyTag };
 
 	// Maximum attribute value
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
 	float Max { 0.f };
 
 	// Value will be clamped to the value of this attribute

@@ -11,6 +11,11 @@ UGMCAbilityAnimInstance::UGMCAbilityAnimInstance(const FObjectInitializer& Objec
 #endif
 }
 
+UGMCAbilityAnimInstance::~UGMCAbilityAnimInstance()
+{
+ 	TagPropertyMap.Reset();
+}
+
 void UGMCAbilityAnimInstance::NativeInitializeAnimation()
 {
 	Super::NativeInitializeAnimation();
