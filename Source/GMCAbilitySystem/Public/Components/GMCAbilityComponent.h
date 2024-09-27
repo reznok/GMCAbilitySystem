@@ -12,6 +12,7 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "GMCAbilityOuterApplication.h"
+#include "Utility/GMASBoundQueue.h"
 #include "GMCAbilityComponent.generated.h"
 
 
@@ -459,7 +460,8 @@ private:
 
 	UPROPERTY()
 	TMap<FGameplayTag, float> ActiveCooldowns;
-	
+
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffects;
 	
 	int GenerateAbilityID() const {return ActionTimer * 100;}
 	
