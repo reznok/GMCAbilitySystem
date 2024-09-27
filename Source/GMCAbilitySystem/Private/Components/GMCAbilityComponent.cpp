@@ -142,20 +142,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
-
-	// AbilityData Binds
-	// These are mostly client-inputs made to the server as Ability Requests
-	GMCMovementComponent->BindInt(AbilityData.AbilityActivationID,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
-
-	GMCMovementComponent->BindGameplayTag(AbilityData.InputTag,
-		EGMC_PredictionMode::ClientAuth_Input,
-		EGMC_CombineMode::CombineIfUnchanged,
-		EGMC_SimulationMode::None,
-		EGMC_InterpolationFunction::TargetValue);
 	
 	// TaskData Bind
 	GMCMovementComponent->BindInstancedStruct(TaskData,
@@ -176,6 +162,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	EGMC_SimulationMode::None,
 	EGMC_InterpolationFunction::TargetValue);
 
+	// Bind our ability operation queue.
 	QueuedAbilityOperations.BindToGMC(GMCMovementComponent);
 	
 }
@@ -194,11 +181,14 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	TickActiveCooldowns(DeltaTime);
 	TickAncillaryActiveAbilities(DeltaTime);
 	
-	
-	// Activate abilities from ancillary tick if they have bActivateOnMovementTick set to false
-	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
+
+	// Check if we have a valid operation
+	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation; QueuedAbilityOperations.GetCurrentOperation(Operation))
 	{
-		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, false);
+		if (Operation.GetOperationType() == EGMASBoundQueueOperationType::Activate)
+		{
+			TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, false);
+		}
 	}
 
 	SendTaskDataToActiveAbility(false);
@@ -412,18 +402,14 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	FGMCAbilityData Data;
 	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
-	QueuedAbilities.Push(Data);
+
+	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
+	QueuedAbilityOperations.QueueOperation(Operation, EGMASBoundQueueOperationType::Activate, InputTag, Data);
 }
 
 int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
 {
-	int32 Result = 0;
-
-	for (const auto& QueuedData : QueuedAbilities)
-	{
-		if (QueuedData.InputTag == AbilityTag) Result++;
-	}
-	return Result;
+	return QueuedAbilityOperations.NumMatching(AbilityTag, EGMASBoundQueueOperationType::Activate);
 }
 
 int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility> AbilityClass)
@@ -576,19 +562,17 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	CleanupStaleAbilities();
 	
 	// Was an ability used?
-	if (AbilityData.InputTag != FGameplayTag::EmptyTag)
+	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
+		QueuedAbilityOperations.GetCurrentOperation(Operation))
 	{
-		TryActivateAbilitiesByInputTag(AbilityData.InputTag, AbilityData.ActionInput, true);
-	}
-
-	SendTaskDataToActiveAbility(true);
-
-	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
-	if (QueuedAbilityOperations.GetCurrentOperation(Operation))
-	{
-		// We have a valid operation and ought to kick it off.
+		// We have an operation!
+		if (Operation.GetOperationType() == EGMASBoundQueueOperationType::Activate)
+		{
+			TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, true);
+		}
 	}
 	
+	SendTaskDataToActiveAbility(true);
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -608,10 +592,6 @@ void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 {
-	if (QueuedAbilities.Num() > 0)
-	{
-		AbilityData = QueuedAbilities.Pop();
-	}
 	if (QueuedTaskData.Num() > 0)
 	{
 		TaskData = QueuedTaskData.Pop();
@@ -1066,6 +1046,7 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 
 void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 	AbilityData = FGMCAbilityData{};
+	QueuedAbilityOperations.ClearCurrentOperation();
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 }
 

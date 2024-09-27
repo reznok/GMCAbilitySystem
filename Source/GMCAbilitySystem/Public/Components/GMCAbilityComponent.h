@@ -439,14 +439,10 @@ private:
 	// Add the starting ability tags to GrantedAbilities at start
 	void InitializeStartingAbilities();
 	
-	TArray<FGMCAbilityData> QueuedAbilities;
 	TArray<FInstancedStruct> QueuedTaskData;
 
+	// Queued ability operations (activate, cancel, etc.)
 	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
-
-	// Current Ability Data being processed
-	// Members of this struct are bound over GMC
-	// FGMCAbilityData AbilityData;
 
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};

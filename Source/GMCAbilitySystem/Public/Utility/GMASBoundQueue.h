@@ -16,6 +16,7 @@ enum class EGMASBoundQueueOperationType : uint8
 	None,
 	Add,
 	Remove,
+	Activate,
 	Cancel
 }; 
 
@@ -151,7 +152,11 @@ public:
 		NewOperation.ItemClass = ItemClass;
 		if (ItemClass)
 		{
-			NewOperation.ItemClassName = ItemClass->GetFullName();
+			NewOperation.ItemClassName = FName(ItemClass->GetPathName());
+		}
+		else
+		{
+			NewOperation.ItemClassName = NAME_None;
 		}
 
 		if (bMovementSynced)
@@ -167,6 +172,21 @@ public:
 	{
 		return QueuedOperations.Num();
 	}
+
+	int NumMatching(FGameplayTag Tag, EGMASBoundQueueOperationType Type = EGMASBoundQueueOperationType::None) const
+	{
+		int Result = 0;
+		for (const auto& Operation : QueuedOperations)
+		{
+			if (Operation.Tag == Tag)
+			{
+				if (Type == EGMASBoundQueueOperationType::None || Operation.GetOperationType() == Type) Result++;
+			}
+		}
+		return Result;
+	}
+
+	const TArray<TGMASBoundQueueOperation<C, T>> &GetQueuedOperations() const { return QueuedOperations; }
 	
 	bool GetCurrentOperation(TGMASBoundQueueOperation<C, T>& Operation)
 	{
@@ -176,14 +196,11 @@ public:
 		{
 			Operation.Payload = CurrentOperation.InstancedPayload.template Get<T>();
 
-			if (Operation.ItemClassName != NAME_None)
+			if (Operation.ItemClassName != NAME_None && !Operation.ItemClass)
 			{
 				// Get a handle to our class, for instancing purposes.
-				ConstructorHelpers::FClassFinder<C> ResolvedItemClass(*Operation.ItemClassName.ToString());
-				if (ResolvedItemClass.Class != nullptr)
-				{
-					Operation.ItemClass = ResolvedItemClass.Class;
-				}
+				TSoftClassPtr<C> ClassPtr = TSoftClassPtr<C>(FSoftObjectPath(Operation.ItemClassName.ToString()));
+				Operation.ItemClass = ClassPtr.LoadSynchronous();
 			}
 			return true;
 		}
