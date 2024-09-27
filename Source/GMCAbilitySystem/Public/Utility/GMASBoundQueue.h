@@ -7,7 +7,10 @@
 #include "GMCMovementUtilityComponent.h"
 #include "InstancedStruct.h"
 #include "UObject/Object.h"
+#include "UObject/ConstructorHelpers.h"
+#include "GMASBoundQueue.generated.h"
 
+UENUM(BlueprintType)
 enum class EGMASBoundQueueOperationType : uint8
 {
 	None,
@@ -22,9 +25,8 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 	// A unique ID for this operation.
 	int32 OperationId { -1 };
 
-	// What this operation actually *is* (add, remove, etc.)
-	EGMASBoundQueueOperationType OperationType { EGMASBoundQueueOperationType::None };
-
+	uint8 OperationTypeRaw { 0 };
+	
 	// The tag associated with this operation (if any)
 	FGameplayTag Tag { FGameplayTag::EmptyTag };
 
@@ -45,6 +47,16 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 	// movement history. If false, this item can be sent via standard Unreal RPC
 	// separate from GMC.
 	bool bMovementSync { true };
+
+	EGMASBoundQueueOperationType GetOperationType() const
+	{
+		return static_cast<EGMASBoundQueueOperationType>(OperationTypeRaw);
+	}
+
+	void SetOperationType(EGMASBoundQueueOperationType OperationType)
+	{
+		OperationTypeRaw = static_cast<uint8>(OperationType);
+	}
 	
 };
 
@@ -61,7 +73,7 @@ public:
 	int BI_OperationTag { -1 };
 	int BI_OperationClass { -1 };
 	int BI_OperationPayload { -1 };
-
+	
 	TArray<TGMASBoundQueueOperation<C, T>> QueuedOperations;
 
 	double ActionTimer { 0 };
@@ -78,7 +90,7 @@ public:
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationType = MovementComponent->BindByte(
-			CurrentOperation.OperationType,
+			CurrentOperation.OperationTypeRaw,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -99,7 +111,7 @@ public:
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationPayload = MovementComponent->BindInstancedStruct(
-			CurrentOperation.InstancedStruct,
+			CurrentOperation.InstancedPayload,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -121,7 +133,7 @@ public:
 		CurrentOperation.OperationId = -1;
 		CurrentOperation.Tag = FGameplayTag::EmptyTag;
 		CurrentOperation.ItemClassName = NAME_None;
-		CurrentOperation.OperationType = EGMASBoundQueueOperationType::None;
+		CurrentOperation.SetOperationType(EGMASBoundQueueOperationType::None);
 	}
 
 	void GenPredictionTick(float DeltaTime)
@@ -132,7 +144,7 @@ public:
 	int32 QueueOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TSubclassOf<C> ItemClass = nullptr, bool bMovementSynced = true)
 	{
 		NewOperation.OperationId = GenerateOperationId();
-		NewOperation.OperationType = Type;
+		NewOperation.SetOperationType(Type);
 		NewOperation.Tag = Tag;
 		NewOperation.Payload = Payload;
 		NewOperation.InstancedPayload = FInstancedStruct::Make<T>(Payload);
@@ -151,11 +163,32 @@ public:
 		return NewOperation.OperationId;
 	}
 
+	int Num() const
+	{
+		return QueuedOperations.Num();
+	}
+	
 	bool GetCurrentOperation(TGMASBoundQueueOperation<C, T>& Operation)
 	{
 		Operation = CurrentOperation;
 
-		return (CurrentOperation.OperationType != EGMASBoundQueueOperationType::None);
+		if (Operation.GetOperationType() != EGMASBoundQueueOperationType::None)
+		{
+			Operation.Payload = CurrentOperation.InstancedPayload.template Get<T>();
+
+			if (Operation.ItemClassName != NAME_None)
+			{
+				// Get a handle to our class, for instancing purposes.
+				ConstructorHelpers::FClassFinder<C> ResolvedItemClass(*Operation.ItemClassName.ToString());
+				if (ResolvedItemClass.Class != nullptr)
+				{
+					Operation.ItemClass = ResolvedItemClass.Class;
+				}
+			}
+			return true;
+		}
+
+		return false;
 	}
 	
 };

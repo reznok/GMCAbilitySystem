@@ -175,6 +175,8 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	EGMC_CombineMode::CombineIfUnchanged,
 	EGMC_SimulationMode::None,
 	EGMC_InterpolationFunction::TargetValue);
+
+	QueuedAbilityOperations.BindToGMC(GMCMovementComponent);
 	
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
@@ -581,6 +583,11 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 	SendTaskDataToActiveAbility(true);
 
+	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
+	if (QueuedAbilityOperations.GetCurrentOperation(Operation))
+	{
+		// We have a valid operation and ought to kick it off.
+	}
 	
 }
 
@@ -610,7 +617,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 		TaskData = QueuedTaskData.Pop();
 	}
 
-	
+	QueuedAbilityOperations.PreLocalMovement();
 }
 
 void UGMC_AbilitySystemComponent::BeginPlay()

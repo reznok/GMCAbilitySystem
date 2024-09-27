@@ -442,6 +442,8 @@ private:
 	TArray<FGMCAbilityData> QueuedAbilities;
 	TArray<FInstancedStruct> QueuedTaskData;
 
+	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
+
 	// Current Ability Data being processed
 	// Members of this struct are bound over GMC
 	// FGMCAbilityData AbilityData;
