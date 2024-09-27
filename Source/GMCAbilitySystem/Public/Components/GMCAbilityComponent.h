@@ -444,6 +444,8 @@ private:
 	// Queued ability operations (activate, cancel, etc.)
 	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
 
+	bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
+
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};
 
@@ -459,8 +461,6 @@ private:
 	UPROPERTY()
 	TMap<FGameplayTag, float> ActiveCooldowns;
 
-	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffects;
-	
 	int GenerateAbilityID() const {return ActionTimer * 100;}
 	
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults

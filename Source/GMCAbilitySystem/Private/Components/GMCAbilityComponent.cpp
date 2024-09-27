@@ -185,10 +185,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	// Check if we have a valid operation
 	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation; QueuedAbilityOperations.GetCurrentOperation(Operation))
 	{
-		if (Operation.GetOperationType() == EGMASBoundQueueOperationType::Activate)
-		{
-			TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, false);
-		}
+		ProcessAbilityOperation(Operation, false);
 	}
 
 	SendTaskDataToActiveAbility(false);
@@ -560,16 +557,15 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	
 	// Abilities
 	CleanupStaleAbilities();
+
+	// Advance our queue action timers.
+	QueuedAbilityOperations.GenPredictionTick(DeltaTime);
 	
 	// Was an ability used?
 	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
 		QueuedAbilityOperations.GetCurrentOperation(Operation))
 	{
-		// We have an operation!
-		if (Operation.GetOperationType() == EGMASBoundQueueOperationType::Activate)
-		{
-			TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, true);
-		}
+		ProcessAbilityOperation(Operation, true);
 	}
 	
 	SendTaskDataToActiveAbility(true);
@@ -1144,6 +1140,31 @@ void UGMC_AbilitySystemComponent::InitializeStartingAbilities()
 	{
 		GrantedAbilityTags.AddTag(Tag);
 	}
+}
+
+bool UGMC_AbilitySystemComponent::ProcessAbilityOperation(
+	const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick)
+{
+	EGMASBoundQueueOperationType OperationType = Operation.GetOperationType();
+	if (OperationType == EGMASBoundQueueOperationType::Activate)
+	{
+		TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, bFromMovementTick);
+		return true;
+	}
+
+	if (OperationType == EGMASBoundQueueOperationType::Cancel)
+	{
+		EndAbilitiesByTag(Operation.Tag);
+		if (Operation.ItemClass)
+		{
+			EndAbilitiesByClass(Operation.ItemClass);
+		}
+		return true;
+	}
+	
+	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Received ability operation with invalid operation type %s for %s!"),
+		*UEnum::GetValueAsString(OperationType), *Operation.Tag.ToString())
+	return false;
 }
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
