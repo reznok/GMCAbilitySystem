@@ -11,7 +11,6 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
-#include "GMCAbilityOuterApplication.h"
 #include "Utility/GMASBoundQueue.h"
 #include "GMCAbilityComponent.generated.h"
 
@@ -448,14 +447,12 @@ private:
 	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
 	UGMCAbilityEffect* ProcessEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
 
+	bool ShouldProcessEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, bool bIsServer = true) const;
 	void ClientQueueEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
 	
 	UFUNCTION(Client, Reliable)
-	void RPCClientQueueEffectOperation(const FGMCAbilityEffectRPCWrapper& Wrapper);
+	void RPCClientQueueEffectOperation(const FGMASBoundQueueRPCHeader& Header, const FGMCAbilityEffectData& Payload);
 
-	bool GetEffectWrapperFromOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, FGMCAbilityEffectRPCWrapper& Wrapper);
-	bool GetEffectOperationFromWrapper(const FGMCAbilityEffectRPCWrapper& Wrapper, TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
-	
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};
 

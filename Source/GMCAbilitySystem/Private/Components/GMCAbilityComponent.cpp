@@ -859,7 +859,7 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 	QueuedEffectOperations.DeductGracePeriod(DeltaTime);
 	auto Operations = QueuedEffectOperations.GetQueuedRPCOperations();
 	for (auto& Operation : Operations) {
-		if (QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) || Operation.GracePeriodExpired())
+		if (ShouldProcessEffectOperation(Operation, true))
 		{
 			if (Operation.GracePeriodExpired())
 			{
@@ -877,11 +877,11 @@ void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 
 	auto RPCOperations = QueuedEffectOperations.GetQueuedRPCOperations();
 	for (auto& Operation : RPCOperations) {
-		if (!QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()))
+		if (ShouldProcessEffectOperation(Operation, false))
 		{
 			ProcessEffectOperation(Operation);
-			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
 			QueuedEffectOperations.Acknowledge(Operation.GetOperationId());
+			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
 		}
 	}
 	
@@ -1124,36 +1124,30 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
 	return nullptr;
 }
 
+bool UGMC_AbilitySystemComponent::ShouldProcessEffectOperation(
+	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, bool bIsServer) const
+{
+	if (bIsServer)
+	{
+		return HasAuthority() && (QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) ||
+			Operation.GracePeriodExpired() || GetNetMode() == NM_Standalone);
+	}
+	else
+	{
+		return !QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) && (!HasAuthority() || GMCMovementComponent->IsLocallyControlledServerPawn());
+	}
+}
+
 void UGMC_AbilitySystemComponent::ClientQueueEffectOperation(
 	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation)
 {
-	FGMCAbilityEffectRPCWrapper Wrapper;
-	GetEffectWrapperFromOperation(Operation, Wrapper);
-	RPCClientQueueEffectOperation(Wrapper);
+	RPCClientQueueEffectOperation(Operation.Header, Operation.Payload);
 }
 
-bool UGMC_AbilitySystemComponent::GetEffectWrapperFromOperation(
-	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation,
-	FGMCAbilityEffectRPCWrapper& Wrapper)
-{
-	Wrapper.Payload = Operation.Payload;
-	Wrapper.Header = Operation.Header;
-
-	return true;
-}
-
-bool UGMC_AbilitySystemComponent::GetEffectOperationFromWrapper(const FGMCAbilityEffectRPCWrapper& Wrapper,
-	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation)
-{
-	QueuedEffectOperations.MakeOperation(Operation, Wrapper.Header, Wrapper.Payload);
-
-	return Operation.IsValid();
-}
-
-void UGMC_AbilitySystemComponent::RPCClientQueueEffectOperation_Implementation(const FGMCAbilityEffectRPCWrapper& Wrapper)
+void UGMC_AbilitySystemComponent::RPCClientQueueEffectOperation_Implementation(const FGMASBoundQueueRPCHeader& Header, const FGMCAbilityEffectData& Payload)
 {
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-	GetEffectOperationFromWrapper(Wrapper, Operation);
+	QueuedEffectOperations.MakeOperation(Operation, Header, Payload);
 	
 	if (!Operation.IsValid()) return;
 
