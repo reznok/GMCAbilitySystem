@@ -177,7 +177,8 @@ public:
 	void BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 	{
 		const EGMC_PredictionMode Prediction = ClientAuth ? EGMC_PredictionMode::ClientAuth_Input : EGMC_PredictionMode::ServerAuth_Output_ClientValidated;
-
+		const EGMC_PredictionMode AckPrediction = ClientAuth ? EGMC_PredictionMode::ServerAuth_Output_ClientValidated : EGMC_PredictionMode::ClientAuth_Input;
+		
 		Acknowledgments = FInstancedStruct::Make<FGMASBoundQueueAcknowledgements>(FGMASBoundQueueAcknowledgements());
 
 		// Our queue's action timer is always server-auth.
@@ -189,10 +190,9 @@ public:
 			EGMC_InterpolationFunction::TargetValue
 			);
 
-		// Our acknowledgments queue is always client-auth.
 		BI_Acknowledgements = MovementComponent->BindInstancedStruct(
 			Acknowledgments,
-			EGMC_PredictionMode::ClientAuth_Input,
+			AckPrediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::None,
 			EGMC_InterpolationFunction::TargetValue);
@@ -242,7 +242,15 @@ public:
 
 	void PreLocalMovement()
 	{
-		if (QueuedBoundOperations.Num() > 0)
+		if (QueuedBoundOperations.Num() > 0 && ClientAuth)
+		{
+			CurrentOperation = QueuedBoundOperations.Pop();
+		}
+	}
+
+	void PreRemoteMovement()
+	{
+		if (QueuedBoundOperations.Num() > 0 && !ClientAuth)
 		{
 			CurrentOperation = QueuedBoundOperations.Pop();
 		}

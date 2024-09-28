@@ -589,6 +589,13 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 	}
 
 	QueuedAbilityOperations.PreLocalMovement();
+	QueuedEffectOperations.PreLocalMovement();
+}
+
+void UGMC_AbilitySystemComponent::PreRemoteMoveExecution()
+{
+	QueuedAbilityOperations.PreRemoteMovement();
+	QueuedEffectOperations.PreRemoteMovement();
 }
 
 void UGMC_AbilitySystemComponent::BeginPlay()
@@ -856,6 +863,19 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 		return;
 	}
 
+	// Handle our GMC-replicated effect operation, if any.
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
+	QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation);
+	if (ShouldProcessEffectOperation(BoundOperation, true))
+	{
+		if (BoundOperation.GracePeriodExpired())
+		{
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client effect operation missed grace period, forcing on server."))
+		}
+		ProcessEffectOperation(BoundOperation);
+	}
+
+	// Handle our 'outer' RPC effect operations.
 	QueuedEffectOperations.DeductGracePeriod(DeltaTime);
 	auto Operations = QueuedEffectOperations.GetQueuedRPCOperations();
 	for (auto& Operation : Operations) {
@@ -863,7 +883,7 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 		{
 			if (Operation.GracePeriodExpired())
 			{
-				UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client removal of effect missed grace period, forcing a removal."))
+				UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client effect operation missed grace period, forcing on server."))
 			}
 			ProcessEffectOperation(Operation);
 			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
@@ -875,6 +895,16 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 
 void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 
+	// Handle our queued GMC-bound effect operation, if any.
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
+	QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation);
+	if (ShouldProcessEffectOperation(BoundOperation, false))
+	{
+		ProcessEffectOperation(BoundOperation);
+		QueuedEffectOperations.Acknowledge(BoundOperation.GetOperationId());
+	}
+
+	// Handle our 'Outer' RPC effect operations
 	auto RPCOperations = QueuedEffectOperations.GetQueuedRPCOperations();
 	for (auto& Operation : RPCOperations) {
 		if (ShouldProcessEffectOperation(Operation, false))
@@ -1127,6 +1157,8 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
 bool UGMC_AbilitySystemComponent::ShouldProcessEffectOperation(
 	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, bool bIsServer) const
 {
+	if (!Operation.IsValid()) return false;
+	
 	if (bIsServer)
 	{
 		return HasAuthority() && (QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) ||
@@ -1134,7 +1166,8 @@ bool UGMC_AbilitySystemComponent::ShouldProcessEffectOperation(
 	}
 	else
 	{
-		return !QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) && (!HasAuthority() || GMCMovementComponent->IsLocallyControlledServerPawn());
+		return !QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) &&
+			(!HasAuthority() || GMCMovementComponent->IsLocallyControlledServerPawn());
 	}
 }
 
@@ -1191,7 +1224,7 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 }
 
 //BP Version
-UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation)
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation, bool bQueueViaGMC)
 {
 	if (Effect == nullptr)
 	{
@@ -1207,6 +1240,15 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 		if (HasAuthority()) {
 			QueuedEffectOperations.QueuePreparedOperation(Operation, false);
 			ClientQueueEffectOperation(Operation);
+		}
+		return nullptr;
+	}
+
+	if (bQueueViaGMC)
+	{
+		if (HasAuthority())
+		{
+			QueuedEffectOperations.QueuePreparedOperation(Operation, true);
 		}
 		return nullptr;
 	}

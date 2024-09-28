@@ -220,16 +220,17 @@ public:
 	void OnRep_UnBoundAttributes();
 
 	/**
-	 * Applies an effect to the Ability Component
+	 * Applies an effect to the Ability Component. If both bOuterActivation and bQueueViaGMC are false, the effect
+	 * will be immediately applied; if either is true, the operation will be queued but no valid effect will be returned.
+	 * If either Outer Activation or Queue via GMC is true, the effect *must* be applied on the server.
 	 *
 	 * @param	Effect		        Effect to apply
-	 * @param	AdditionalModifiers	Additional Modifiers to apply with this effect application
-	 * @param	SourceAbilityComponent	Ability Component from which this effect originated
-	 * @param	bOverwriteExistingModifiers	Whether or not to replace existing modifiers that have the same name as additional modifiers. If false, will add them.
-	 * @param	bAppliedByServer	Is this Effect only applied by server? Used to help client predict the unpredictable.
+	 * @param   InitializationData  Effect initialization data.
+	 * @param   bOuterActivation    Whether this effect should be replicated outside of GMC, via normal Unreal RPC
+	 * @param   bQueueViaGMC		Whether this effect should be queued via GMC's normal moves. 
 	 */
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", meta = (AutoCreateRefTerm = "AdditionalModifiers"))
-	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation = false);
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation = false, bool bQueueViaGMC = false);
 	
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 	
@@ -364,6 +365,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
 
+	UFUNCTION(BlueprintCallable, Category="GMAS")
+	virtual void PreRemoteMoveExecution();
+	
 #pragma endregion GMC
 
 #pragma region ToStringHelpers
