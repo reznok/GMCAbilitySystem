@@ -156,19 +156,13 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
-	GMCMovementComponent->BindInstancedStruct(AcknowledgeId,
-	EGMC_PredictionMode::ClientAuth_Input,
-	EGMC_CombineMode::CombineIfUnchanged,
-	EGMC_SimulationMode::None,
-	EGMC_InterpolationFunction::TargetValue);
-
-	// Bind our ability operation queue.
+	// Bind our operation queues.
 	QueuedAbilityOperations.BindToGMC(GMCMovementComponent);
+	QueuedEffectOperations.BindToGMC(GMCMovementComponent);
 	
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
-
 	OnAncillaryTick.Broadcast(DeltaTime);
 
 	ClientHandlePendingEffect();
@@ -183,7 +177,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	
 
 	// Check if we have a valid operation
-	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation; QueuedAbilityOperations.GetCurrentOperation(Operation))
+	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation; QueuedAbilityOperations.GetCurrentBoundOperation(Operation))
 	{
 		ProcessAbilityOperation(Operation, false);
 	}
@@ -560,10 +554,11 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 	// Advance our queue action timers.
 	QueuedAbilityOperations.GenPredictionTick(DeltaTime);
+	QueuedEffectOperations.GenPredictionTick(DeltaTime);
 	
 	// Was an ability used?
 	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
-		QueuedAbilityOperations.GetCurrentOperation(Operation))
+		QueuedAbilityOperations.GetCurrentBoundOperation(Operation))
 	{
 		ProcessAbilityOperation(Operation, true);
 	}
@@ -856,63 +851,23 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 	}
 }
 
-void UGMC_AbilitySystemComponent::AddPendingEffectApplications(FGMCOuterApplicationWrapper& Wrapper) {
-	check(HasAuthority())
-
-	Wrapper.ClientGraceTimeRemaining = 1.f;
-	Wrapper.LateApplicationID = GenerateLateApplicationID();
-
-	PendingApplicationServer.Add(Wrapper);
-	RPCClientAddPendingEffectApplication(Wrapper);
-}
-
-
-void UGMC_AbilitySystemComponent::RPCClientAddPendingEffectApplication_Implementation(
-		FGMCOuterApplicationWrapper Wrapper) {
-	PendingApplicationClient.Add(Wrapper);
-}
-
-
-
 void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 	if (!HasAuthority()) {
 		return;
 	}
 
-	FGMCAcknowledgeId& AckId =	AcknowledgeId.GetMutable<FGMCAcknowledgeId>();
-
-
-	for (int i = PendingApplicationServer.Num() - 1; i >= 0; i--) {
-		FGMCOuterApplicationWrapper& Wrapper = PendingApplicationServer[i];
-
-		if (Wrapper.ClientGraceTimeRemaining <= 0.f || AckId.Id.Contains(Wrapper.LateApplicationID)) {
-
-			switch (Wrapper.Type) {
-				case EGMC_AddEffect: {
-					const FGMCOuterEffectAdd& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectAdd>();
-					UGMCAbilityEffect* AbilityEffect = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
-					AbilityEffect->EffectData.EffectID = Wrapper.LateApplicationID;
-					FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
-					UGMCAbilityEffect* FX = ApplyAbilityEffect(AbilityEffect, EffectData);
-					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
-						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Add Effect `%s ` Missed Grace time, Force application : id: %d"), *GetNameSafe(Data.EffectClass), FX->EffectData.EffectID);
-					}
-				} break;
-				case EGMC_RemoveEffect: {
-					const FGMCOuterEffectRemove& Data = Wrapper.OuterApplicationData.Get<FGMCOuterEffectRemove>();
-					RemoveEffectById(Data.Ids);
-					if (Wrapper.ClientGraceTimeRemaining <= 0.f) {
-						UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client Remove Effect Missed Grace time, Force remove"));
-					}
-				} break;
+	QueuedEffectOperations.DeductGracePeriod(DeltaTime);
+	auto Operations = QueuedEffectOperations.GetQueuedRPCOperations();
+	for (auto& Operation : Operations) {
+		if (QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()) || Operation.GracePeriodExpired())
+		{
+			if (Operation.GracePeriodExpired())
+			{
+				UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client removal of effect missed grace period, forcing a removal."))
 			}
-			PendingApplicationServer.RemoveAt(i);
+			ProcessEffectOperation(Operation);
+			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
 		}
-		else {
-			Wrapper.ClientGraceTimeRemaining -= DeltaTime;
-		}
-
-		
 	}
 	
 }
@@ -920,54 +875,17 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 
 void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 
-
-	for (int i = PendingApplicationClient.Num() - 1; i >= 0; i--)
-	{
-		FGMCOuterApplicationWrapper& LateApplicationData = PendingApplicationClient[i];
-
-			switch (LateApplicationData.Type) {
-				case EGMC_AddEffect: {
-						const FGMCOuterEffectAdd& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectAdd>();
-
-						if (Data.EffectClass == nullptr) {
-							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: EffectClass is null"));
-							break;
-						}
-					
-						UGMCAbilityEffect* CDO = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>();
-
-						if (CDO == nullptr) {
-							UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientHandlePendingEffect: CDO is null"));
-							break;
-						}
-					
-						UGMCAbilityEffect* AbilityEffect = DuplicateObject(CDO, this);
-						AbilityEffect->EffectData.EffectID = LateApplicationData.LateApplicationID;
-						FGMCAbilityEffectData EffectData = Data.InitializationData.IsValid() ?  Data.InitializationData : AbilityEffect->EffectData;
-						ApplyAbilityEffect(AbilityEffect, EffectData);
-					} break;
-				case EGMC_RemoveEffect: {
-						const FGMCOuterEffectRemove& Data = LateApplicationData.OuterApplicationData.Get<FGMCOuterEffectRemove>();
-						RemoveEffectById(Data.Ids);
-					} break;
-			}
-		
-			PendingApplicationClient.RemoveAt(i);
-			AcknowledgeId.GetMutable<FGMCAcknowledgeId>().Id.Add(LateApplicationData.LateApplicationID);
+	auto RPCOperations = QueuedEffectOperations.GetQueuedRPCOperations();
+	for (auto& Operation : RPCOperations) {
+		if (!QueuedEffectOperations.IsAcknowledged(Operation.GetOperationId()))
+		{
+			ProcessEffectOperation(Operation);
+			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
+			QueuedEffectOperations.Acknowledge(Operation.GetOperationId());
 		}
-}
-
-
-int UGMC_AbilitySystemComponent::GenerateLateApplicationID() {
-	int NewEffectID = static_cast<int>(ActionTimer * 100);
-	while (ActiveEffects.Contains(NewEffectID))
-	{
-		NewEffectID++;
 	}
-
-	return NewEffectID;
+	
 }
-
 
 void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID, int TaskID)
 {
@@ -1148,13 +1066,13 @@ bool UGMC_AbilitySystemComponent::ProcessAbilityOperation(
 	EGMASBoundQueueOperationType OperationType = Operation.GetOperationType();
 	if (OperationType == EGMASBoundQueueOperationType::Activate)
 	{
-		TryActivateAbilitiesByInputTag(Operation.Tag, Operation.Payload.ActionInput, bFromMovementTick);
+		TryActivateAbilitiesByInputTag(Operation.GetTag(), Operation.Payload.ActionInput, bFromMovementTick);
 		return true;
 	}
 
 	if (OperationType == EGMASBoundQueueOperationType::Cancel)
 	{
-		EndAbilitiesByTag(Operation.Tag);
+		EndAbilitiesByTag(Operation.GetTag());
 		if (Operation.ItemClass)
 		{
 			EndAbilitiesByClass(Operation.ItemClass);
@@ -1163,8 +1081,83 @@ bool UGMC_AbilitySystemComponent::ProcessAbilityOperation(
 	}
 	
 	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Received ability operation with invalid operation type %s for %s!"),
-		*UEnum::GetValueAsString(OperationType), *Operation.Tag.ToString())
+		*UEnum::GetValueAsString(OperationType), *Operation.GetTag().ToString())
 	return false;
+}
+
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
+	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation)
+{
+	EGMASBoundQueueOperationType OperationType = Operation.GetOperationType();
+
+	if (OperationType == EGMASBoundQueueOperationType::Add)
+	{
+		UGMCAbilityEffect* Effect = DuplicateObject(Operation.ItemClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+		FGMCAbilityEffectData EffectData;
+		if (Operation.Payload.IsValid())
+		{
+			EffectData = Operation.Payload;
+		}
+		else
+		{
+			EffectData = Effect->EffectData;
+		}
+		
+		ApplyAbilityEffect(Effect, EffectData);
+		return Effect;
+	}
+
+	if (OperationType == EGMASBoundQueueOperationType::Remove)
+	{
+		for (auto& [Id, Effect]: ActiveEffects)
+		{
+			if (Operation.GetPayloadIds().Contains(Id))
+			{
+				RemoveActiveAbilityEffect(Effect);
+			}
+		}
+		return nullptr;
+	}
+
+	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Received ability operation with invalid operation type %s for %s!"),
+		*UEnum::GetValueAsString(OperationType), *Operation.ItemClass->GetName())
+	return nullptr;
+}
+
+void UGMC_AbilitySystemComponent::ClientQueueEffectOperation(
+	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation)
+{
+	FGMCAbilityEffectRPCWrapper Wrapper;
+	GetEffectWrapperFromOperation(Operation, Wrapper);
+	RPCClientQueueEffectOperation(Wrapper);
+}
+
+bool UGMC_AbilitySystemComponent::GetEffectWrapperFromOperation(
+	const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation,
+	FGMCAbilityEffectRPCWrapper& Wrapper)
+{
+	Wrapper.Payload = Operation.Payload;
+	Wrapper.Header = Operation.Header;
+
+	return true;
+}
+
+bool UGMC_AbilitySystemComponent::GetEffectOperationFromWrapper(const FGMCAbilityEffectRPCWrapper& Wrapper,
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation)
+{
+	QueuedEffectOperations.MakeOperation(Operation, Wrapper.Header, Wrapper.Payload);
+
+	return Operation.IsValid();
+}
+
+void UGMC_AbilitySystemComponent::RPCClientQueueEffectOperation_Implementation(const FGMCAbilityEffectRPCWrapper& Wrapper)
+{
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
+	GetEffectOperationFromWrapper(Wrapper, Operation);
+	
+	if (!Operation.IsValid()) return;
+
+	QueuedEffectOperations.AddQueuedRPCOperation(Operation);
 }
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
@@ -1212,32 +1205,19 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 		return nullptr;
 	}
 
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
+	QueuedEffectOperations.MakeOperation(Operation, EGMASBoundQueueOperationType::Add, FGameplayTag::EmptyTag, InitializationData, {}, Effect, 1.f);
 	
 	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
 	if (bOuterActivation) {
 		if (HasAuthority()) {
-			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectAdd>(Effect, InitializationData);
-			AddPendingEffectApplications(Wrapper);
+			QueuedEffectOperations.AddQueuedRPCOperation(Operation);
+			ClientQueueEffectOperation(Operation);
 		}
 		return nullptr;
 	}
-	
 
-	
-	UGMCAbilityEffect* AbilityEffect = DuplicateObject(Effect->GetDefaultObject<UGMCAbilityEffect>(), this);
-	
-	FGMCAbilityEffectData EffectData;
-	if (InitializationData.IsValid())
-	{
-		EffectData = InitializationData;
-	}
-	else
-	{
-		EffectData = AbilityEffect->EffectData;
-	}
-	
-	ApplyAbilityEffect(AbilityEffect, EffectData);
-	return AbilityEffect;
+	return ProcessEffectOperation(Operation);
 }
 
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData)
@@ -1301,8 +1281,8 @@ int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, i
 		return 0;
 	}
 
-	TMap<int, UGMCAbilityEffect*> EffectsToRemove;
-	int32 NumRemoved = 0;
+	TArray<int> EffectsToRemove;
+	int NumRemoved = 0;
 	
 	for(const TTuple<int, UGMCAbilityEffect*> Effect : ActiveEffects)
 	{
@@ -1311,30 +1291,16 @@ int32 UGMC_AbilitySystemComponent::RemoveEffectByTag(FGameplayTag InEffectTag, i
 		}
 		
 		if(Effect.Value->EffectData.EffectTag.IsValid() && Effect.Value->EffectData.EffectTag.MatchesTagExact(InEffectTag)){
-			EffectsToRemove.Add(Effect.Key, Effect.Value);
+			EffectsToRemove.Add(Effect.Value->EffectData.EffectID);
 			NumRemoved++;
 		}
 	}
-	
 
-	if (bOuterActivation) {
-		if (HasAuthority() && EffectsToRemove.Num() > 0) {
-
-			TArray<int> EffectIDsToRemove;
-			for (const auto& ToRemove : EffectsToRemove) {
-				EffectIDsToRemove.Add(ToRemove.Key);
-			}
-			
-			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(EffectIDsToRemove);
-			AddPendingEffectApplications(Wrapper);
-		}
-		return 0;
+	if (NumRemoved > 0)
+	{
+		RemoveEffectById(EffectsToRemove, bOuterActivation);
 	}
 
-	for (auto& ToRemove : EffectsToRemove) {
-		ToRemove.Value->EndEffect();
-	}
-	
 	return NumRemoved;
 }
 
@@ -1355,8 +1321,11 @@ bool UGMC_AbilitySystemComponent::RemoveEffectById(TArray<int> Ids, bool bOuterA
 
 	if (bOuterActivation) {
 		if (HasAuthority()) {
-			FGMCOuterApplicationWrapper Wrapper = FGMCOuterApplicationWrapper::Make<FGMCOuterEffectRemove>(Ids);
-			AddPendingEffectApplications(Wrapper);
+			TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
+			FGMCAbilityEffectData Data;
+			QueuedEffectOperations.MakeOperation(Operation, EGMASBoundQueueOperationType::Remove, FGameplayTag::EmptyTag, Data, Ids);
+			QueuedEffectOperations.AddQueuedRPCOperation(Operation);
+			ClientQueueEffectOperation(Operation);
 		}
 		return true;
 	}

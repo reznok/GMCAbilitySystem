@@ -443,9 +443,19 @@ private:
 
 	// Queued ability operations (activate, cancel, etc.)
 	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
-
 	bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
 
+	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
+	UGMCAbilityEffect* ProcessEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
+
+	void ClientQueueEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
+	
+	UFUNCTION(Client, Reliable)
+	void RPCClientQueueEffectOperation(const FGMCAbilityEffectRPCWrapper& Wrapper);
+
+	bool GetEffectWrapperFromOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, FGMCAbilityEffectRPCWrapper& Wrapper);
+	bool GetEffectOperationFromWrapper(const FGMCAbilityEffectRPCWrapper& Wrapper, TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
+	
 	// Predictions of Effect state changes
 	FEffectStatePrediction EffectStatePrediction{};
 
@@ -511,32 +521,13 @@ private:
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
-	// Effect applied externally, pending activation, used by server and client. Not replicated.
-	//TODO: Later we will need to encapsulate this with Instanced struct to have a more generic way to handle this, and have cohabitation server <-> client
-	UPROPERTY()
-	TArray<FGMCOuterApplicationWrapper> PendingApplicationServer;
-
-	UPROPERTY()
-	TArray<FGMCOuterApplicationWrapper> PendingApplicationClient;
-
 	// doesn't work ATM.
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInGMCTime = false;
 
-	// TODO: Need to be pushed later on a int64 32 index + 32 bitfield
-	// Binded Used for acknowledge server initiated ability/effect
-	FInstancedStruct AcknowledgeId = FInstancedStruct::Make(FGMCAcknowledgeId{});
-
-	void AddPendingEffectApplications(FGMCOuterApplicationWrapper& Wrapper);
-	// Let the client know that the server ask for an external effect application
-	UFUNCTION(Client, Reliable)
-	void RPCClientAddPendingEffectApplication(FGMCOuterApplicationWrapper Wrapper);
-	
 	void ServerHandlePendingEffect(float DeltaTime);
 
 	void ClientHandlePendingEffect();
-
-	int GenerateLateApplicationID();
 
 	int LateApplicationIDCounter = 0;
 

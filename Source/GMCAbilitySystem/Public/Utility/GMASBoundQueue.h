@@ -18,25 +18,55 @@ enum class EGMASBoundQueueOperationType : uint8
 	Remove,
 	Activate,
 	Cancel
-}; 
+};
+
+USTRUCT(BlueprintType)
+struct FGMASBoundQueueOperationIdSet
+{
+	GENERATED_BODY()
+	
+	TArray<int> Ids = {};
+};
+
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEM_API FGMASBoundQueueRPCHeader
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 OperationId { -1 };
+
+	UPROPERTY()
+	uint8 OperationTypeRaw { 0 };
+
+	EGMASBoundQueueOperationType GetOperationType() const
+	{
+		return static_cast<EGMASBoundQueueOperationType>(OperationTypeRaw);
+	}
+	
+	UPROPERTY()
+	FGameplayTag Tag { FGameplayTag::EmptyTag };
+
+	UPROPERTY()
+	FName ItemClassName { NAME_None };
+
+	UPROPERTY()
+	FGMASBoundQueueOperationIdSet PayloadIds {};
+
+	UPROPERTY()
+	float RPCGracePeriodSeconds { 1.f };
+};
 
 template<typename C, typename T>
 struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 {
-	// A unique ID for this operation.
-	int32 OperationId { -1 };
-
-	uint8 OperationTypeRaw { 0 };
+	FGMASBoundQueueRPCHeader Header {};
 	
-	// The tag associated with this operation (if any)
-	FGameplayTag Tag { FGameplayTag::EmptyTag };
-
 	// An actual class to be utilized with this, in case we need to instance it.
 	TSubclassOf<C> ItemClass { nullptr };
 
-	// An FName representation of this item, used for GMC replication.
-	FName ItemClassName { NAME_None };
-
+	FInstancedStruct InstancedPayloadIds;
+	
 	// The struct payload for this item.
 	T Payload;	
 
@@ -51,14 +81,73 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 
 	EGMASBoundQueueOperationType GetOperationType() const
 	{
-		return static_cast<EGMASBoundQueueOperationType>(OperationTypeRaw);
+		return Header.GetOperationType();
 	}
 
 	void SetOperationType(EGMASBoundQueueOperationType OperationType)
 	{
-		OperationTypeRaw = static_cast<uint8>(OperationType);
+		Header.OperationTypeRaw = static_cast<uint8>(OperationType);
+	}
+
+	int32 GetOperationId() const { return Header.OperationId; }
+
+	TArray<int32> GetPayloadIds() const { return Header.PayloadIds.Ids; }
+
+	FGameplayTag GetTag() const { return Header.Tag; }
+
+	bool GracePeriodExpired() const
+	{
+		return Header.RPCGracePeriodSeconds <= 0.f;
+	}
+
+	bool IsValid() const
+	{
+		return Header.OperationTypeRaw != 0 && (Header.ItemClassName != NAME_None || Header.Tag != FGameplayTag::EmptyTag || Header.PayloadIds.Ids.Num() > 0);
+	}
+
+	void Refresh(bool bDecodePayload = false)
+	{
+		if (bDecodePayload)
+		{
+			Payload = InstancedPayload.template Get<T>();
+			Header.PayloadIds = InstancedPayloadIds.Get<FGMASBoundQueueOperationIdSet>();
+		}
+
+		if (Header.ItemClassName != NAME_None && !ItemClass)
+		{
+			// Get a handle to our class, for instancing purposes.
+			TSoftClassPtr<C> ClassPtr = TSoftClassPtr<C>(FSoftObjectPath(Header.ItemClassName.ToString()));
+			ItemClass = ClassPtr.LoadSynchronous();
+		}
 	}
 	
+};
+
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEM_API FGMASBoundQueueAcknowledgement
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Id { -1 };
+
+	UPROPERTY()
+	float Lifetime { 5.f };
+};
+
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEM_API FGMASBoundQueueAcknowledgements
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<FGMASBoundQueueAcknowledgement> AckSet;
+};
+
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEM_API FGMASBoundQueueEmptyData
+{
+	GENERATED_BODY()
 };
 
 template<typename C, typename T, bool ClientAuth = true>
@@ -69,13 +158,19 @@ public:
 
 	TGMASBoundQueueOperation<C, T> CurrentOperation;
 
+	int BI_ActionTimer { -1 };
+	int BI_Acknowledgements { -1 };
 	int BI_OperationId { -1 };
 	int BI_OperationType { -1 };
 	int BI_OperationTag { -1 };
 	int BI_OperationClass { -1 };
 	int BI_OperationPayload { -1 };
+	int BI_OperationPayloadIds { -1 };
 	
-	TArray<TGMASBoundQueueOperation<C, T>> QueuedOperations;
+	TArray<TGMASBoundQueueOperation<C, T>> QueuedBoundOperations;
+	TArray<TGMASBoundQueueOperation<C, T>> QueuedRPCOperations;
+
+	FInstancedStruct Acknowledgments;
 
 	double ActionTimer { 0 };
 
@@ -83,29 +178,48 @@ public:
 	{
 		const EGMC_PredictionMode Prediction = ClientAuth ? EGMC_PredictionMode::ClientAuth_Input : EGMC_PredictionMode::ServerAuth_Output_ClientValidated;
 
+		Acknowledgments = FInstancedStruct::Make<FGMASBoundQueueAcknowledgements>(FGMASBoundQueueAcknowledgements());
+
+		// Our queue's action timer is always server-auth.
+		BI_ActionTimer = MovementComponent->BindDoublePrecisionFloat(
+			ActionTimer,
+			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::None,
+			EGMC_InterpolationFunction::TargetValue
+			);
+
+		// Our acknowledgments queue is always client-auth.
+		BI_Acknowledgements = MovementComponent->BindInstancedStruct(
+			Acknowledgments,
+			EGMC_PredictionMode::ClientAuth_Input,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::None,
+			EGMC_InterpolationFunction::TargetValue);
+		
 		BI_OperationId = MovementComponent->BindInt(
-			CurrentOperation.OperationId,
+			CurrentOperation.Header.OperationId,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationType = MovementComponent->BindByte(
-			CurrentOperation.OperationTypeRaw,
+			CurrentOperation.Header.OperationTypeRaw,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationTag = MovementComponent->BindGameplayTag(
-			CurrentOperation.Tag,
+			CurrentOperation.Header.Tag,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationClass = MovementComponent->BindName(
-			CurrentOperation.ItemClassName,
+			CurrentOperation.Header.ItemClassName,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -117,13 +231,20 @@ public:
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
+
+		BI_OperationPayloadIds = MovementComponent->BindInstancedStruct(
+			CurrentOperation.InstancedPayloadIds,
+			Prediction,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
 	}
 
 	void PreLocalMovement()
 	{
-		if (QueuedOperations.Num() > 0)
+		if (QueuedBoundOperations.Num() > 0)
 		{
-			CurrentOperation = QueuedOperations.Pop();
+			CurrentOperation = QueuedBoundOperations.Pop();
 		}
 	}
 
@@ -131,81 +252,229 @@ public:
 	
 	void ClearCurrentOperation()
 	{
-		CurrentOperation.OperationId = -1;
-		CurrentOperation.Tag = FGameplayTag::EmptyTag;
-		CurrentOperation.ItemClassName = NAME_None;
+		CurrentOperation.Header.OperationId = -1;
+		CurrentOperation.Header.Tag = FGameplayTag::EmptyTag;
+		CurrentOperation.Header.ItemClassName = NAME_None;
 		CurrentOperation.SetOperationType(EGMASBoundQueueOperationType::None);
+		CurrentOperation.Header.PayloadIds.Ids.Empty();
 	}
 
 	void GenPredictionTick(float DeltaTime)
 	{
 		ActionTimer += DeltaTime;
+		ExpireStaleAcks(DeltaTime);
 	}
 
-	int32 QueueOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TSubclassOf<C> ItemClass = nullptr, bool bMovementSynced = true)
+	int32 MakeOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, float RPCGracePeriod = 1.f)
 	{
-		NewOperation.OperationId = GenerateOperationId();
+		NewOperation.Header.OperationId = GenerateOperationId();
 		NewOperation.SetOperationType(Type);
-		NewOperation.Tag = Tag;
+		NewOperation.Header.Tag = Tag;
 		NewOperation.Payload = Payload;
 		NewOperation.InstancedPayload = FInstancedStruct::Make<T>(Payload);
 		NewOperation.ItemClass = ItemClass;
+		NewOperation.Header.RPCGracePeriodSeconds = RPCGracePeriod;
+		NewOperation.Header.PayloadIds.Ids = PayloadIds;
+		NewOperation.InstancedPayloadIds = FInstancedStruct::Make<FGMASBoundQueueOperationIdSet>(NewOperation.Header.PayloadIds);
+
 		if (ItemClass)
 		{
-			NewOperation.ItemClassName = FName(ItemClass->GetPathName());
+			NewOperation.Header.ItemClassName = FName(ItemClass->GetPathName());
 		}
 		else
 		{
-			NewOperation.ItemClassName = NAME_None;
+			NewOperation.Header.ItemClassName = NAME_None;
 		}
+		return NewOperation.GetOperationId();
+	}
 
+	int32 MakeOperation(TGMASBoundQueueOperation<C, T>& NewOperation, const FGMASBoundQueueRPCHeader& Header, const T& Payload)
+	{
+		NewOperation.Header = Header;
+		NewOperation.Payload = Payload;
+		NewOperation.Refresh();
+		NewOperation.InstancedPayload = FInstancedStruct::Make<T>(Payload);
+		NewOperation.InstancedPayloadIds = FInstancedStruct::Make<FGMASBoundQueueOperationIdSet>(NewOperation.Header.PayloadIds);
+
+		return NewOperation.GetOperationId();
+	}
+	
+	int32 QueueOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, bool bMovementSynced = true, float RPCGracePeriod = 1.f)
+	{
+		MakeOperation(NewOperation, Type, Tag, Payload, PayloadIds, ItemClass, RPCGracePeriod);
 		if (bMovementSynced)
 		{
 			// This needs to be handled via GMC, so add it to our queue.
-			QueuedOperations.Push(NewOperation);
+			QueuedBoundOperations.Push(NewOperation);
+		}
+		else
+		{
+			QueuedRPCOperations.Push(NewOperation);
 		}
 
-		return NewOperation.OperationId;
+		return NewOperation.GetOperationId();
 	}
 
 	int Num() const
 	{
-		return QueuedOperations.Num();
+		return QueuedBoundOperations.Num();
 	}
 
 	int NumMatching(FGameplayTag Tag, EGMASBoundQueueOperationType Type = EGMASBoundQueueOperationType::None) const
 	{
 		int Result = 0;
-		for (const auto& Operation : QueuedOperations)
+		for (const auto& Operation : QueuedBoundOperations)
 		{
-			if (Operation.Tag == Tag)
+			if (Operation.GetTag() == Tag)
 			{
 				if (Type == EGMASBoundQueueOperationType::None || Operation.GetOperationType() == Type) Result++;
 			}
 		}
+		for (const auto& Operation : QueuedRPCOperations)
+		{
+			if (Operation.GetTag() == Tag)
+			{
+				if (Type == EGMASBoundQueueOperationType::None || Operation.GetOperationType() == Type) Result++;
+			}
+		}		
 		return Result;
 	}
 
-	const TArray<TGMASBoundQueueOperation<C, T>> &GetQueuedOperations() const { return QueuedOperations; }
+	const TArray<TGMASBoundQueueOperation<C, T>>& GetQueuedOperations() const { return QueuedBoundOperations; }
+
+	const TArray<TGMASBoundQueueOperation<C, T>>& GetQueuedRPCOperations() const { return QueuedRPCOperations; }
+
+	void AddQueuedRPCOperation(const TGMASBoundQueueOperation<C, T>& NewOperation)
+	{
+		// This is used by the client-side to add the RPC-call operations.
+		// This allows us to still handle the application of effects within
+		// the GMC lifecycle, for the sake of everyone's sanity.
+		TGMASBoundQueueOperation<C, T> TempOperation = TGMASBoundQueueOperation<C, T>();
+
+		if (!GetOperationById(NewOperation.GetOperationId(), TempOperation))
+		{
+			TempOperation = NewOperation;
+			QueuedRPCOperations.Push(TempOperation);
+		}
+	}
+
+	bool GetOperationById(int32 OperationId, TGMASBoundQueueOperation<C, T>& OutOperation) const
+	{
+		for (const auto& Operation : QueuedBoundOperations)
+		{
+			if (Operation.GetOperationId() == OperationId)
+			{
+				OutOperation = Operation;
+				return true;
+			}
+		}
+
+		for (const auto& Operation : QueuedRPCOperations)
+		{
+			if (Operation.GetOperationId() == OperationId)
+			{
+				OutOperation = Operation;
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool RemoveOperationById(int32 OperationId)
+	{
+		int TargetIdx = -1;
+
+		for (int Idx = 0; Idx < QueuedRPCOperations.Num() && TargetIdx == -1; Idx++)
+		{
+			if(QueuedRPCOperations[Idx].GetOperationId() == OperationId)
+			{
+				TargetIdx = Idx;
+			}
+		}
+
+		if (TargetIdx != -1)
+		{
+			QueuedRPCOperations.RemoveAtSwap(TargetIdx, 1, false);
+			return true;
+		}
+
+		TargetIdx = -1;
+		for (int Idx = 0; Idx < QueuedBoundOperations.Num() && TargetIdx == -1; Idx++)
+		{
+			if(QueuedBoundOperations[Idx].GetOperationId() == OperationId)
+			{
+				TargetIdx = Idx;
+			}
+		}
+		
+		if (TargetIdx != -1)
+		{
+			QueuedBoundOperations.RemoveAtSwap(TargetIdx, 1, false);
+			return true;
+		}
+
+		return false;
+	}
 	
-	bool GetCurrentOperation(TGMASBoundQueueOperation<C, T>& Operation)
+	bool GetCurrentBoundOperation(TGMASBoundQueueOperation<C, T>& Operation)
 	{
 		Operation = CurrentOperation;
 
 		if (Operation.GetOperationType() != EGMASBoundQueueOperationType::None)
 		{
-			Operation.Payload = CurrentOperation.InstancedPayload.template Get<T>();
-
-			if (Operation.ItemClassName != NAME_None && !Operation.ItemClass)
-			{
-				// Get a handle to our class, for instancing purposes.
-				TSoftClassPtr<C> ClassPtr = TSoftClassPtr<C>(FSoftObjectPath(Operation.ItemClassName.ToString()));
-				Operation.ItemClass = ClassPtr.LoadSynchronous();
-			}
+			Operation.Refresh();
 			return true;
 		}
 
 		return false;
+	}
+
+	void DeductGracePeriod(float DeltaTime)
+	{
+		for (auto& Operation : QueuedRPCOperations)
+		{
+			Operation.Header.RPCGracePeriodSeconds -= DeltaTime;
+		}
+	}
+
+	void Acknowledge(int32 OperationId, float AckLifetime = 5.f)
+	{
+		if (!IsAcknowledged(OperationId))
+		{
+			FGMASBoundQueueAcknowledgement NewAck;
+			NewAck.Id = OperationId;
+			NewAck.Lifetime = AckLifetime;
+
+			auto& Acks = Acknowledgments.GetMutable<FGMASBoundQueueAcknowledgements>();
+			Acks.AckSet.Add(NewAck);
+		}
+	}
+
+	bool IsAcknowledged(int32 OperationId) const
+	{
+		const auto& Acks = Acknowledgments.Get<FGMASBoundQueueAcknowledgements>();
+		for (const auto& Ack : Acks.AckSet)
+		{
+			if (Ack.Id == OperationId) return true;
+		}
+		return false;
+	}
+
+	void ExpireStaleAcks(float DeltaTime)
+	{
+		// Deduct from our ack lifetime; if we've gone stale, remove the stale acks to avoid it just growing forever.
+		TArray<FGMASBoundQueueAcknowledgement> FreshAcks;
+		auto& Acks = Acknowledgments.GetMutable<FGMASBoundQueueAcknowledgements>();
+		for (auto& Ack : Acks.AckSet)
+		{
+			Ack.Lifetime -= DeltaTime;
+			if (Ack.Lifetime > 0.f)
+			{
+				FreshAcks.Add(Ack);
+			}
+		}
+		Acks.AckSet = FreshAcks;
 	}
 	
 };
