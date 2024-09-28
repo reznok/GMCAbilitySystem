@@ -298,10 +298,14 @@ public:
 
 		return NewOperation.GetOperationId();
 	}
-	
-	int32 QueueOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, bool bMovementSynced = true, float RPCGracePeriod = 1.f)
+
+	void QueuePreparedOperation(TGMASBoundQueueOperation<C, T>& NewOperation, bool bMovementSynced = true)
 	{
-		MakeOperation(NewOperation, Type, Tag, Payload, PayloadIds, ItemClass, RPCGracePeriod);
+		TGMASBoundQueueOperation<C, T> TestOperation = TGMASBoundQueueOperation<C, T>();
+
+		// Don't bother queueing it if it already exists.
+		if (GetOperationById(NewOperation.GetOperationId(), TestOperation)) return;
+		
 		if (bMovementSynced)
 		{
 			// This needs to be handled via GMC, so add it to our queue.
@@ -311,7 +315,12 @@ public:
 		{
 			QueuedRPCOperations.Push(NewOperation);
 		}
-
+	}
+	
+	int32 QueueOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, bool bMovementSynced = true, float RPCGracePeriod = 1.f)
+	{
+		MakeOperation(NewOperation, Type, Tag, Payload, PayloadIds, ItemClass, RPCGracePeriod);
+		QueuePreparedOperation(NewOperation, bMovementSynced);		
 		return NewOperation.GetOperationId();
 	}
 
@@ -343,20 +352,6 @@ public:
 	const TArray<TGMASBoundQueueOperation<C, T>>& GetQueuedOperations() const { return QueuedBoundOperations; }
 
 	const TArray<TGMASBoundQueueOperation<C, T>>& GetQueuedRPCOperations() const { return QueuedRPCOperations; }
-
-	void AddQueuedRPCOperation(const TGMASBoundQueueOperation<C, T>& NewOperation)
-	{
-		// This is used by the client-side to add the RPC-call operations.
-		// This allows us to still handle the application of effects within
-		// the GMC lifecycle, for the sake of everyone's sanity.
-		TGMASBoundQueueOperation<C, T> TempOperation = TGMASBoundQueueOperation<C, T>();
-
-		if (!GetOperationById(NewOperation.GetOperationId(), TempOperation))
-		{
-			TempOperation = NewOperation;
-			QueuedRPCOperations.Push(TempOperation);
-		}
-	}
 
 	bool GetOperationById(int32 OperationId, TGMASBoundQueueOperation<C, T>& OutOperation) const
 	{

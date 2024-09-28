@@ -1151,7 +1151,7 @@ void UGMC_AbilitySystemComponent::RPCClientQueueEffectOperation_Implementation(c
 	
 	if (!Operation.IsValid()) return;
 
-	QueuedEffectOperations.AddQueuedRPCOperation(Operation);
+	QueuedEffectOperations.QueuePreparedOperation(Operation, false);
 }
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
@@ -1205,7 +1205,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
 	if (bOuterActivation) {
 		if (HasAuthority()) {
-			QueuedEffectOperations.AddQueuedRPCOperation(Operation);
+			QueuedEffectOperations.QueuePreparedOperation(Operation, false);
 			ClientQueueEffectOperation(Operation);
 		}
 		return nullptr;
@@ -1318,7 +1318,9 @@ bool UGMC_AbilitySystemComponent::RemoveEffectById(TArray<int> Ids, bool bOuterA
 			TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
 			FGMCAbilityEffectData Data;
 			QueuedEffectOperations.MakeOperation(Operation, EGMASBoundQueueOperationType::Remove, FGameplayTag::EmptyTag, Data, Ids);
-			QueuedEffectOperations.AddQueuedRPCOperation(Operation);
+			QueuedEffectOperations.QueuePreparedOperation(Operation, false);
+
+			// Send the operation over to our client via standard RPC.
 			ClientQueueEffectOperation(Operation);
 		}
 		return true;
