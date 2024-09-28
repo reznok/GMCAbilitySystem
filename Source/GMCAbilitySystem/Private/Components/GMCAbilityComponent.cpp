@@ -589,7 +589,14 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 	}
 
 	QueuedAbilityOperations.PreLocalMovement();
-	QueuedEffectOperations.PreLocalMovement();
+
+	if (GetNetMode() == NM_Standalone)
+	{
+		// In standalone, we never get the pre remote movement, so
+		// we need to kick this off to ensure we shuffle the new operation
+		// into the queue.
+		QueuedEffectOperations.PreRemoteMovement();
+	}
 }
 
 void UGMC_AbilitySystemComponent::PreRemoteMoveExecution()
@@ -873,6 +880,9 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 			UE_LOG(LogGMCAbilitySystem, Log, TEXT("Client effect operation missed grace period, forcing on server."))
 		}
 		ProcessEffectOperation(BoundOperation);
+
+		// Operation has been done, clear it out.
+		QueuedEffectOperations.ClearCurrentOperation();
 	}
 
 	// Handle our 'outer' RPC effect operations.
@@ -1252,7 +1262,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 		}
 		return nullptr;
 	}
-
+ 
 	return ProcessEffectOperation(Operation);
 }
 
