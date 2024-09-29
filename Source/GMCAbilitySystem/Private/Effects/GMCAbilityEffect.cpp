@@ -233,7 +233,7 @@ void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
 
 	if (bPreserveOnMultipleInstances && EffectData.EffectTag.IsValid()) {
-		TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActivesEffectByTag(EffectData.EffectTag);
+		TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
 		
 		if (ActiveEffect.Num() > 1) {
 			return;

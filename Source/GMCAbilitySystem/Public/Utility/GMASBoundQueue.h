@@ -24,7 +24,8 @@ USTRUCT(BlueprintType)
 struct FGMASBoundQueueOperationIdSet
 {
 	GENERATED_BODY()
-	
+
+	UPROPERTY()
 	TArray<int> Ids = {};
 };
 
@@ -54,6 +55,9 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueRPCHeader
 	FGMASBoundQueueOperationIdSet PayloadIds {};
 
 	UPROPERTY()
+	FInstancedStruct InstancedPayload {};
+
+	UPROPERTY()
 	float RPCGracePeriodSeconds { 1.f };
 };
 
@@ -73,11 +77,6 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 	// The instanced struct representation of this payload, used to actually
 	// bind for replication.
 	FInstancedStruct InstancedPayload;
-
-	// If true, this item must be replicated via GMC and thus preserved in the
-	// movement history. If false, this item can be sent via standard Unreal RPC
-	// separate from GMC.
-	bool bMovementSync { true };
 
 	EGMASBoundQueueOperationType GetOperationType() const
 	{
@@ -109,8 +108,18 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 	{
 		if (bDecodePayload)
 		{
-			Payload = InstancedPayload.template Get<T>();
-			Header.PayloadIds = InstancedPayloadIds.Get<FGMASBoundQueueOperationIdSet>();
+			// Incoming from remote.
+			Payload = Header.InstancedPayload.Get<T>();
+			if (Header.PayloadIds.Ids.Num() == 0 && InstancedPayloadIds.IsValid())
+			{
+				Header.PayloadIds = InstancedPayloadIds.Get<FGMASBoundQueueOperationIdSet>();
+			}
+		}
+		else
+		{
+			// Outgoing
+			Header.InstancedPayload = FInstancedStruct::Make<T>(Payload);
+			InstancedPayloadIds = FInstancedStruct::Make<FGMASBoundQueueOperationIdSet>(Header.PayloadIds);
 		}
 
 		if (Header.ItemClassName != NAME_None && !ItemClass)
@@ -118,6 +127,11 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 			// Get a handle to our class, for instancing purposes.
 			TSoftClassPtr<C> ClassPtr = TSoftClassPtr<C>(FSoftObjectPath(Header.ItemClassName.ToString()));
 			ItemClass = ClassPtr.LoadSynchronous();
+		}
+
+		if (ItemClass && Header.ItemClassName == NAME_None)
+		{
+			Header.ItemClassName = FName(ItemClass->GetPathName());
 		}
 	}
 	
@@ -177,7 +191,7 @@ public:
 	void BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 	{
 		const EGMC_PredictionMode Prediction = ClientAuth ? EGMC_PredictionMode::ClientAuth_Input : EGMC_PredictionMode::ServerAuth_Output_ClientValidated;
-		const EGMC_PredictionMode AckPrediction = ClientAuth ? EGMC_PredictionMode::ServerAuth_Output_ClientValidated : EGMC_PredictionMode::ClientAuth_Input;
+		const EGMC_PredictionMode AckPrediction = ClientAuth ? EGMC_PredictionMode::ServerAuth_Input_ClientValidated : EGMC_PredictionMode::ClientAuth_Input;
 		
 		Acknowledgments = FInstancedStruct::Make<FGMASBoundQueueAcknowledgements>(FGMASBoundQueueAcknowledgements());
 
@@ -226,7 +240,7 @@ public:
 			EGMC_InterpolationFunction::TargetValue);
 
 		BI_OperationPayload = MovementComponent->BindInstancedStruct(
-			CurrentOperation.InstancedPayload,
+			CurrentOperation.Header.InstancedPayload,
 			Prediction,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -245,6 +259,7 @@ public:
 		if (QueuedBoundOperations.Num() > 0 && ClientAuth)
 		{
 			CurrentOperation = QueuedBoundOperations.Pop();
+			CurrentOperation.Refresh(false);
 		}
 	}
 
@@ -253,6 +268,7 @@ public:
 		if (QueuedBoundOperations.Num() > 0 && !ClientAuth)
 		{
 			CurrentOperation = QueuedBoundOperations.Pop();
+			CurrentOperation.Refresh(false);
 		}
 	}
 
@@ -265,6 +281,8 @@ public:
 		CurrentOperation.Header.ItemClassName = NAME_None;
 		CurrentOperation.SetOperationType(EGMASBoundQueueOperationType::None);
 		CurrentOperation.Header.PayloadIds.Ids.Empty();
+		CurrentOperation.Payload = T();
+		CurrentOperation.Refresh(false);
 	}
 
 	void GenPredictionTick(float DeltaTime)
@@ -279,20 +297,12 @@ public:
 		NewOperation.SetOperationType(Type);
 		NewOperation.Header.Tag = Tag;
 		NewOperation.Payload = Payload;
-		NewOperation.InstancedPayload = FInstancedStruct::Make<T>(Payload);
 		NewOperation.ItemClass = ItemClass;
 		NewOperation.Header.RPCGracePeriodSeconds = RPCGracePeriod;
 		NewOperation.Header.PayloadIds.Ids = PayloadIds;
-		NewOperation.InstancedPayloadIds = FInstancedStruct::Make<FGMASBoundQueueOperationIdSet>(NewOperation.Header.PayloadIds);
 
-		if (ItemClass)
-		{
-			NewOperation.Header.ItemClassName = FName(ItemClass->GetPathName());
-		}
-		else
-		{
-			NewOperation.Header.ItemClassName = NAME_None;
-		}
+		NewOperation.Refresh(false);
+		
 		return NewOperation.GetOperationId();
 	}
 
@@ -330,6 +340,15 @@ public:
 		MakeOperation(NewOperation, Type, Tag, Payload, PayloadIds, ItemClass, RPCGracePeriod);
 		QueuePreparedOperation(NewOperation, bMovementSynced);		
 		return NewOperation.GetOperationId();
+	}
+
+	void QueueOperationFromHeader(const FGMASBoundQueueRPCHeader& Header, bool bMovementSynced)
+	{
+		TGMASBoundQueueOperation<C, T> NewOperation;
+
+		NewOperation.Header = Header;
+		NewOperation.Refresh(true);
+		QueuePreparedOperation(NewOperation, bMovementSynced);
 	}
 
 	int Num() const
