@@ -187,7 +187,6 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	
 	ClearAbilityAndTaskData();
 	bInGMCTime = false;
-	QueuedEffectOperations.ClearCurrentOperation();
 }
 
 
@@ -871,14 +870,16 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 		return;
 	}
 
-	// Handle our GMC-replicated effect operation, if any.
+	// Handle our GMC-replicated effect operation, if any. We can't actually replicate
+	// the message server-to-client via GMC, but we *can* preserve it in the move history in
+	// case it is relevant to replay.
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
 	if (QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation))
 	{
 		// Move this into our RPC queue to wait on acknowledgment.
 		QueuedEffectOperations.QueuePreparedOperation(BoundOperation, false);
 
-		// And send it via RPC, so that the client gets it, as the binding goes away at the end of the move.
+		// And send it via RPC, so that the client gets it.
 		ClientQueueEffectOperation(BoundOperation);
 	};
 
@@ -902,24 +903,8 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 
 void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 
-	// Handle our queued GMC-bound effect operation, if any.
-	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
-	if (QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation))
-	{
-		if (ShouldProcessEffectOperation(BoundOperation, false))
-		{
-			// Process and ack this.
-			ProcessEffectOperation(BoundOperation);
-			QueuedEffectOperations.Acknowledge(BoundOperation.GetOperationId());
-		}
-		else
-		{
-			// Toss it into the RPC queue until we're good; either way it's getting cleared after this.
-			QueuedEffectOperations.QueuePreparedOperation(BoundOperation, false);
-		}		
-	}
-
-	// Handle our 'Outer' RPC effect operations
+	// Handle our RPC effect operations. MoveCycle operations will be sent via RPC
+	// just like the Outer ones, but will be preserved in the movement history.
 	auto RPCOperations = QueuedEffectOperations.GetQueuedRPCOperations();
 	for (auto& Operation : RPCOperations) {
 		if (ShouldProcessEffectOperation(Operation, false))

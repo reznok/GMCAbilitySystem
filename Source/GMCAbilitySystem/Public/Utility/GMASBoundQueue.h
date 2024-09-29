@@ -190,8 +190,8 @@ public:
 
 	void BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 	{
-		const EGMC_PredictionMode Prediction = ClientAuth ? EGMC_PredictionMode::ClientAuth_Input : EGMC_PredictionMode::ServerAuth_Output_ClientValidated;
-		const EGMC_PredictionMode AckPrediction = ClientAuth ? EGMC_PredictionMode::ServerAuth_Input_ClientValidated : EGMC_PredictionMode::ClientAuth_Input;
+		const EGMC_PredictionMode Prediction = ClientAuth ? EGMC_PredictionMode::ClientAuth_Input : EGMC_PredictionMode::ServerAuth_Input_ClientValidated;
+		const EGMC_PredictionMode AckPrediction = ClientAuth ? EGMC_PredictionMode::ServerAuth_Output_ClientValidated : EGMC_PredictionMode::ClientAuth_Input;
 		
 		Acknowledgments = FInstancedStruct::Make<FGMASBoundQueueAcknowledgements>(FGMASBoundQueueAcknowledgements());
 
@@ -265,6 +265,7 @@ public:
 
 	void PreRemoteMovement()
 	{
+		ClearCurrentOperation();
 		if (QueuedBoundOperations.Num() > 0 && !ClientAuth)
 		{
 			CurrentOperation = QueuedBoundOperations.Pop();
