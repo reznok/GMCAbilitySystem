@@ -159,6 +159,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// Bind our operation queues.
 	QueuedAbilityOperations.BindToGMC(GMCMovementComponent);
 	QueuedEffectOperations.BindToGMC(GMCMovementComponent);
+	QueuedEffectOperations_ClientAuth.BindToGMC(GMCMovementComponent);
 	
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
@@ -178,7 +179,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 	// Check if we have a valid operation
 	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
-	if (QueuedAbilityOperations.GetCurrentBoundOperation(Operation))
+	if (QueuedAbilityOperations.GetCurrentBoundOperation(Operation, true))
 	{
 		ProcessAbilityOperation(Operation, false);
 	}
@@ -186,6 +187,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	SendTaskDataToActiveAbility(false);
 	
 	ClearAbilityAndTaskData();
+	QueuedEffectOperations_ClientAuth.ClearCurrentOperation();
 	bInGMCTime = false;
 }
 
@@ -558,10 +560,12 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	
 	// Was an ability used?
 	if (TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
-		QueuedAbilityOperations.GetCurrentBoundOperation(Operation))
+		QueuedAbilityOperations.GetCurrentBoundOperation(Operation, true))
 	{
 		ProcessAbilityOperation(Operation, true);
 	}
+
+	ServerHandlePredictedPendingEffect(DeltaTime);
 	
 	SendTaskDataToActiveAbility(true);
 }
@@ -588,7 +592,9 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 		TaskData = QueuedTaskData.Pop();
 	}
 
+	// Advance our client-auth queues.
 	QueuedAbilityOperations.PreLocalMovement();
+	QueuedEffectOperations_ClientAuth.PreLocalMovement();
 
 	if (GetNetMode() == NM_Standalone || GMCMovementComponent->IsLocallyControlledServerPawn())
 	{
@@ -599,6 +605,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 
 void UGMC_AbilitySystemComponent::PreRemoteMoveExecution()
 {
+	// Advance our server-auth queues.
 	QueuedEffectOperations.PreRemoteMovement();
 }
 
@@ -874,7 +881,7 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 	// the message server-to-client via GMC, but we *can* preserve it in the move history in
 	// case it is relevant to replay.
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
-	if (QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation))
+	if (QueuedEffectOperations.GetCurrentBoundOperation(BoundOperation, true))
 	{
 		// Move this into our RPC queue to wait on acknowledgment.
 		QueuedEffectOperations.QueuePreparedOperation(BoundOperation, false);
@@ -897,6 +904,25 @@ void UGMC_AbilitySystemComponent::ServerHandlePendingEffect(float DeltaTime) {
 			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
 		}
 	}
+}
+
+void UGMC_AbilitySystemComponent::ServerHandlePredictedPendingEffect(float DeltaTime)
+{
+	if (!HasAuthority()) return;
+	
+	// Check for any client-auth effects.
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
+	if (QueuedEffectOperations_ClientAuth.GetCurrentBoundOperation(BoundOperation, true))
+	{
+		ProcessEffectOperation(BoundOperation);
+	}
+
+	// Check for any queued-for-move predicted effects.
+	// We use the client auth effect queue's (otherwise-unused) RPC operations queue to avoid creating an entire new one.
+	while (QueuedEffectOperations_ClientAuth.PopNextRPCOperation(BoundOperation))
+	{
+		ProcessEffectOperation(BoundOperation);
+	}
 	
 }
 
@@ -914,7 +940,21 @@ void UGMC_AbilitySystemComponent::ClientHandlePendingEffect() {
 			QueuedEffectOperations.RemoveOperationById(Operation.GetOperationId());
 		}
 	}
+}
+
+void UGMC_AbilitySystemComponent::ClientHandlePredictedPendingEffect()
+{
+	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> BoundOperation;
+	if (QueuedEffectOperations_ClientAuth.GetCurrentBoundOperation(BoundOperation))
+	{
+		ProcessEffectOperation(BoundOperation);
+	}	
 	
+	// We use the client auth effect queue's (otherwise-unused) RPC operations queue to avoid creating an entire new one.
+	while (QueuedEffectOperations_ClientAuth.PopNextRPCOperation(BoundOperation))
+	{
+		ProcessEffectOperation(BoundOperation);
+	}
 }
 
 void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID, int TaskID)
@@ -1124,7 +1164,8 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
 	{
 		if (Operation.ItemClass == nullptr)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Attempting to process an add effect operation with no set class!"))
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to process an add effect operation with no set class!"),
+				*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName())
 		}
 		
 		UGMCAbilityEffect* Effect = DuplicateObject(Operation.ItemClass->GetDefaultObject<UGMCAbilityEffect>(), this);
@@ -1138,6 +1179,14 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
 		if (Operation.Header.PayloadIds.Ids.Num() > 0)
 		{
 			EffectData.EffectID = Operation.Header.PayloadIds.Ids[0];
+		}
+
+		if (EffectData.EffectID > 0 && ActiveEffects.Contains(EffectData.EffectID))
+		{
+			const auto& ExistingEffect = ActiveEffects[EffectData.EffectID];
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s attempted to process an explicit ID add effect operation for %s with existing effect %d [%s]"),
+				*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *Effect->GetClass()->GetName(), EffectData.EffectID, *ExistingEffect->GetClass()->GetName())
+			return nullptr;
 		}
 		
 		ApplyAbilityEffect(Effect, EffectData);
@@ -1255,7 +1304,8 @@ int UGMC_AbilitySystemComponent::CreateEffectOperation(
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation,
 	const TSubclassOf<UGMCAbilityEffect>& EffectClass,
 	const FGMCAbilityEffectData& EffectData,
-	bool bForcedEffectId)
+	bool bForcedEffectId,
+	EGMCAbilityEffectQueueType QueueType)
 {
 	TArray<int> PayloadIds {};
 
@@ -1278,7 +1328,7 @@ int UGMC_AbilitySystemComponent::CreateEffectOperation(
 		PayloadIds.Add(PayloadData.EffectID);
 	}
 
-	QueuedEffectOperations.MakeOperation(OutOperation, EGMASBoundQueueOperationType::Add, PayloadData.EffectTag, PayloadData, PayloadIds, EffectClass, 1.f);
+	QueuedEffectOperations.MakeOperation(OutOperation, EGMASBoundQueueOperationType::Add, PayloadData.EffectTag, PayloadData, PayloadIds, EffectClass, 1.f, static_cast<uint8>(QueueType));
 	return PayloadData.EffectID;
 }
 
@@ -1292,7 +1342,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 	}
 
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-	if (CreateEffectOperation(Operation, Effect, InitializationData, bOuterActivation) == -1)
+	if (CreateEffectOperation(Operation, Effect, InitializationData, bOuterActivation, bOuterActivation ? EGMCAbilityEffectQueueType::ServerAuth : EGMCAbilityEffectQueueType::Predicted) == -1)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s could not create an effect of type %s!"),
 			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *Effect->GetName())
@@ -1336,10 +1386,10 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		return false;
 	}
 
-	const bool bPregenerateEffectId = QueueType != EGMCAbilityEffectQueueType::Predicted;
+	const bool bPregenerateEffectId = QueueType != EGMCAbilityEffectQueueType::Predicted && QueueType != EGMCAbilityEffectQueueType::PredictedQueued;
 	
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-	const int EffectID = CreateEffectOperation(Operation, EffectClass, InitializationData, bPregenerateEffectId);
+	const int EffectID = CreateEffectOperation(Operation, EffectClass, InitializationData, bPregenerateEffectId, QueueType);
 	if (bPregenerateEffectId && EffectID == -1)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s could not create an effect of type %s!"),
@@ -1363,8 +1413,14 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			OutEffectId = OutEffect->EffectData.EffectID;
 			return true;
 		}
-	case EGMCAbilityEffectQueueType::MoveCycle:
-	case EGMCAbilityEffectQueueType::Outside:
+	case EGMCAbilityEffectQueueType::PredictedQueued:
+		{
+			// We utilize the ClientAuth queue's RPC queue for the sake of convenience.
+			QueuedEffectOperations_ClientAuth.QueuePreparedOperation(Operation, false);
+			return true;
+		}
+	case EGMCAbilityEffectQueueType::ServerAuthMove:
+	case EGMCAbilityEffectQueueType::ServerAuth:
 		{
 			if (!HasAuthority())
 			{
@@ -1373,16 +1429,30 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 				return false;
 			}
 
-			if (QueueType == EGMCAbilityEffectQueueType::MoveCycle) Operation.Header.RPCGracePeriodSeconds = 5.f;
+			if (QueueType == EGMCAbilityEffectQueueType::ServerAuthMove) Operation.Header.RPCGracePeriodSeconds = 5.f;
 
-			QueuedEffectOperations.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::MoveCycle);
+			QueuedEffectOperations.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::ServerAuthMove);
 
-			if (QueueType == EGMCAbilityEffectQueueType::Outside)
+			if (QueueType == EGMCAbilityEffectQueueType::ServerAuth)
 			{
 				// Queue for RPC and throw this to our client.
 				ClientQueueEffectOperation(Operation);
 			}
 			
+			OutEffectId = EffectID;
+			return true;
+		}
+
+	case EGMCAbilityEffectQueueType::ClientAuth:
+		{
+			if (GetNetMode() != NM_Standalone && !GMCMovementComponent->IsAutonomousProxy() && !GMCMovementComponent->IsLocallyControlledServerPawn())
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply client-auth effect %d of type %s on a server!"),
+					*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectID, *EffectClass->GetName())
+				return false;
+			}
+
+			QueuedEffectOperations_ClientAuth.QueuePreparedOperation(Operation, true);
 			OutEffectId = EffectID;
 			return true;
 		}
@@ -1519,7 +1589,8 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 	// check all IDs exists
 	for (int Id : Ids) {
 		if (!ActiveEffects.Contains(Id)) {
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Trying to remove effect with ID %d, but it doesn't exist!"), Id);
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove effect with ID %d, but it doesn't exist!"),
+				*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), Id);
 			return false;
 		}
 	}
@@ -1543,8 +1614,27 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 
 			return true;			
 		}
-	case EGMCAbilityEffectQueueType::MoveCycle:
-	case EGMCAbilityEffectQueueType::Outside:
+	case EGMCAbilityEffectQueueType::PredictedQueued:
+	case EGMCAbilityEffectQueueType::ClientAuth:
+		{
+			if (QueueType == EGMCAbilityEffectQueueType::ClientAuth)
+			{
+				if (GetNetMode() != NM_Standalone && (HasAuthority() && !GMCMovementComponent->IsLocallyControlledServerPawn()))
+				{
+					UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted a client-auth removal of %d effects on a server!"),
+						*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), Ids.Num())
+					return false;
+				}
+			}
+			
+			TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
+			FGMCAbilityEffectData Data;
+			QueuedEffectOperations_ClientAuth.MakeOperation(Operation, EGMASBoundQueueOperationType::Remove, FGameplayTag::EmptyTag, Data, Ids);
+			QueuedEffectOperations_ClientAuth.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::ClientAuth);
+			return true;
+		}
+	case EGMCAbilityEffectQueueType::ServerAuthMove:
+	case EGMCAbilityEffectQueueType::ServerAuth:
 		{
 			if (!HasAuthority())
 			{
@@ -1556,9 +1646,9 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 			TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
 			FGMCAbilityEffectData Data;
 			QueuedEffectOperations.MakeOperation(Operation, EGMASBoundQueueOperationType::Remove, FGameplayTag::EmptyTag, Data, Ids);
-			QueuedEffectOperations.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::MoveCycle);
+			QueuedEffectOperations.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::ServerAuthMove);
 			
-			if (QueueType == EGMCAbilityEffectQueueType::Outside)
+			if (QueueType == EGMCAbilityEffectQueueType::ServerAuth)
 			{
 				// Send the operation over to our client via standard RPC.
 				ClientQueueEffectOperation(Operation);
@@ -1577,7 +1667,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 bool UGMC_AbilitySystemComponent::RemoveEffectById(TArray<int> Ids, bool bOuterActivation) {
 
 	// Just hit up the newer version.
-	return RemoveEffectByIdSafe(Ids, bOuterActivation ? EGMCAbilityEffectQueueType::Outside : EGMCAbilityEffectQueueType::Predicted);
+	return RemoveEffectByIdSafe(Ids, bOuterActivation ? EGMCAbilityEffectQueueType::ServerAuth : EGMCAbilityEffectQueueType::Predicted);
 
 }
 

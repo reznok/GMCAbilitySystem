@@ -59,6 +59,9 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueRPCHeader
 
 	UPROPERTY()
 	float RPCGracePeriodSeconds { 1.f };
+
+	UPROPERTY()
+	uint8 ExtraFlags { 0 };
 };
 
 template<typename C, typename T>
@@ -122,6 +125,11 @@ struct GMCABILITYSYSTEM_API TGMASBoundQueueOperation
 			InstancedPayloadIds = FInstancedStruct::Make<FGMASBoundQueueOperationIdSet>(Header.PayloadIds);
 		}
 
+		RefreshClass();
+	}
+
+	void RefreshClass()
+	{
 		if (Header.ItemClassName != NAME_None && !ItemClass)
 		{
 			// Get a handle to our class, for instancing purposes.
@@ -178,6 +186,7 @@ public:
 	int BI_OperationType { -1 };
 	int BI_OperationTag { -1 };
 	int BI_OperationClass { -1 };
+	int BI_OperationExtraFlags { -1 };
 	int BI_OperationPayload { -1 };
 	int BI_OperationPayloadIds { -1 };
 	
@@ -246,6 +255,13 @@ public:
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
 
+		BI_OperationExtraFlags = MovementComponent->BindByte(
+			CurrentOperation.Header.ExtraFlags,
+			Prediction,
+			EGMC_CombineMode::CombineIfUnchanged,
+			EGMC_SimulationMode::Periodic_Output,
+			EGMC_InterpolationFunction::TargetValue);
+
 		BI_OperationPayloadIds = MovementComponent->BindInstancedStruct(
 			CurrentOperation.InstancedPayloadIds,
 			Prediction,
@@ -253,7 +269,7 @@ public:
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
 	}
-
+	
 	void PreLocalMovement()
 	{
 		if (QueuedBoundOperations.Num() > 0 && ClientAuth)
@@ -277,11 +293,14 @@ public:
 	
 	void ClearCurrentOperation()
 	{
-		CurrentOperation.Header.OperationId = -1;
-		CurrentOperation.Header.Tag = FGameplayTag::EmptyTag;
-		CurrentOperation.Header.ItemClassName = NAME_None;
-		CurrentOperation.SetOperationType(EGMASBoundQueueOperationType::None);
-		CurrentOperation.Header.PayloadIds.Ids.Empty();
+		CurrentOperation.Header = FGMASBoundQueueRPCHeader();
+		
+		// CurrentOperation.Header.OperationId = -1;
+		// CurrentOperation.Header.Tag = FGameplayTag::EmptyTag;
+		// CurrentOperation.Header.ItemClassName = NAME_None;
+		// CurrentOperation.SetOperationType(EGMASBoundQueueOperationType::None);
+		// CurrentOperation.Header.PayloadIds.Ids.Empty();
+		
 		CurrentOperation.Payload = T();
 		CurrentOperation.Refresh(false);
 	}
@@ -292,7 +311,7 @@ public:
 		ExpireStaleAcks(DeltaTime);
 	}
 
-	int32 MakeOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, float RPCGracePeriod = 1.f)
+	int32 MakeOperation(TGMASBoundQueueOperation<C, T>& NewOperation, EGMASBoundQueueOperationType Type, FGameplayTag Tag, const T& Payload, TArray<int> PayloadIds = {}, TSubclassOf<C> ItemClass = nullptr, float RPCGracePeriod = 1.f, uint8 ExtraFlags = 0)
 	{
 		NewOperation.Header.OperationId = GenerateOperationId();
 		NewOperation.SetOperationType(Type);
@@ -301,6 +320,7 @@ public:
 		NewOperation.ItemClass = ItemClass;
 		NewOperation.Header.RPCGracePeriodSeconds = RPCGracePeriod;
 		NewOperation.Header.PayloadIds.Ids = PayloadIds;
+		NewOperation.Header.ExtraFlags = ExtraFlags;
 
 		NewOperation.Refresh(false);
 		
@@ -440,17 +460,31 @@ public:
 		return false;
 	}
 	
-	bool GetCurrentBoundOperation(TGMASBoundQueueOperation<C, T>& Operation)
+	bool GetCurrentBoundOperation(TGMASBoundQueueOperation<C, T>& Operation, bool bRefresh = false)
 	{
 		Operation = CurrentOperation;
-
 		if (Operation.GetOperationType() != EGMASBoundQueueOperationType::None)
 		{
-			Operation.Refresh();
+			if (bRefresh)
+			{
+				Operation.Refresh(true);
+			}
+			else
+			{
+				Operation.RefreshClass();
+			}
 			return true;
 		}
 
 		return false;
+	}
+
+	bool PopNextRPCOperation(TGMASBoundQueueOperation<C, T>& Operation)
+	{
+		if (QueuedRPCOperations.Num() == 0) return false;
+
+		Operation = QueuedRPCOperations.Pop();
+		return true;
 	}
 
 	void DeductGracePeriod(float DeltaTime)

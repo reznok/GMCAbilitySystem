@@ -45,9 +45,24 @@ struct FEffectStatePrediction
 UENUM(BlueprintType)
 enum class EGMCAbilityEffectQueueType : uint8
 {
-	Predicted UMETA(DisplayName="Immediate [Predicted]", Tooltip="Predicted effect, goes into effect immediately, should be added on both client and server within the GMC movement cycle."),
-	Outside UMETA(DisplayName="RPC [Server Only]", ToolTip="Queues a server-authoritative effect to be added on clients. Can be used outside of the GMC movement cycle, but effects will not be actually active until the next GMC movement cycle, and they will not be preserved in the move history."),
-	MoveCycle UMETA(DisplayName="Movement Cycle [Server Only]", ToolTip="Queues a server-authoritative effect to be added as part of the next GMC movement cycle. Potentially slightly slower, but will preserve the effect in the move history.")
+	/// Immediately applied, only valid within the GMC movement cycle. Should be applied on both client and server.
+	Predicted UMETA(DisplayName="Predicted"),
+
+	/// Only valid on server; queued from server and sent to client via RPC. Valid even outside of the GMC movement cycle.
+	ServerAuth UMETA(DisplayName="Server Auth"),
+
+	/// Only valid on client; queued from client and sent to the server via GMC bindings. Valid even outside of the
+	/// GMC movement cycle. Should PROBABLY only be used for cosmetic effects!
+	ClientAuth UMETA(DisplayName="Client Auth"),
+
+	/// Predicted effect, not replicated but will be queued for addition in the next GMC movement cycle. Valid even
+	/// outside of the GMC movement cycle. Should be applied on both client and server. WILL NOT RETURN AN EFFECT ID. 
+	PredictedQueued UMETA(Hidden, DisplayName="ADVANCED: Predicted [Queued]"),
+
+	/// Only valid on server; queued from server and recorded in the GMC move history. Valid even outside of the GMC
+	/// movement cycle. Slower than ServerAuth, only use this if you really need to preserve the effect application in
+	/// the movement history.
+	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]")
 };
 
 class UGMCAbility;
@@ -226,7 +241,7 @@ public:
 	void OnRep_UnBoundAttributes();
 
 	int GetNextAvailableEffectID() const;
-	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true);
+	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 	
 	/**
 	 * Applies an effect to the Ability Component. If bOuterActivation is false, the effect will be immediately
@@ -507,6 +522,7 @@ private:
 	bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
 
 	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
+	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
 	UGMCAbilityEffect* ProcessEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
 
 	bool ShouldProcessEffectOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation, bool bIsServer = true) const;
@@ -585,8 +601,10 @@ private:
 	bool bInGMCTime = false;
 
 	void ServerHandlePendingEffect(float DeltaTime);
+	void ServerHandlePredictedPendingEffect(float DeltaTime);
 
 	void ClientHandlePendingEffect();
+	void ClientHandlePredictedPendingEffect();
 
 	int LateApplicationIDCounter = 0;
 
