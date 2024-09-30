@@ -806,6 +806,21 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		ActiveEffects.Remove(EffectID);
 		ActiveEffectsData.RemoveAll([EffectID](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == EffectID;});
 	}
+
+	// Clean effect handles
+	TArray<int> ExpiredHandles;
+	for (auto& [ID, HandleData] : EffectHandles)
+	{
+		if (HandleData.NetworkId > 0 && !ActiveEffects.Contains(HandleData.NetworkId))
+		{
+			ExpiredHandles.Add(HandleData.Handle);
+		}
+	}
+	for (const int& Handle : ExpiredHandles)
+	{
+		EffectHandles.Remove(Handle);
+	}
+	
 }
 
 void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
@@ -1190,6 +1205,16 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ProcessEffectOperation(
 		}
 		
 		ApplyAbilityEffect(Effect, EffectData);
+
+		for (auto& [EffectHandle, EffectHandleData] : EffectHandles)
+		{
+			// If we don't already have a known effect ID, attach it to our handle now.
+			if (EffectHandleData.NetworkId <= 0 && EffectHandleData.OperationId == Operation.Header.OperationId)
+			{
+				EffectHandleData.NetworkId = Effect->EffectData.EffectID;
+			}
+		}
+		
 		return Effect;
 	}
 
@@ -1368,18 +1393,75 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 	return ProcessEffectOperation(Operation);
 }
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass,
-	FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, bool& OutSuccess, int& OutEffectId,
-	UGMCAbilityEffect*& OutEffect)
+int32 UGMC_AbilitySystemComponent::GetNextAvailableEffectHandle() const
 {
-	OutSuccess = ApplyAbilityEffect(EffectClass, InitializationData, QueueType, OutEffectId, OutEffect);
+	if (ActionTimer == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[ApplyAbilityEffect] Action Timer is 0, cannot generate Effect ID. Is it a listen server smoothed pawn?"));
+		return -1;
+	}
+		
+	int NewEffectHandle = static_cast<int>(ActionTimer * 100);
+	while (EffectHandles.Contains(NewEffectHandle))
+	{
+		NewEffectHandle++;
+	}
+	
+	return NewEffectHandle;	
+}
+
+void UGMC_AbilitySystemComponent::GetEffectFromHandle_BP(int EffectHandle, bool& bOutSuccess, int32& OutEffectNetworkId,
+                                                         UGMCAbilityEffect*& OutEffect)
+{
+	bOutSuccess = GetEffectFromHandle(EffectHandle, OutEffectNetworkId, OutEffect);
+}
+
+bool UGMC_AbilitySystemComponent::GetEffectFromHandle(int EffectHandle, int32& OutEffectNetworkId,
+	UGMCAbilityEffect*& OutEffect) const
+{
+	FGMASQueueOperationHandle HandleData;
+
+	if (!GetEffectHandle(EffectHandle, HandleData)) return false;
+
+	OutEffectNetworkId = HandleData.NetworkId;
+	if (HandleData.NetworkId > 0)
+	{
+		OutEffect = ActiveEffects[HandleData.NetworkId];
+	}
+	return true;
+}
+
+bool UGMC_AbilitySystemComponent::GetEffectHandle(int EffectHandle, FGMASQueueOperationHandle& HandleData) const
+{
+	for (auto& [ID, Handle] : EffectHandles)
+	{
+		if (Handle.Handle == EffectHandle)
+		{
+			HandleData = Handle;
+			return true;
+		}
+	}
+	return false;
+}
+
+void UGMC_AbilitySystemComponent::RemoveEffectHandle(int EffectHandle)
+{
+	EffectHandles.Remove(EffectHandle);
+}
+
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass,
+                                                         FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, bool& OutSuccess, int& OutEffectHandle, int& OutEffectId,
+                                                         UGMCAbilityEffect*& OutEffect)
+{
+	OutSuccess = ApplyAbilityEffect(EffectClass, InitializationData, QueueType, OutEffectHandle, OutEffectId, OutEffect);
 }
 
 bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass,
-                                                         FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectId, UGMCAbilityEffect*& OutEffect)
+                                                         FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect)
 {
 	OutEffect = nullptr;
 	OutEffectId = -1;
+	OutEffectHandle = -1;
 	if (EffectClass == nullptr)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
@@ -1396,6 +1478,12 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *EffectClass->GetName())
 		return false;
 	}
+
+	FGMASQueueOperationHandle HandleData;
+	HandleData.Handle = GetNextAvailableEffectHandle();
+	HandleData.NetworkId = EffectID;
+	HandleData.OperationId = Operation.Header.OperationId;
+	EffectHandles.Add(HandleData.Handle, HandleData);
 	
 	switch(QueueType)
 	{
@@ -1411,12 +1499,23 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			// Apply effect immediately.
 			OutEffect = ProcessEffectOperation(Operation);
 			OutEffectId = OutEffect->EffectData.EffectID;
+			OutEffectHandle = HandleData.Handle;
 			return true;
 		}
 	case EGMCAbilityEffectQueueType::PredictedQueued:
 		{
-			// We utilize the ClientAuth queue's RPC queue for the sake of convenience.
-			QueuedEffectOperations_ClientAuth.QueuePreparedOperation(Operation, false);
+			if (GMCMovementComponent->IsExecutingMove())
+			{
+				// We're in a move context, just add it directly rather than queuing.
+				OutEffect = ProcessEffectOperation(Operation);
+				OutEffectId = OutEffect->EffectData.EffectID;
+			}
+			else
+			{
+				// We utilize the ClientAuth queue's RPC queue for the sake of convenience.
+				QueuedEffectOperations_ClientAuth.QueuePreparedOperation(Operation, false);
+			}
+			OutEffectHandle = HandleData.Handle;
 			return true;
 		}
 	case EGMCAbilityEffectQueueType::ServerAuthMove:
@@ -1440,6 +1539,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			}
 			
 			OutEffectId = EffectID;
+			OutEffectHandle = HandleData.Handle;
 			return true;
 		}
 
@@ -1661,6 +1761,18 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted a removal of effects but something went horribly wrong!"),
 		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName())
 	return false;
+}
+
+bool UGMC_AbilitySystemComponent::RemoveEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType)
+{
+	int32 EffectID;
+	UGMCAbilityEffect* Effect;
+	if (GetEffectFromHandle(EffectHandle, EffectID, Effect) && EffectID > 0)
+	{
+		return RemoveEffectByIdSafe({ EffectID }, QueueType);
+	}
+	
+	return false;	
 }
 
 

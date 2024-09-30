@@ -42,26 +42,42 @@ struct FEffectStatePrediction
 	uint8 State;
 };
 
+USTRUCT()
+struct FGMASQueueOperationHandle
+{
+	GENERATED_BODY()
+	
+	UPROPERTY()
+	int32 Handle { -1 };
+
+	UPROPERTY()
+	int32 OperationId { -1 };
+	
+	UPROPERTY()
+	int32 NetworkId { -1 };
+};
+
 UENUM(BlueprintType)
 enum class EGMCAbilityEffectQueueType : uint8
 {
 	/// Immediately applied, only valid within the GMC movement cycle. Should be applied on both client and server.
 	Predicted UMETA(DisplayName="Predicted"),
 
+	/// Predicted effect, not replicated but will be queued for addition in the next GMC movement cycle. Valid even
+	/// outside of the GMC movement cycle. Should be applied on both client and server. If used during the GMC
+	/// movement cycle, this is silently turned into Predicted.
+	PredictedQueued UMETA(DisplayName="Predicted [Queued]"),
+
 	/// Only valid on server; queued from server and sent to client via RPC. Valid even outside of the GMC movement cycle.
 	ServerAuth UMETA(DisplayName="Server Auth"),
 
 	/// Only valid on client; queued from client and sent to the server via GMC bindings. Valid even outside of the
-	/// GMC movement cycle. Should PROBABLY only be used for cosmetic effects!
-	ClientAuth UMETA(DisplayName="Client Auth"),
-
-	/// Predicted effect, not replicated but will be queued for addition in the next GMC movement cycle. Valid even
-	/// outside of the GMC movement cycle. Should be applied on both client and server. WILL NOT RETURN AN EFFECT ID. 
-	PredictedQueued UMETA(Hidden, DisplayName="ADVANCED: Predicted [Queued]"),
+	/// GMC movement cycle. You almost certainly don't want to use this, but it's here for the sake of completeness.
+	ClientAuth UMETA(Hidden, DisplayName="Client Auth"),
 
 	/// Only valid on server; queued from server and recorded in the GMC move history. Valid even outside of the GMC
 	/// movement cycle. Slower than ServerAuth, only use this if you really need to preserve the effect application in
-	/// the movement history.
+	/// the movement history. you almost certainly don't want to use this, but it's here for the sake of completeness.
 	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]")
 };
 
@@ -264,7 +280,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Apply Ability Effect")
 	void ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType,
-		UPARAM(DisplayName="Success") bool& OutSuccess, UPARAM(DisplayName="Effect ID") int& OutEffectId, UPARAM(DisplayName="Effect Instance") UGMCAbilityEffect*& OutEffect);
+		UPARAM(DisplayName="Success") bool& OutSuccess, UPARAM(DisplayName="Effect Handle") int& OutEffectHandle, UPARAM(DisplayName="Effect Network ID") int& OutEffectId, UPARAM(DisplayName="Effect Instance") UGMCAbilityEffect*& OutEffect);
 
 	/**
 	 * Applies an effect to the ability component. If the Queue Type is Predicted, the effect will be immediately added
@@ -274,11 +290,12 @@ public:
 	 * @param EffectClass The class of ability effect to add.
 	 * @param InitializationData The initialization data for the ability effect.
 	 * @param QueueType How to queue the effect.
-	 * @param OutEffectId The newly-created effect's ID, if successful.
-	 * @param OutEffect The newly-created effect instance, if a predicted add.
+	 * @param OutEffectHandle A local handle to this effect, only valid locally.
+	 * @param OutEffectId The newly-created effect's network ID, if one is available. Valid across server/client.
+	 * @param OutEffect The newly-created effect instance, if available.
 	 * @return true if the effect was applied, false otherwise.
 	 */
-	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
+	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
@@ -324,6 +341,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effects by Id (Safe)")
 	bool RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effect by Handle")
+	bool RemoveEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType);
 	
 	/**
 	 * Gets the number of active effects with the inputted tag.
@@ -596,6 +615,19 @@ private:
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
+	UPROPERTY()
+	TMap<int, FGMASQueueOperationHandle> EffectHandles;
+
+	int GetNextAvailableEffectHandle() const;
+
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	void GetEffectFromHandle_BP(int EffectHandle, bool& bOutSuccess, int32& OutEffectNetworkId, UGMCAbilityEffect*& OutEffect);
+	
+	bool GetEffectFromHandle(int EffectHandle, int32& OutEffectNetworkId, UGMCAbilityEffect*& OutEffect) const;
+	bool GetEffectHandle(int EffectHandle, FGMASQueueOperationHandle& HandleData) const;
+
+	void RemoveEffectHandle(int EffectHandle);
+	
 	// doesn't work ATM.
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInGMCTime = false;
