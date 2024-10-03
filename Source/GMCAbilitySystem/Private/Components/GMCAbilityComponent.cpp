@@ -808,17 +808,15 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	}
 
 	// Clean effect handles
-	TArray<int> ExpiredHandles;
-	for (auto& [ID, HandleData] : EffectHandles)
+	TArray<int> CurrentHandles;
+	EffectHandles.GetKeys(CurrentHandles);
+	for (const int Handle : CurrentHandles)
 	{
-		if (HandleData.NetworkId > 0 && !ActiveEffects.Contains(HandleData.NetworkId))
+		const auto& Data = EffectHandles[Handle];
+		if (Data.NetworkId > 0 && !ActiveEffects.Contains(Data.NetworkId))
 		{
-			ExpiredHandles.Add(HandleData.Handle);
+			EffectHandles.Remove(Handle);
 		}
-	}
-	for (const int& Handle : ExpiredHandles)
-	{
-		EffectHandles.Remove(Handle);
 	}
 	
 }
@@ -1558,7 +1556,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		}
 	}
 
-	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply effect %s of type %s but something has gone BADLY wrong!"),
+	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply effect of type %s but something has gone BADLY wrong!"),
 		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *EffectClass->GetName())
 	return false;
 }
