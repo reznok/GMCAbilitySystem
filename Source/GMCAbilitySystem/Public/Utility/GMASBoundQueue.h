@@ -213,61 +213,74 @@ public:
 			EGMC_InterpolationFunction::TargetValue
 			);
 
-		BI_Acknowledgements = MovementComponent->BindInstancedStruct(
-			Acknowledgments,
-			AckPrediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::None,
-			EGMC_InterpolationFunction::TargetValue);
-		
-		BI_OperationId = MovementComponent->BindInt(
-			CurrentOperation.Header.OperationId,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+		if (!ClientAuth)
+		{
+			// Acknowledgements are bound client-auth for server-auth effects.
+			BI_Acknowledgements = MovementComponent->BindInstancedStruct(
+				Acknowledgments,
+				AckPrediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::None,
+				EGMC_InterpolationFunction::TargetValue);
+		}
+		else
+		{
+			// For client-auth stuff, we bind the individual pieces of the queue.
+			// We will probably not use this often (if ever), but it exists just-in-case.
+			
+			BI_OperationId = MovementComponent->BindInt(
+				CurrentOperation.Header.OperationId,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationType = MovementComponent->BindByte(
-			CurrentOperation.Header.OperationTypeRaw,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationType = MovementComponent->BindByte(
+				CurrentOperation.Header.OperationTypeRaw,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationTag = MovementComponent->BindGameplayTag(
-			CurrentOperation.Header.Tag,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationTag = MovementComponent->BindGameplayTag(
+				CurrentOperation.Header.Tag,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationClass = MovementComponent->BindName(
-			CurrentOperation.Header.ItemClassName,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationClass = MovementComponent->BindName(
+				CurrentOperation.Header.ItemClassName,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationPayload = MovementComponent->BindInstancedStruct(
-			CurrentOperation.Header.InstancedPayload,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationPayload = MovementComponent->BindInstancedStruct(
+				CurrentOperation.Header.InstancedPayload,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationExtraFlags = MovementComponent->BindByte(
-			CurrentOperation.Header.ExtraFlags,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationExtraFlags = MovementComponent->BindByte(
+				CurrentOperation.Header.ExtraFlags,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
 
-		BI_OperationPayloadIds = MovementComponent->BindInstancedStruct(
-			CurrentOperation.InstancedPayloadIds,
-			Prediction,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
+			BI_OperationPayloadIds = MovementComponent->BindInstancedStruct(
+				CurrentOperation.InstancedPayloadIds,
+				Prediction,
+				EGMC_CombineMode::CombineIfUnchanged,
+				EGMC_SimulationMode::Periodic_Output,
+				EGMC_InterpolationFunction::TargetValue);
+		}
+
+		CurrentOperation = TGMASBoundQueueOperation<C, T>();
+		CurrentOperation.Header = FGMASBoundQueueRPCHeader();
+		CurrentOperation.Refresh(false);
 	}
 	
 	void PreLocalMovement()
