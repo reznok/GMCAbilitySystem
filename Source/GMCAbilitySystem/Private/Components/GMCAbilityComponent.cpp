@@ -1314,7 +1314,7 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	}
 		
 	int NewEffectID = static_cast<int>(ActionTimer * 100);
-	while (ActiveEffects.Contains(NewEffectID))
+	while (ActiveEffects.Contains(NewEffectID) || QueuedEffectOperations.HasOperationWithPayloadId(NewEffectID) || QueuedEffectOperations_ClientAuth.HasOperationWithPayloadId(NewEffectID))
 	{
 		NewEffectID++;
 	}

@@ -437,6 +437,27 @@ public:
 		return false;
 	}
 
+	bool HasOperationWithPayloadId(int32 PayloadId) const
+	{
+		for (const auto& Operation : QueuedBoundOperations)
+		{
+			if (Operation.GetPayloadIds().Contains(PayloadId))
+			{
+				return true;
+			}
+		}
+
+		for (const auto& Operation : QueuedRPCOperations)
+		{
+			if (Operation.GetPayloadIds().Contains(PayloadId))
+			{
+				return true;
+			}
+		}
+
+		return false;		
+	}
+
 	bool RemoveOperationById(int32 OperationId)
 	{
 		int TargetIdx = -1;
