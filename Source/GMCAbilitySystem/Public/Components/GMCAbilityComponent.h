@@ -257,6 +257,7 @@ public:
 	void OnRep_UnBoundAttributes();
 
 	int GetNextAvailableEffectID() const;
+	bool CheckIfEffectIDQueued(int EffectID) const;
 	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 	
 	/**

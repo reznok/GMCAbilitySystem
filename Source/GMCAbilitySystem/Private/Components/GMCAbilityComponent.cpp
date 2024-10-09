@@ -1314,13 +1314,34 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	}
 		
 	int NewEffectID = static_cast<int>(ActionTimer * 100);
-	while (ActiveEffects.Contains(NewEffectID) || QueuedEffectOperations.HasOperationWithPayloadId(NewEffectID) || QueuedEffectOperations_ClientAuth.HasOperationWithPayloadId(NewEffectID))
+	while (ActiveEffects.Contains(NewEffectID) || CheckIfEffectIDQueued(NewEffectID))
 	{
 		NewEffectID++;
 	}
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), NewEffectID);
 	
 	return NewEffectID;
+}
+
+bool UGMC_AbilitySystemComponent::CheckIfEffectIDQueued(int EffectID) const
+{
+	for (const auto& Operation : QueuedEffectOperations.GetQueuedRPCOperations())
+	{
+		if (Operation.Payload.EffectID == EffectID)
+		{
+			return true;
+		}
+	}
+
+	for (const auto& Operation : QueuedEffectOperations_ClientAuth.GetQueuedRPCOperations())
+	{
+		if (Operation.Payload.EffectID == EffectID)
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 int UGMC_AbilitySystemComponent::CreateEffectOperation(

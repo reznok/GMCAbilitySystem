@@ -302,7 +302,18 @@ public:
 		}
 	}
 
-	int32 GenerateOperationId() const { return ActionTimer * 100; }
+	int32 GenerateOperationId() const
+	{
+		int32 NewOperationId = ActionTimer * 100;
+
+		TGMASBoundQueueOperation<C, T> Operation;
+		
+		if (GetOperationById(NewOperationId, Operation))
+		{
+			NewOperationId++;
+		}
+		return NewOperationId;
+	}
 	
 	void ClearCurrentOperation()
 	{
