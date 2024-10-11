@@ -308,7 +308,7 @@ public:
 
 		TGMASBoundQueueOperation<C, T> Operation;
 		
-		if (GetOperationById(NewOperationId, Operation))
+		while (GetOperationById(NewOperationId, Operation))
 		{
 			NewOperationId++;
 		}
@@ -427,7 +427,7 @@ public:
 
 	bool GetOperationById(int32 OperationId, TGMASBoundQueueOperation<C, T>& OutOperation) const
 	{
-		for (const auto& Operation : QueuedBoundOperations)
+		for (const auto& Operation : GetQueuedOperations())
 		{
 			if (Operation.GetOperationId() == OperationId)
 			{
@@ -436,7 +436,7 @@ public:
 			}
 		}
 
-		for (const auto& Operation : QueuedRPCOperations)
+		for (const auto& Operation : GetQueuedRPCOperations())
 		{
 			if (Operation.GetOperationId() == OperationId)
 			{

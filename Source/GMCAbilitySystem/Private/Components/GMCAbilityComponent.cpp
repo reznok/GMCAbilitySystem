@@ -1372,7 +1372,14 @@ int UGMC_AbilitySystemComponent::CreateEffectOperation(
 		PayloadIds.Add(PayloadData.EffectID);
 	}
 
-	QueuedEffectOperations.MakeOperation(OutOperation, EGMASBoundQueueOperationType::Add, PayloadData.EffectTag, PayloadData, PayloadIds, EffectClass, 1.f, static_cast<uint8>(QueueType));
+	if (QueueType == EGMCAbilityEffectQueueType::PredictedQueued || QueueType == EGMCAbilityEffectQueueType::ClientAuth)
+	{
+		QueuedEffectOperations_ClientAuth.MakeOperation(OutOperation, EGMASBoundQueueOperationType::Add, PayloadData.EffectTag, PayloadData, PayloadIds, EffectClass, 1.f, static_cast<uint8>(QueueType));
+	}
+	else
+	{
+		QueuedEffectOperations.MakeOperation(OutOperation, EGMASBoundQueueOperationType::Add, PayloadData.EffectTag, PayloadData, PayloadIds, EffectClass, 1.f, static_cast<uint8>(QueueType));
+	}
 	return PayloadData.EffectID;
 }
 
