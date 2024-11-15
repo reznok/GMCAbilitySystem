@@ -155,8 +155,7 @@ struct FGMCUnboundAttributeSet : public FFastArraySerializer
 
 	void AddAttribute(const FAttribute& NewAttribute)
 	{
-		Items.Add(NewAttribute);
-		MarkArrayDirty();
+		MarkItemDirty(Items.Add_GetRef(NewAttribute));
 	}
 
 	TArray<FAttribute> GetAttributes() const

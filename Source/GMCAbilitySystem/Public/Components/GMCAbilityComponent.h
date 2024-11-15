@@ -219,6 +219,8 @@ public:
 	UFUNCTION()
 	void OnRep_UnBoundAttributes();
 
+	void CheckUnBoundAttributeChanges();
+
 	/**
 	 * Applies an effect to the Ability Component
 	 *

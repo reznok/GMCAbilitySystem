@@ -616,6 +616,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 void UGMC_AbilitySystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	
 	InitializeStartingAbilities();
 	InitializeAbilityMap();
 	SetStartingTags();
@@ -625,6 +626,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 {
 	BoundAttributes = FGMCAttributeSet();
 	UnBoundAttributes = FGMCUnboundAttributeSet();
+	OldUnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
 	// Loop through each of the data assets inputted into the component to create new attributes.
@@ -645,15 +647,9 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			if(AttributeData.bGMCBound){
 				BoundAttributes.AddAttribute(NewAttribute);
 			}
-			else if (GetOwnerRole() == ROLE_Authority || GetNetMode() == NM_Standalone) {
-				// FFastArraySerializer will duplicate all attributes on first replication if we
-				// add the attributes on the clients as well.
-				UnBoundAttributes.AddAttribute(NewAttribute);
-				
-			}
-			
-			if (!AttributeData.bGMCBound) {
+			else {
 				// Initiate old unbound attributes
+				UnBoundAttributes.AddAttribute(NewAttribute);
 				OldUnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
@@ -677,7 +673,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	{
 		Attribute.CalculateValue();
 	}
-
+	
 	OldBoundAttributes = BoundAttributes;
 }
 
@@ -1165,32 +1161,32 @@ void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OnRep_UnBoundAttributes: Mismatched Attribute Old != New Value !"));
 	}
 
+	CheckUnBoundAttributeChanges();
+	
+}
+
+void UGMC_AbilitySystemComponent::CheckUnBoundAttributeChanges()
+{
 	TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
 	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
 	TMap<FGameplayTag, float*> OldValues;
 
 	// If this mitchmatch, that mean we need to reset the number of attributes
-
 	
 	for (FAttribute& Attribute : OldAttributes){
 		OldValues.Add(Attribute.Tag, &Attribute.Value);
 	}
-
 	
-
 	for (const FAttribute& Attribute : CurrentAttributes){
 		if (OldValues.Contains(Attribute.Tag) && *OldValues[Attribute.Tag] != Attribute.Value){
 			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
 			OnAttributeChanged.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
-			UnBoundAttributes.MarkAttributeDirty(Attribute);
 
 			// Update Old Value
 			*OldValues[Attribute.Tag] = Attribute.Value;
 		}
 	}
-
-	
 }
 
 //BP Version
@@ -1435,6 +1431,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 		}
 
 		Att->CalculateValue();
+		UnBoundAttributes.MarkAttributeDirty(*Att);
 		return true;
 	}
 	return false;
@@ -1503,8 +1500,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 	
 	if (const FAttribute* AffectedAttribute = GetAttributeByTag(AttributeModifier.AttributeTag))
 	{
-		// If we are unbound that means we shouldn't predict.
+		// If attribute is unbound and this is the client that means we shouldn't predict.
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
+		
 		float OldValue = AffectedAttribute->Value;
 		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
@@ -1519,16 +1517,14 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		{
 			OnAttributeChanged.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
 			NativeAttributeChangeDelegate.Broadcast(AffectedAttribute->Tag, OldValue, AffectedAttribute->Value);
-		}
 
-		BoundAttributes.MarkAttributeDirty(*AffectedAttribute);
-		UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
-		if (!AffectedAttribute->bIsGMCBound) {
-			OnRep_UnBoundAttributes();
+			if (!AffectedAttribute->bIsGMCBound)
+			{
+				UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
+			}
 		}
 	}
 }
-
 // ReplicatedProps
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
