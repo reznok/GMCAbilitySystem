@@ -15,25 +15,18 @@ FGameplayDebuggerCategory_GMCAbilitySystem::FGameplayDebuggerCategory_GMCAbility
 
 void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* OwnerPC, AActor* DebugActor)
 {
-	if (OwnerPC)
+	if (DebugActor)
 	{
-		if (OwnerPC->GetPawn())
-		{
-			DataPack.ActorName = OwnerPC->GetPawn()->GetName();
+		DataPack.ActorName = DebugActor->GetName();
 
-			if (const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>())
-			{
-				DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
-				DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
-				DataPack.Attributes = AbilityComponent->GetAllAttributesString();
-				DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
-				DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
-				DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
-			}
-		}
-		else
+		if (const UGMC_AbilitySystemComponent* AbilityComponent = DebugActor->FindComponentByClass<UGMC_AbilitySystemComponent>())
 		{
-			DataPack.ActorName = TEXT("Spectator or missing pawn");
+			DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
+			DataPack.ActiveTags = AbilityComponent->GetActiveTags().ToStringSimple();
+			DataPack.Attributes = AbilityComponent->GetAllAttributesString();
+			DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
+			DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
+			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
 		}
 	}
 }
@@ -41,11 +34,13 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* OwnerPC,
 	FGameplayDebuggerCanvasContext& CanvasContext)
 {
+	const AActor* LocalDebugActor = FindLocalDebugActor();
+	const UGMC_AbilitySystemComponent* AbilityComponent = LocalDebugActor ? LocalDebugActor->FindComponentByClass<UGMC_AbilitySystemComponent>() : nullptr;
+	if (AbilityComponent == nullptr) return;
+	
 	if (!DataPack.ActorName.IsEmpty())
 	{
 		CanvasContext.Printf(TEXT("{yellow}Actor name: {white}%s"), *DataPack.ActorName);
-		const UGMC_AbilitySystemComponent* AbilityComponent = OwnerPC->GetPawn() ? OwnerPC->GetPawn()->FindComponentByClass<UGMC_AbilitySystemComponent>() : nullptr;
-		if (AbilityComponent == nullptr) return;
 
 		// Abilities
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Granted Abilities: {white}%s"), *DataPack.GrantedAbilities);
