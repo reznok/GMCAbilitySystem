@@ -1,9 +1,11 @@
 ﻿#pragma once
+
 #include "GameplayTagContainer.h"
 #include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
+
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
 
@@ -30,36 +32,36 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY()
 	mutable float DivisionModifier{1};
 
-	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue) const
+	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue, int EffectStackCount) const
 	{
 		switch(Modifier.ModifierType)
 		{
 		case EModifierType::Add:
 			if (bModifyBaseValue)
 			{
-				BaseValue += Modifier.Value;
+				BaseValue += Modifier.Value*EffectStackCount;
 				BaseValue = Clamp.ClampValue(BaseValue);
 			}
 			else
 			{
-				AdditiveModifier += Modifier.Value;
+				AdditiveModifier += Modifier.Value*EffectStackCount;
 			}
 			break;
 		case EModifierType::Multiply:
-			MultiplyModifier += Modifier.Value;
+			MultiplyModifier += Modifier.Value*EffectStackCount;
 			break;
 		case EModifierType::Divide:
-			DivisionModifier += Modifier.Value;
+			DivisionModifier += Modifier.Value*EffectStackCount;
 			break;
 		default:
 			break;
 		}
 		
-		CalculateValue();
+		CalculateValue(true,EffectStackCount);
 		
 	}
 
-	void CalculateValue(bool bClamp = true) const
+	void CalculateValue(bool bClamp = true,  int EffectStackCount = 1) const
 	{
 		// Prevent divide by 0 and negative divisors
 		float LocalDivisionModifier = DivisionModifier;
@@ -155,8 +157,7 @@ struct FGMCUnboundAttributeSet : public FFastArraySerializer
 
 	void AddAttribute(const FAttribute& NewAttribute)
 	{
-		Items.Add(NewAttribute);
-		MarkArrayDirty();
+		MarkItemDirty(Items.Add_GetRef(NewAttribute));
 	}
 
 	TArray<FAttribute> GetAttributes() const

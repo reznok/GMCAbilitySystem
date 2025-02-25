@@ -8,18 +8,70 @@
 #include "Kismet/KismetSystemLibrary.h"
 
 
+FAbilityEffectSpec::FAbilityEffectSpec()
+{
+}
+
+FAbilityEffectSpecForRPC::FAbilityEffectSpecForRPC()
+{
+}
+
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
 {
 	EffectData = InitializationData;
-	
 	OwnerAbilityComponent = EffectData.OwnerAbilityComponent;
 	SourceAbilityComponent = EffectData.SourceAbilityComponent;
+	
 
 	if (OwnerAbilityComponent == nullptr)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OwnerAbilityComponent is null in UGMCAbilityEffect::InitializeEffect"));
 		return;
 	}
+	
+	AActor* OwningActor = OwnerAbilityComponent->GetOwner();
+	if (OwningActor)
+	{
+		if (OwningActor->HasAuthority()) // Server
+		{
+
+				
+		}
+		else // Client
+		{
+			if(InitializationData.GameCues.IsEmpty())
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("NO CUES"));
+
+			}else
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("CUES"));
+
+			}
+		}
+	}
+
+
+	EffectData.GameCues = GameCues;
+
+	if (StackingType != EAbilityEffectStackingType::None)
+	{
+
+		if(StackingType == EAbilityEffectStackingType::AggregateByTarget){
+		TArray<UGMCAbilityEffect*> ActiveEffects = OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
+
+		if (ActiveEffects.Num() > 0)
+		{
+			// Apply stacking logic
+			UGMCAbilityEffect* ExistingEffect = ActiveEffects[0];
+			ExistingEffect->HandleStacking(this);
+			return; // Exit early, as the new effect is merged into the existing one
+		}
+			}
+	}
+
+
+	
 	
 	ClientEffectApplicationTime = OwnerAbilityComponent->ActionTimer;
 
@@ -50,6 +102,37 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 }
 
+void UGMCAbilityEffect::HandleStacking(UGMCAbilityEffect* NewEffect)
+{
+
+
+	
+	// Increment stack count
+	if ( StackLimitCount > 0 && EffectStackCount < NewEffect->StackLimitCount && EffectStackCount < StackLimitCount )
+	{
+		int32 oldStack = EffectStackCount;
+		EffectStackCount++;
+		OnStackCountChange(this, oldStack,EffectStackCount);
+		
+	}
+
+	EffectData.StackCount = EffectStackCount;
+
+	
+	// Apply stacking behavior to each modifier
+
+
+	// Refresh duration or reset period based on stacking policies
+	if (NewEffect->StackDurationRefreshPolicy == EAbilityEffectStackingDurationPolicy::RefreshOnSuccessfulApplication)
+	{
+		EffectData.EndTime = OwnerAbilityComponent->ActionTimer + EffectData.Duration;
+	}
+
+	if (NewEffect->StackPeriodResetPolicy == EAbilityEffectStackingPeriodPolicy::ResetOnSuccessfulApplication)
+	{
+		PrevPeriodMod = 0; // Reset period tracking
+	}
+}
 
 void UGMCAbilityEffect::StartEffect()
 {
@@ -67,6 +150,7 @@ void UGMCAbilityEffect::StartEffect()
 	
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
+	PlayQueue();
 	EndActiveAbilitiesFromOwner();
 
 	// Instant effects modify base value and end instantly
@@ -74,11 +158,13 @@ void UGMCAbilityEffect::StartEffect()
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true, false, SourceAbilityComponent,EffectStackCount);
 		}
 		EndEffect();
 		return;
 	}
+
+	
 
 	// Duration Effects that aren't periodic alter modifiers, not base
 	if (!EffectData.bIsInstant && EffectData.Period == 0)
@@ -86,7 +172,7 @@ void UGMCAbilityEffect::StartEffect()
 		EffectData.bNegateEffectAtEnd = true;
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, false, SourceAbilityComponent,EffectStackCount);
 		}
 	}
 
@@ -108,30 +194,60 @@ void UGMCAbilityEffect::StartEffect()
 
 void UGMCAbilityEffect::EndEffect()
 {
-	// Prevent EndEffect from being called multiple times
 	if (bCompleted) return;
-	
 	bCompleted = true;
-	if (CurrentState != EGMASEffectState::Ended)
+
+	// Handle stack expiration policy
+	if (StackExpirationPolicy == EAbilityEffectStackingExpirationPolicy::RemoveSingleStackAndRefreshDuration)
 	{
-		UpdateState(EGMASEffectState::Ended, true);
+
+		int32 oldStack = EffectStackCount;
+		EffectStackCount--;
+		
+		OnStackCountChange(this, oldStack,EffectStackCount);
+		
+	
+		if (EffectStackCount > 0)
+		{
+			// Refresh duration and continue
+			EffectData.EndTime = OwnerAbilityComponent->ActionTimer + EffectData.Duration;
+			bCompleted = false;
+			return;
+		}
 	}
 
-	// Only remove tags and abilities if the effect has started
-	if (!bHasStarted) return;
-
+	// Normal cleanup for expired effects
 	if (EffectData.bNegateEffectAtEnd)
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, true,SourceAbilityComponent, EffectStackCount);
 		}
 	}
+
+	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
+	FAbilityEffectRemovalInfo RemovalInfo;
+    
 	
-	RemoveTagsFromOwner();
+	RemovalInfo.bPrematureRemoval = true; 
+	RemovalInfo.StackCount = EffectStackCount;
+	RemovalInfo.EffectContextActor = OwnerAbilityComponent->GetOwner();
+	RemovalInfo.ActiveEffect = this;
+    
+	auto Delegate = OwnerAbilityComponent->OnAbilityEffectRemovedDelegate(EffectData.EffectID);
+	if (Delegate != nullptr)
+	{
+		Delegate->Broadcast(RemovalInfo);
+	}
+	else
+	{
+		// Log the failure to find the delegate and handle it appropriately
+		UE_LOG(LogTemp, Warning, TEXT("Delegate for EffectID %d not found!"), EffectData.EffectID);
+	}
+
+
 	RemoveAbilitiesFromOwner();
 }
-
 
 void UGMCAbilityEffect::BeginDestroy() {
 
@@ -163,6 +279,8 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	if (bCompleted) return;
 	EffectData.CurrentDuration += DeltaTime;
 	TickEvent(DeltaTime);
+
+
 	
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
@@ -196,12 +314,41 @@ bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
 }
 
 
-void UGMCAbilityEffect::PeriodTick()
+void UGMCAbilityEffect::OnStackCountChange(UGMCAbilityEffect* ActiveEffect, int32 OldStackCount, int32 NewStackCount)
+{
+	// Check if stack count changed
+	if (OldStackCount != NewStackCount)
+	{
+		// Trigger the delegate with the current data
+		if (OwnerAbilityComponent)
+		{
+			int32 EffectHandle = EffectData.EffectID;
+			OwnerAbilityComponent->OnAbilityEffectStackChangeDelegate(EffectHandle)->Broadcast(EffectHandle, NewStackCount, OldStackCount);
+		}
+	}
+}
+
+void UGMCAbilityEffect::SetStackCount(int32 NewStackCount)
+{
+	EffectStackCount = NewStackCount;
+}
+
+int32 UGMCAbilityEffect::GetStackCount() const
+{
+	return EffectStackCount;
+}
+
+int32 UGMCAbilityEffect::GetStackLimitCount() const
+{
+	return 0;
+}
+
+void UGMCAbilityEffect::	PeriodTick()
 {
 	if (AttributeDynamicCondition()) {
 		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true, false, SourceAbilityComponent,EffectStackCount);
 		}
 	}
 }
@@ -231,14 +378,22 @@ void UGMCAbilityEffect::AddTagsToOwner()
 
 void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
-
-	if (bPreserveOnMultipleInstances && EffectData.EffectTag.IsValid()) {
-		TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActivesEffectByTag(EffectData.EffectTag);
-		
-		if (ActiveEffect.Num() > 1) {
-			return;
+	if (bPreserveOnMultipleInstances)
+	{
+		if (EffectData.EffectTag.IsValid()) {
+			TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
+			
+			if (ActiveEffect.Num() > 1) {
+				return;
+			}
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Tag is not valid with PreserveMultipleInstances in UGMCAbilityEffect::RemoveTagsFromOwner"));
 		}
 	}
+
+
 	
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
@@ -253,6 +408,65 @@ void UGMCAbilityEffect::AddAbilitiesToOwner()
 		OwnerAbilityComponent->GrantAbilityByTag(Tag);
 	}
 }
+
+void UGMCAbilityEffect::PlayQueue()
+{
+	AActor* OwningActor =OwnerAbilityComponent->GetOwner();  // Assuming the effect is owned by an actor
+
+	if (EffectData.GameCues.IsEmpty())
+	{
+		// Log the authority status when GameCues is empty
+		if (OwningActor)
+		{
+			if (OwningActor->HasAuthority()) // Server
+			{
+
+				UE_LOG(LogTemp, Log, TEXT("No cues attached. This is being executed on the server."));
+				
+			}
+			else // Client
+			{
+				UE_LOG(LogTemp, Log, TEXT("No cues attached. This is being executed on a client."));
+			}
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("No cues attached"));
+		return;
+	}
+
+
+	// Log the owner or player executing the effect
+
+	if (OwningActor)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Effect played by: %s"), *OwningActor->GetName());
+	}
+
+	// Check if the function is being executed on the server or client
+	if (OwningActor->HasAuthority()) // If on the server
+	{
+		UE_LOG(LogTemp, Log, TEXT("This effect is being executed on the server."));
+	}
+	else // If on a client
+	{
+		UE_LOG(LogTemp, Log, TEXT("This effect is being executed on a client."));
+	}
+
+	// Loop through all the GameCues and invoke the events
+	for (const FGameEffectCue Cue : EffectData.GameCues)
+	{
+		if (OwnerAbilityComponent)
+		{
+			// Log the GameCue to see which cue is being played
+			UE_LOG(LogTemp, Log, TEXT("Executing GameCue: %s"), *Cue.GameCueTags.GetByIndex(0).ToString());
+            
+			// Invoke the GameCue event
+			OwnerAbilityComponent->InvokeGameCueEvent(Cue.GameCueTags.GetByIndex(0), EGameCueEvent::Executed);
+		}
+	}
+}
+
+
 
 void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
 {

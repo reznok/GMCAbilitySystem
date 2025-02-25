@@ -3,6 +3,7 @@
 #include "GMCPawn.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
+#include "GameFramework/GameStateBase.h"
 
 UWorld* UGMCAbility::GetWorld() const
 {
@@ -59,18 +60,20 @@ void UGMCAbility::AncillaryTick(float DeltaTime){
 
 void UGMCAbility::TickTasks(float DeltaTime)
 {
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	for (int i=0; i < RunningTasks.Num(); i++)
 	{
-		if (Task.Value == nullptr) {continue;}
-		Task.Value->Tick(DeltaTime);
+		UGMCAbilityTaskBase* Task = RunningTasks[i];
+		if (Task == nullptr) {continue;}
+		Task->Tick(DeltaTime);
 	}
 }
 
 void UGMCAbility::AncillaryTickTasks(float DeltaTime){
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	for (int i=0; i < RunningTasks.Num(); i++)
 	{
-		if (Task.Value == nullptr) {continue;}
-		Task.Value->AncillaryTick(DeltaTime);
+		UGMCAbilityTaskBase* Task = RunningTasks[i];
+		if (Task == nullptr) {continue;}
+		Task->AncillaryTick(DeltaTime);
 	}
 }
 
@@ -80,6 +83,19 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
+	PreBeginAbility();
+}
+
+void UGMCAbility::ExecuteWithPayload( UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID,
+	const UInputAction* InputAction, FInstancedStruct payload, float executionTime)
+{
+
+	this->AbilityInputAction = InputAction;
+	this->AbilityID = InAbilityID;
+	this->OwnerAbilityComponent = InAbilityComponent;
+	this->ClientStartTime = InAbilityComponent->ActionTimer;
+	this->ExecutionTime = executionTime;
+	this->Payload = payload;
 	PreBeginAbility();
 }
 
@@ -176,6 +192,25 @@ void UGMCAbility::ServerConfirm()
 void UGMCAbility::SetPendingEnd() {
 	bEndPending = true;
 }
+
+int32 UGMCAbility::GetAbilityLevel() const
+{
+	if (OwnerAbilityComponent == nullptr)
+	{
+		return 1;
+	}
+	return GetAbilityLevel(1, OwnerAbilityComponent);
+}
+
+/** Returns current ability level for non instanced abilities. You must call this version in these contexts! */
+int32 UGMCAbility::GetAbilityLevel(int32 Handle,  UGMC_AbilitySystemComponent* ActorAbilityComp) const
+{
+	// no handle use for abilities yet
+	check(ActorAbilityComp);
+	UGMC_AbilitySystemComponent* const AbilitySystemComponent = ActorAbilityComp;
+	return AbilityLevell;
+}
+
 
 
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const
@@ -293,7 +328,18 @@ void UGMCAbility::BeginAbility()
 			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
 		}
 	}
-
+	if (UWorld* World = GetWorld())
+	{
+		if (World->GetNetMode() != NM_Client)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("WE ARE THE SERVER"));
+			ServerDeltaTime = GetWorld()->GetGameState()->GetServerWorldTimeSeconds() - ExecutionTime;
+		}
+		else
+		{
+			// This is the client
+		}
+	}
 	// Execute BP Event
 	BeginAbilityEvent();
 }

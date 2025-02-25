@@ -13,6 +13,8 @@ enum class EModifierType : uint8
 	Divide     
 };
 
+
+
 USTRUCT(BlueprintType)
 struct FGMCAttributeModifier
 {

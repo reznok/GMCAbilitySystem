@@ -42,6 +42,18 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAbilityData AbilityData;
 
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	float  ExecutionTime;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	float  ServerDeltaTime;
+
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	int32  AbilityLevell;
+	
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	FInstancedStruct  Payload;
+
 	// Assign a new, incrementing, Task ID
 	UFUNCTION()
 	int GetNextTaskID(){TaskIDCounter += 1;
@@ -58,6 +70,9 @@ public:
 	void AncillaryTickTasks(float DeltaTime);
 	
 	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
+
+
+	void ExecuteWithPayload(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr, FInstancedStruct payload = FInstancedStruct(),  float executionTime = 0.0f);
 	
 	// Called by AbilityComponent (this is a prediction tick so should be used for movement)
 	virtual void Tick(float DeltaTime);
@@ -217,7 +232,15 @@ public:
 
 	UFUNCTION()
 	void SetPendingEnd();
-	
+
+
+ // ABILITY LEVELS
+	/** Returns current level of the Ability */
+	UFUNCTION(BlueprintCallable, Category = Ability)
+	int32 GetAbilityLevel() const;
+	int32 GetAbilityLevel(int32 Handle, UGMC_AbilitySystemComponent* ActorAbilityComp) const;
+
+
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
 	// --------------------------------------	
@@ -240,7 +263,8 @@ private:
 	bool bEndPending = false;
 
 	float ClientStartTime;
-	
+
+
 	// How long to wait for server to confirm ability before cancelling on client
 	float ServerConfirmTimeout = 1.f;
 
@@ -255,8 +279,7 @@ private:
 
 public:
 	FString ToString() const{
-		return FString::Printf(TEXT("[name: ] %s (State %s) [Tag %s] | NumTasks %d"), *GetName(), *EnumToString(AbilityState), *AbilityTag.ToString(), RunningTasks.Num());
+		return FString::Printf(TEXT("[name: ] %s (State reworking code) [Tag %s] | NumTasks %d"), *GetName(),  *AbilityTag.ToString(), RunningTasks.Num());
 	}
-
 };
 

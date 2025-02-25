@@ -4,12 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "GMCAbilityEffectTypes.h"
 #include "UObject/Object.h"
-#include "GMCAbilitySystem.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "GMCAbilityEffect.generated.h"
 
 class UGMC_AbilitySystemComponent;
+
 
 UENUM(BlueprintType)
 enum class EGMASEffectType : uint8
@@ -27,6 +28,100 @@ enum class EGMASEffectState : uint8
 	Ended  // Lasts forever
 };
 
+UENUM()
+enum class EAbilityEffectStackingDurationPolicy : uint8
+{
+	/** The duration of the effect will be refreshed from any successful stack application */
+	RefreshOnSuccessfulApplication,
+
+	/** The duration of the effect will never be refreshed */
+	NeverRefresh,
+};
+
+
+
+/** Enumeration of policies for dealing with the period of a gameplay effect while stacking */
+UENUM()
+enum class EAbilityEffectStackingPeriodPolicy : uint8
+{
+	/** Any progress toward the next tick of a periodic effect is discarded upon any successful stack application */
+	ResetOnSuccessfulApplication,
+
+	/** The progress toward the next tick of a periodic effect will never be reset, regardless of stack applications */
+	NeverReset,
+};
+/** Enumeration of policies for dealing gameplay effect stacks that expire (in duration based effects). */
+UENUM()
+enum class EAbilityEffectStackingExpirationPolicy : uint8
+{
+	/** The entire stack is cleared when the active gameplay effect expires  */
+	ClearEntireStack,
+
+	/** The current stack count will be decremented by 1 and the duration refreshed. The GE is not "reapplied", just continues to exist with one less stacks. */
+	RemoveSingleStackAndRefreshDuration,
+
+	/** The duration of the gameplay effect is refreshed. This essentially makes the effect infinite in duration. This can be used to manually handle stack decrements via OnStackCountChange callback */
+	RefreshDuration,
+};
+UENUM()
+enum class EAbilityEffectStackingType : uint8
+{
+	/** No stacking. Multiple applications of this AbilityEffect are treated as separate instances. */
+	None,
+	/** Each caster has its own stack. Not Implemented yet*/
+	AggregateBySource,
+	/** Each target has its own stack. */
+	AggregateByTarget,
+};
+
+
+USTRUCT(BlueprintType)
+struct FGameEffectCue
+{
+	GENERATED_USTRUCT_BODY()
+
+	FGameEffectCue()
+		: MinLevel(0.f)
+		, MaxLevel(0.f)
+	{
+	}
+
+	FGameEffectCue(const FGameplayTag& InTag, float InMinLevel, float InMaxLevel)
+		: MinLevel(InMinLevel)
+		, MaxLevel(InMaxLevel)
+	{
+		GameCueTags.AddTag(InTag);
+	}
+
+	/** The attribute to use as the source for cue magnitude. If none use level */
+	////	FAttribute MagnitudeAttribute;
+	//
+	/** The minimum level that this Cue supports */
+	UPROPERTY(EditDefaultsOnly, Category = GameCue)
+	float	MinLevel;
+
+	/** The maximum level that this Cue supports */
+	UPROPERTY(EditDefaultsOnly, Category = GameCue)
+	float	MaxLevel;
+
+	/** Tags passed to the gameplay cue handler when this cue is activated */
+	UPROPERTY(EditDefaultsOnly, Category = GameCue, meta = (Categories="GameCue"))
+	FGameplayTagContainer GameCueTags;
+
+	float NormalizeLevel(float InLevel)
+	{
+		float Range = MaxLevel - MinLevel;
+		if (Range <= KINDA_SMALL_NUMBER)
+		{
+			return 1.f;
+		}
+
+		return FMath::Clamp((InLevel - MinLevel) / Range, 0.f, 1.0f);
+	}
+};
+
+
+
 // Container for exposing the attribute modifier to blueprints
 UCLASS()
 class GMCABILITYSYSTEM_API UGMCAttributeModifierContainer : public UObject
@@ -38,6 +133,7 @@ public:
 	FGMCAttributeModifier AttributeModifier;
 };
 
+
 USTRUCT(BlueprintType)
 struct FGMCAbilityEffectData
 {
@@ -46,6 +142,7 @@ struct FGMCAbilityEffectData
 	FGMCAbilityEffectData():SourceAbilityComponent(nullptr),
 							OwnerAbilityComponent(nullptr),
 							EffectID(0),
+							StackCount(1),
 	                         StartTime(0),
 	                         EndTime(0)
 	{
@@ -57,8 +154,11 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	int EffectID;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	int StackCount;
 
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
@@ -68,6 +168,10 @@ struct FGMCAbilityEffectData
 
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double CurrentDuration{0.f};
+
+	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
+	TArray<FGameEffectCue>	GameCues;
+	
 
 	// Instantly applies effect then exits. Will not tick.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -108,6 +212,11 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
+	// Whether to preserve the granted tags if multiple instances of the same effect are applied
+	// If false, will remove all stacks of the tag
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	bool bPreserveGrantedTagsIfMultiple = false;
+
 	// Tags that the owner must have to apply this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer ApplicationMustHaveTags;
@@ -116,11 +225,11 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer ApplicationMustNotHaveTags;
 
-	// Tags that the owner must have to apply and maintain this effect
+	// Tags that the target must have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MustHaveTags;
 
-	// Tags that the owner must not have to apply and maintain this effect
+	// Tags that the target must not have to apply and maintain this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MustNotHaveTags;
 
@@ -137,6 +246,8 @@ struct FGMCAbilityEffectData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
+
+
 	
 	inline bool operator==(const FGMCAbilityEffectData& Other) const
 	{
@@ -155,6 +266,49 @@ struct FGMCAbilityEffectData
 	}
 };
 
+
+
+ 
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEM_API FAbilityEffectSpec
+{
+	GENERATED_USTRUCT_BODY()
+
+	FAbilityEffectSpec();
+};
+
+
+
+USTRUCT()
+struct GMCABILITYSYSTEM_API FAbilityEffectSpecForRPC
+{
+	GENERATED_USTRUCT_BODY()
+	FAbilityEffectSpecForRPC();
+	UPROPERTY()
+	TObjectPtr<const UGMCAbilityEffect> Def;
+	UPROPERTY()
+	float Level;
+	UPROPERTY()
+	float AbilityLevel;
+
+	float GetLevel() const
+	{
+		return Level;
+	}
+
+	float GetAbilityLevel() const
+	{
+		return AbilityLevel;
+	}
+};
+
+/**
+ * FGameplayEffectCue
+ *	This is a cosmetic cue that can be tied to a UGameplayEffect. 
+ *  This is essentially a GameplayTag + a Min/Max level range that is used to map the level of a GameplayEffect to a normalized value used by the GameCue system.
+
+
+
 /**
  * 
  */
@@ -170,10 +324,40 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
+	FActiveAbilityEffectEvents EventSet;
+	// ----------------------------------------------------------------------
+	//	Stacking
+	// ----------------------------------------------------------------------
+
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Stacking)
+	EAbilityEffectStackingType	StackingType;
+	
+	/** Stack limit for StackingType */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Stacking, meta = (EditConditionHides, EditCondition = "StackingType != EAbilityEffectStackingType::None"))
+	int32 StackLimitCount;
+
+	/** Policy for how the effect duration should be refreshed while stacking */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Stacking, meta = (EditConditionHides, EditCondition = "StackingType != EAbilityEffectStackingType::None"))
+	EAbilityEffectStackingDurationPolicy StackDurationRefreshPolicy;
+
+	/** Policy for how the effect period should be reset (or not) while stacking */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Stacking, meta = (EditConditionHides, EditCondition = "StackingType != EAbilityEffectStackingType::None"))
+	EAbilityEffectStackingPeriodPolicy StackPeriodResetPolicy;
+
+	/** Policy for how to handle duration expiring on this gameplay effect */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = Stacking, meta = (EditConditionHides, EditCondition = "StackingType != EAbilityEffectStackingType::None"))
+	EAbilityEffectStackingExpirationPolicy StackExpirationPolicy;
+
+	UPROPERTY()
+	FAbilityEffectContextHandle ContextHandle;
+	
+	int32 EffectStackCount = 1;
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void InitializeEffect(FGMCAbilityEffectData InitializationData);
-	
+	void HandleStacking(UGMCAbilityEffect* NewEffect);
+
 	virtual void EndEffect();
 
 	virtual void BeginDestroy() override;
@@ -188,9 +372,26 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
 	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
 
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	int GetEffectHandleID() const {    return EffectData.EffectID != 0 ? EffectData.EffectID : -1;}
+
 	// Return the current duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
 	float GetEffectTotalDuration() const { return EffectData.Duration; }
+
+
+	void OnStackCountChange(UGMCAbilityEffect* ActiveEffect, int32 OldStackCount, int32 NewStackCount);
+
+	
+	/** Sets the stack count for this GE to NewStackCount if stacking is supported. */
+	void SetStackCount(int32 NewStackCount);
+
+	/** Returns the stack count for this GE spec. */
+	int32 GetStackCount() const;
+
+	int32 GetStackLimitCount() const;
+
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
@@ -199,6 +400,18 @@ public:
 	// However, this is not stopping the effect.
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Dynamic Condition"), Category="GMCAbilitySystem")
 	bool AttributeDynamicCondition() const;
+
+	/** If true, cues will only trigger when GE modifiers succeed being applied (whether through modifiers or executions) */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GameCues")
+	bool bRequireModifierSuccessToTriggerCues;
+	/** If true, GameCues will only be triggered for the first instance in a stacking GameplayEffect. */
+	UPROPERTY(EditDefaultsOnly, Category = "GameCues")
+	bool bSuppressStackingCues;
+	
+	/** Cues to trigger non-simulated reactions in response to this GameplayEffect such as sounds, particle effects, etc */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GameCues")
+	TArray<FGameEffectCue>	GameCues;
+
 	
 	virtual void PeriodTick();
 	
@@ -226,6 +439,8 @@ protected:
 	void RemoveTagsFromOwner(bool bPreserveOnMultipleInstances = true);
 
 	void AddAbilitiesToOwner();
+	void PlayQueue();
+
 	void RemoveAbilitiesFromOwner();
 	void EndActiveAbilitiesFromOwner();
 
@@ -239,6 +454,7 @@ protected:
 
 	bool bHasStarted;
 
+
 private:
 	// Used for calculating when to tick Period effects
 	float PrevPeriodMod = 0;
@@ -246,8 +462,14 @@ private:
 	void CheckState();
 
 public:
-	FString ToString() {
-		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
+	FString ToString()
+	{
+		return FString::Printf(TEXT("[name: %s] (State rework code) | Started: %d | Period Paused: %d | Data: %s"), 
+							   *GetName(), 
+							   //*EnumToString(CurrentState), 
+							   bHasStarted, 
+							   IsPeriodPaused(), 
+							   *EffectData.ToString());
 	}
 };
 

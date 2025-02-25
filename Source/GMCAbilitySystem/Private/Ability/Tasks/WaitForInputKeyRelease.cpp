@@ -19,7 +19,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 
 	UEnhancedInputComponent* const InputComponent = GetEnhancedInputComponent();
 	
-	if (Ability->AbilityInputAction != nullptr)
+	if (Ability->AbilityInputAction != nullptr && InputComponent != nullptr)
 	{
 		FEnhancedInputActionEventBinding& Binding = InputComponent->BindAction(
 			Ability->AbilityInputAction, ETriggerEvent::Completed, this,

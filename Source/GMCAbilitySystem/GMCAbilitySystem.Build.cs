@@ -19,7 +19,10 @@ public class GMCAbilitySystem : ModuleRules
 				"GameplayTags",
 				"GameplayDebugger",
 				"StructUtils",
-				"NetCore"
+				"Engine",
+				"NetCore",
+				"PhysicsCore",
+				"DataRegistry"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -30,10 +33,19 @@ public class GMCAbilitySystem : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Slate",
-				"SlateCore",
+				"SlateCore"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
+		
+		if (Target.bBuildEditor == true)
+		{
+			PrivateDependencyModuleNames.Add("EditorFramework");
+			PrivateDependencyModuleNames.Add("UnrealEd");
+			PrivateDependencyModuleNames.Add("Slate");
+		
+		}
+
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(
