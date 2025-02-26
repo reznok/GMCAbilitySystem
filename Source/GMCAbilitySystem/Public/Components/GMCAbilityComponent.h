@@ -111,6 +111,7 @@ public:
 	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
 
 	// Gameplay tags that the controller has
+	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	FGameplayTagContainer GetActiveTags() const { return ActiveTags; }
 
 	// Return the active ability effects
@@ -125,6 +126,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
 	UGMCAbilityEffect* GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const;
 
+	// Return ability map that contains mapping of ability input tags to ability classes
+	TMap<FGameplayTag, FAbilityMapData> GetAbilityMap() { return AbilityMap; }
+	
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void AddAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 
