@@ -567,8 +567,12 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
-	CheckActiveTagsChanged();
-	CheckAttributeChanged();
+
+	if (!GMCMovementComponent->IsSmoothedListenServerPawn())
+	{
+		CheckActiveTagsChanged();
+		CheckAttributeChanged();
+	}
 	
 	if (GMCMovementComponent->GetSmoothingTargetIdx() == -1) return;	
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
