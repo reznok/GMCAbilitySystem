@@ -205,6 +205,8 @@ public:
 	// Prevent Abilities with these tags from activating when this ability is activated
 	FGameplayTagContainer BlockOtherAbility;
 
+	virtual void CancelAbilities();
+	
 	/** 
 	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.
 	 * Should be set to false for actions that should not be replayed on mispredictions. i.e. firing a weapon

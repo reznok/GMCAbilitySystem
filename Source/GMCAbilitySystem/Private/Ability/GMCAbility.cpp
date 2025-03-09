@@ -170,6 +170,20 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 	}
 }
 
+void UGMCAbility::CancelAbilities()
+{
+	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
+		if (AbilityTag == AbilityToCancelTag) {
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
+			continue;
+		}
+		
+		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
+		}
+	}
+}
+
 void UGMCAbility::ServerConfirm()
 {
 	bServerConfirmed = true;
@@ -284,18 +298,9 @@ void UGMCAbility::BeginAbility()
 	
 	// Initialize Ability
 	AbilityState = EAbilityState::Initialized;
-
+	
 	// Cancel Abilities in CancelAbilitiesWithTag container
-	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
-		if (AbilityTag == AbilityToCancelTag) {
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
-			continue;
-		}
-		
-		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
-			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
-		}
-	}
+	CancelAbilities();
 
 	// Execute BP Event
 	BeginAbilityEvent();
