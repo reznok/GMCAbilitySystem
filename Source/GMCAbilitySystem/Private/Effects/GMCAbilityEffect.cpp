@@ -53,6 +53,8 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 
 void UGMCAbilityEffect::StartEffect()
 {
+	bHasStarted = true;
+
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
 	DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustNotHaveTags) ||
@@ -62,19 +64,19 @@ void UGMCAbilityEffect::StartEffect()
 		EndEffect();
 		return;
 	}
-
-	bHasStarted = true;
 	
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
-	EndActiveAbilitiesFromOwner();
+	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnActivation);
+
+	bHasAppliedEffect = true;
 
 	// Instant effects modify base value and end instantly
 	if (EffectData.bIsInstant)
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true, false, SourceAbilityComponent);
 		}
 		EndEffect();
 		return;
@@ -86,7 +88,7 @@ void UGMCAbilityEffect::StartEffect()
 		EffectData.bNegateEffectAtEnd = true;
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, false, SourceAbilityComponent);
 		}
 	}
 
@@ -101,6 +103,8 @@ void UGMCAbilityEffect::StartEffect()
 	{
 		EndEffect();
 	}
+
+	StartEffectEvent();
 
 	UpdateState(EGMASEffectState::Started, true);
 }
@@ -117,8 +121,8 @@ void UGMCAbilityEffect::EndEffect()
 		UpdateState(EGMASEffectState::Ended, true);
 	}
 
-	// Only remove tags and abilities if the effect has started
-	if (!bHasStarted) return;
+	// Only remove tags and abilities if the effect has started and applied
+	if (!bHasStarted || !bHasAppliedEffect) return;
 
 	if (EffectData.bNegateEffectAtEnd)
 	{
@@ -128,8 +132,11 @@ void UGMCAbilityEffect::EndEffect()
 		}
 	}
 	
-	RemoveTagsFromOwner();
+	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnEnd);
+	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
 	RemoveAbilitiesFromOwner();
+	
+	EndEffectEvent();
 }
 
 
@@ -160,12 +167,20 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
-	if (bCompleted) return;
+	// Aherys : I'm not sure if this is correct. Sometime this is GC. We need to catch why, and when.
+	if (bCompleted || IsUnreachable()) {
+		if (IsUnreachable()) {
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect is unreachable : %s"), *EffectData.EffectTag.ToString());
+			ensureMsgf(false, TEXT("Effect is being ticked after being completed or GC : %s"), *EffectData.EffectTag.ToString());
+		}
+		return;
+	}
+	
 	EffectData.CurrentDuration += DeltaTime;
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
-	if( ( EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
+	if( (EffectData.MustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.MustHaveTags) ) ||
 		DoesOwnerHaveTagFromContainer(EffectData.MustNotHaveTags) )
 	{
 		EndEffect();
@@ -201,7 +216,7 @@ void UGMCAbilityEffect::PeriodTick()
 	if (AttributeDynamicCondition()) {
 		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true, false, SourceAbilityComponent);
 		}
 	}
 }
@@ -231,14 +246,22 @@ void UGMCAbilityEffect::AddTagsToOwner()
 
 void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
-
-	if (bPreserveOnMultipleInstances && EffectData.EffectTag.IsValid()) {
-		TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActivesEffectByTag(EffectData.EffectTag);
-		
-		if (ActiveEffect.Num() > 1) {
-			return;
+	if (bPreserveOnMultipleInstances)
+	{
+		if (EffectData.EffectTag.IsValid()) {
+			TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
+			
+			if (ActiveEffect.Num() > 1) {
+				return;
+			}
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Tag is not valid with PreserveMultipleInstances in UGMCAbilityEffect::RemoveTagsFromOwner"));
 		}
 	}
+
+
 	
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
@@ -263,9 +286,9 @@ void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
 }
 
 
-void UGMCAbilityEffect::EndActiveAbilitiesFromOwner() {
+void UGMCAbilityEffect::EndActiveAbilitiesFromOwner(const FGameplayTagContainer& TagContainer) {
 	
-	for (const FGameplayTag Tag : EffectData.CancelAbilityOnActivation)
+	for (const FGameplayTag Tag : TagContainer)
 	{
 		OwnerAbilityComponent->EndAbilitiesByTag(Tag);
 	}
