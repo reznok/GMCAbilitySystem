@@ -81,8 +81,7 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Delay = 0;
 
-	// How long the effect lasts, 0 for infinite
-	// Does nothing if effect is instant
+	// How long the effect lasts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Duration = 0;
 
@@ -108,11 +107,6 @@ struct FGMCAbilityEffectData
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
-
-	// Whether to preserve the granted tags if multiple instances of the same effect are applied
-	// If false, will remove all stacks of the tag
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	bool bPreserveGrantedTagsIfMultiple = false;
 
 	// Tags that the owner must have to apply this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -140,10 +134,6 @@ struct FGMCAbilityEffectData
 	// On activation, will end ability present in this container
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer CancelAbilityOnActivation;
-
-	// When this effect end, it will end ability present in this container
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer CancelAbilityOnEnd;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
@@ -182,9 +172,9 @@ public:
 	FGMCAbilityEffectData EffectData;
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	void InitializeEffect(FGMCAbilityEffectData InitializationData);
+	virtual void InitializeEffect(FGMCAbilityEffectData InitializationData);
 	
-	void EndEffect();
+	virtual void EndEffect();
 
 	virtual void BeginDestroy() override;
 	
@@ -210,7 +200,7 @@ public:
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Dynamic Condition"), Category="GMCAbilitySystem")
 	bool AttributeDynamicCondition() const;
 	
-	void PeriodTick();
+	virtual void PeriodTick();
 	
 	void UpdateState(EGMASEffectState State, bool Force=false);
 
@@ -224,22 +214,10 @@ public:
 
 protected:
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
-	UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr;
+	UGMC_AbilitySystemComponent* SourceAbilityComponent;
 
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
-	UGMC_AbilitySystemComponent* OwnerAbilityComponent = nullptr;
-
-	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
-	virtual void StartEffect();
-
-private:
-	bool bHasStarted;
-	bool bHasAppliedEffect;
-
-	// Used for calculating when to tick Period effects
-	float PrevPeriodMod = 0;
-	
-	void CheckState();
+	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
 
 	// Tags
 	void AddTagsToOwner();
@@ -249,27 +227,25 @@ private:
 
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();
-	void EndActiveAbilitiesFromOwner(const FGameplayTagContainer& TagContainer);
-	
+	void EndActiveAbilitiesFromOwner();
 
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
 	
 	bool DuplicateEffectAlreadyApplied();
 
+	// Apply the things that should happen as soon as an effect starts. Tags, instant effects, etc.
+	virtual void StartEffect();
 
+	bool bHasStarted;
 
+private:
+	// Used for calculating when to tick Period effects
+	float PrevPeriodMod = 0;
 	
+	void CheckState();
+
 public:
-
-	// Blueprint Event for when the effect starts
-	UFUNCTION(BlueprintImplementableEvent)
-	void StartEffectEvent();
-
-	UFUNCTION(BlueprintImplementableEvent)
-	void EndEffectEvent();
-
-	
 	FString ToString() {
 		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
 	}
