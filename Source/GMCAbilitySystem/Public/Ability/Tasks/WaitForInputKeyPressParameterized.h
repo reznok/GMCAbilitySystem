@@ -8,7 +8,7 @@
 #include "LatentActions.h"
 #include "WaitForInputKeyPressParameterized.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FAbilityTaskWaitForInputKeyPressParameterized);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FAbilityTaskWaitForInputKeyPressParameterized, float, Duration);
 
 /**
  * 
@@ -26,13 +26,22 @@ public:
 	virtual void ClientProgressTask() override;
 	 
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility"), DisplayName = "Wait For Input Key Press Parameterized", Category = "GMCAbilitySystem/Tasks")
-	static UGMCAbilityTask_WaitForInputKeyPressParameterized* WaitForKeyPress(UGMCAbility* OwningAbility, UInputAction* InputAction);
+	static UGMCAbilityTask_WaitForInputKeyPressParameterized* WaitForKeyPress(UGMCAbility* OwningAbility, UInputAction* InputAction, bool bCheckForPressDuringActivation = true, float MaxDuration = 0.0f);
 
 	//Overriding BP async action base
 	virtual void Activate() override;
+	
+	virtual void AncillaryTick(float DeltaTime) override;
 
 	UPROPERTY(BlueprintAssignable)
 	FAbilityTaskWaitForInputKeyPressParameterized Completed;
+
+	UPROPERTY(BlueprintAssignable)
+	FAbilityTaskWaitForInputKeyPressParameterized OnTick;
+
+	// Called when duration goes over MaxDuration
+	UPROPERTY(BlueprintAssignable)
+	FAbilityTaskWaitForInputKeyPressParameterized TimedOut;
 
 	UPROPERTY()
 	UInputAction* InputActionToWaitFor = nullptr;
@@ -40,10 +49,22 @@ public:
 protected:
 	
 	void OnKeyPressed(const FInputActionValue& InputActionValue);
+	
+	/** If true, we may complete this task during activation if the ability's input action key is already released. */
+	UPROPERTY(Transient)
+	bool bShouldCheckForPressDuringActivation = false;
 
 private:
 	
-	UEnhancedInputComponent* GetEnhancedInputComponent() const;
+	UEnhancedInputComponent* GetEnhancedInputComponent();
 
 	int64 InputBindingHandle = -1;
+
+	float MaxDuration;
+	float StartTime;
+	float Duration;
+	bool bTimedOut;
+
+	UPROPERTY()
+	UInputComponent* InputComponent;
 };

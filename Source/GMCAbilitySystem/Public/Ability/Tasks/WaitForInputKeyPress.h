@@ -26,7 +26,7 @@ public:
 	virtual void ClientProgressTask() override;
 	 
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait For Input Key Press",Category = "GMCAbilitySystem/Tasks")
-	static UGMCAbilityTask_WaitForInputKeyPress* WaitForKeyPress(UGMCAbility* OwningAbility,bool bCheckForReleaseDuringActivation = true, float MaxDuration = 0.0f);
+	static UGMCAbilityTask_WaitForInputKeyPress* WaitForKeyPress(UGMCAbility* OwningAbility, bool bCheckForPressDuringActivation = true, float MaxDuration = 0.0f);
 
 	//Overriding BP async action base
 	virtual void Activate() override;
@@ -49,7 +49,7 @@ protected:
 
 	/** If true, we may complete this task during activation if the ability's input action key is already released. */
 	UPROPERTY(Transient)
-	bool bShouldCheckForPressDuringActivation = true;
+	bool bShouldCheckForPressDuringActivation = false;
 
 private:
 	
