@@ -107,6 +107,10 @@ struct FGMCAbilityEffectData
 	FGameplayTag EffectTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	// Container for a more generalized definition of effects
+	FGameplayTagContainer EffectDefinition;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
 	// Whether to preserve the granted tags if multiple instances of the same effect are applied
@@ -258,7 +262,7 @@ private:
 	
 	bool DuplicateEffectAlreadyApplied();
 
-
+	void CancelAbilitiesByDefinition();
 
 	
 public:

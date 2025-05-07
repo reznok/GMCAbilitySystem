@@ -68,6 +68,7 @@ void UGMCAbilityEffect::StartEffect()
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
 	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnActivation);
+	CancelAbilitiesByDefinition();
 
 	bHasAppliedEffect = true;
 
@@ -345,5 +346,23 @@ void UGMCAbilityEffect::CheckState()
 		case EGMASEffectState::Ended:
 			break;
 	default: break;
+	}
+}
+
+void UGMCAbilityEffect::CancelAbilitiesByDefinition()
+{
+	if (!OwnerAbilityComponent) return;
+
+	TArray<FGameplayTag> DefinitionTags;
+	EffectData.EffectDefinition.GetGameplayTagArray(DefinitionTags);
+
+	for (const FGameplayTag& Tag : DefinitionTags)
+	{
+		const int NumCancelled = OwnerAbilityComponent->EndAbilitiesByTag(Tag);
+		if (NumCancelled > 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Effect (tag: %s) cancelled %d ability(ies) via EffectDefinition tag: %s"),
+				*EffectData.EffectTag.ToString(), NumCancelled, *Tag.ToString());
+		}
 	}
 }

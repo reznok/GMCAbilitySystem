@@ -117,6 +117,10 @@ public:
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
+	// Container for a more generalized definition of abilities
+	FGameplayTagContainer AbilityDefinition;
+
 	// An Effect that modifies attributes when the ability is activated
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;

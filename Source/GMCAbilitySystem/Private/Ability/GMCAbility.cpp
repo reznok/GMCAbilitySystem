@@ -188,7 +188,29 @@ void UGMCAbility::CancelAbilities()
 			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());	
 		}
 	}
+	// Cancel by AbilityDefinition (generic category tags)
+	TArray<FGameplayTag> DefinitionTags;
+	AbilityDefinition.GetGameplayTagArray(DefinitionTags);
+
+	for (const FGameplayTag& DefinitionTag : DefinitionTags)
+	{
+		// Prevent self-cancellation
+		if (AbilityTag.MatchesTag(DefinitionTag))
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s attempted to cancel itself via AbilityDefinition tag %s"),
+				*AbilityTag.ToString(), *DefinitionTag.ToString());
+			continue;
+		}
+
+		int Cancelled = OwnerAbilityComponent->EndAbilitiesByTag(DefinitionTag);
+		if (Cancelled > 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s cancelled %d ability(ies) by AbilityDefinition tag: %s"),
+				*AbilityTag.ToString(), Cancelled, *DefinitionTag.ToString());
+		}
+	}
 }
+
 
 void UGMCAbility::ServerConfirm()
 {
