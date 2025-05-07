@@ -741,12 +741,14 @@ private:
 	// Is this ASC locally controlled?
 	bool IsLocallyControlledPawnASC() const;
 
-	// Spawn a Niagara system at the given location
+	// Spawn a Niagara system
+	// IsClientPredicted: If true, the system will be spawned on the client immediately. False, the local client will spawn it when the multicast is received
+	// bDelayByGMCSmoothing: If true, the system will be spawned with a delay for SimProxies to match the smoothing delay
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
-	UNiagaraComponent* SpawnParticleSystem(FFXSystemSpawnParameters SpawnParams, bool bIsClientPredicted = false);
+	UNiagaraComponent* SpawnParticleSystem(FFXSystemSpawnParameters SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MC_SpawnParticleSystem(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false);
+	void MC_SpawnParticleSystem(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
 
 	// Spawn a Sound at the given location
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
