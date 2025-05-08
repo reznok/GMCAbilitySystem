@@ -366,7 +366,9 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	ActiveAbilities.Add(AbilityID, Ability);
 	
 	if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}
-	
+
+	OnAbilityActivated.Broadcast(ActivationTag, InputAction);
+
 	return true;
 }
 
@@ -1096,6 +1098,7 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 		}
 	}
 
+
 	// Blocking Tags
 	for (const FGameplayTag Tag : Ability->ActivationBlockedTags)
 	{
@@ -1106,8 +1109,15 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 		}
 	}
 
+	// single activation query
+	if (!Ability->ActivationQuery.IsEmpty() && !Ability->ActivationQuery.Matches(ActiveTags))
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, blocked by query: %s"),
+			*Ability->ActivationQuery.GetDescription());
+		return false;
+	}
+
 	return true;
-	
 }
 
 
@@ -2270,6 +2280,9 @@ UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystem(FFXSystemSpa
 		{
 			UNiagaraFunctionLibrary::SpawnSystemAtLocationWithParams(SpawnParams);
 		}, Delay, false);
+
+		UE_LOG(LogTemp, Warning, TEXT("Delay: %f"), Delay);
+
 		return nullptr;
 	}
 

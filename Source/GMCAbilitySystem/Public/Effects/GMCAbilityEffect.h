@@ -107,10 +107,6 @@ struct FGMCAbilityEffectData
 	FGameplayTag EffectTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	// Container for a more generalized definition of effects
-	FGameplayTagContainer EffectDefinition;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
 	// Whether to preserve the granted tags if multiple instances of the same effect are applied
@@ -167,6 +163,28 @@ struct FGMCAbilityEffectData
 	FString ToString() const{
 		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %.3lf) (CurrentDuration: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
 	}
+
+	// query stuff
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	// Container for a more generalized definition of effects
+	FGameplayTagContainer EffectDefinition;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	// query must match on effect activation
+	FGameplayTagQuery ActivationQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	// query must be maintained throughout effect
+	FGameplayTagQuery MustMaintainQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On Activation Via Definition Query"))
+	// end ability on effect activation if definition matches query
+	FGameplayTagQuery EndAbilityOnActivationQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On End Via Definition Query"))
+	// end ability on effect end if definition matches query
+	FGameplayTagQuery EndAbilityOnEndQuery;
+
 };
 
 /**
@@ -262,7 +280,7 @@ private:
 	
 	bool DuplicateEffectAlreadyApplied();
 
-	void CancelAbilitiesByDefinition();
+	void EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery);
 
 	
 public:
@@ -278,5 +296,11 @@ public:
 	FString ToString() {
 		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
 	}
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	void ModifyMustMaintainQuery(const FGameplayTagQuery& NewQuery);
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	void ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& NewQuery);
 };
 

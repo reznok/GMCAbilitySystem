@@ -117,10 +117,6 @@ public:
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
-	// Container for a more generalized definition of abilities
-	FGameplayTagContainer AbilityDefinition;
-
 	// An Effect that modifies attributes when the ability is activated
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
@@ -264,6 +260,29 @@ public:
 	FString ToString() const{
 		return FString::Printf(TEXT("[name: ] %s (State %s) [Tag %s] | NumTasks %d"), *GetName(), *EnumToString(AbilityState), *AbilityTag.ToString(), RunningTasks.Num());
 	}
+
+		UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	// Container for a more generalized definition of abilities
+	FGameplayTagContainer AbilityDefinition;
+
+		// Queries
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Activation Tags Query"))
+	// query must match at activation
+	FGameplayTagQuery ActivationQuery;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Cancel Ability via Definition Query"))
+	// End Abilities via Definition
+	FGameplayTagQuery EndOtherAbilitiesQuery;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Block Other Ability via Definition Query"))
+	// Block Abilities via Definition
+	FGameplayTagQuery BlockOtherAbilitiesQuery;
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	void ModifyEndOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery);
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	void ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery);
 
 };
 

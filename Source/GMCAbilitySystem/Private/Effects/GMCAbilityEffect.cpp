@@ -65,10 +65,18 @@ void UGMCAbilityEffect::StartEffect()
 		return;
 	}
 	
+	// Effect Query
+	if (!EffectData.ActivationQuery.IsEmpty() && !EffectData.ActivationQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
+		{
+		EndEffect();
+		return;
+	}
+
 	AddTagsToOwner();
 	AddAbilitiesToOwner();
 	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnActivation);
-	CancelAbilitiesByDefinition();
+
+	EndActiveAbilitiesByDefinitionQuery(EffectData.EndAbilityOnActivationQuery);
 
 	bHasAppliedEffect = true;
 
@@ -133,6 +141,8 @@ void UGMCAbilityEffect::EndEffect()
 		}
 	}
 	
+	EndActiveAbilitiesByDefinitionQuery(EffectData.EndAbilityOnEndQuery);
+
 	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnEnd);
 	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
 	RemoveAbilitiesFromOwner();
@@ -187,6 +197,11 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		EndEffect();
 	}
 
+	// query to maintain effect
+	if ( !EffectData.MustMaintainQuery.IsEmpty() && EffectData.MustMaintainQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
+	{
+		EndEffect();
+	}
 
 	// If there's a period, check to see if it's time to tick
 	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EGMASEffectState::Started)
@@ -349,17 +364,25 @@ void UGMCAbilityEffect::CheckState()
 	}
 }
 
-void UGMCAbilityEffect::CancelAbilitiesByDefinition()
+void UGMCAbilityEffect::EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery EndAbilityOnActivationViaDefinitionQuery)
 {
-	if (!OwnerAbilityComponent)	return;
 
-	// build query here
-	FGameplayTagContainer TagsToMatch = EffectData.EffectDefinition;
-	if (TagsToMatch.Num() == 0) return;
+	if (EndAbilityOnActivationViaDefinitionQuery.IsEmpty()) return;
 
-	FGameplayTagQuery CancelQuery = FGameplayTagQuery::MakeQuery_MatchAnyTags(TagsToMatch);
-	int NumCancelled = OwnerAbilityComponent->EndAbilitiesByQuery(CancelQuery);
+	int NumCancelled = OwnerAbilityComponent->EndAbilitiesByQuery(EndAbilityOnActivationViaDefinitionQuery);
 
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Effect %s cancelled %d ability(ies) via EffectDefinition query."),
 		*EffectData.EffectTag.ToString(), NumCancelled);
+}
+
+void UGMCAbilityEffect::ModifyMustMaintainQuery(const FGameplayTagQuery& NewQuery)
+{
+	EffectData.MustMaintainQuery = NewQuery;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("MustMainQuery modified: %s"), *NewQuery.GetDescription());
+}
+
+void UGMCAbilityEffect::ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& NewQuery)
+{
+	EffectData.EndAbilityOnEndQuery = NewQuery;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("EndAbilityOnEndViaDefinitionQuery modified: %s"), *NewQuery.GetDescription());
 }

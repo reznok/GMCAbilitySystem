@@ -34,6 +34,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEve
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, FGameplayTag, ActivationTag, const UInputAction*, InputAction);
+
 USTRUCT()
 struct FEffectStatePrediction
 {
@@ -412,6 +414,10 @@ public:
 
 	FGameplayTagContainer PreviousActiveTags;
 
+	// Called when an ability is activated
+	UPROPERTY(BlueprintAssignable)
+	FOnAbilityActivated OnAbilityActivated;
+
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;
 
@@ -634,10 +640,9 @@ private:
 	FEffectStatePrediction EffectStatePrediction{};
 
 	TArray<FEffectStatePrediction> QueuedEffectStates;
-	
+
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
-
 	
 	UPROPERTY()
 	TMap<FGameplayTag, float> ActiveCooldowns;
@@ -747,7 +752,7 @@ public:
 	// Networked FX
 	// Is this ASC locally controlled?
 	bool IsLocallyControlledPawnASC() const;
-	
+
 	// Spawn a Niagara system
 	// IsClientPredicted: If true, the system will be spawned on the client immediately. False, the local client will spawn it when the multicast is received
 	// bDelayByGMCSmoothing: If true, the system will be spawned with a delay for SimProxies to match the smoothing delay
