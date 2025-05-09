@@ -29,7 +29,7 @@ public:
 	FGameplayTagContainer Tags;
 	EGMCWaitForGameplayTagChangeType ChangeType;
 	
-	UFUNCTION(BlueprintCallable, meta=(BlueprintInternalUseOnly="true", HidePin="OwningAbility", DefaultToSelf="OwningAbility", DisplayName="Wait for Gameplay Tag Change"), Category="GMCAbilitySystem|Tasks")
+	UFUNCTION(BlueprintCallable, meta=(BlueprintInternalUseOnly="true", HidePin="OwningAbility", DefaultToSelf="OwningAbility", DisplayName="Wait for Gameplay Tag Change"), Category = "GMAS|Abilities|Tasks")
 	static UGMCAbilityTask_WaitForGameplayTagChange* WaitForGameplayTagChange(UGMCAbility* OwningAbility, const FGameplayTagContainer& WatchedTags, EGMCWaitForGameplayTagChangeType ChangeType = Changed);
 	
 	virtual void Activate() override;

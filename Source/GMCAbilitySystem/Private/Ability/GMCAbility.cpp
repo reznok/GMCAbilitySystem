@@ -392,12 +392,6 @@ void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 	OwnerAbilityComponent->bJustTeleported = bValue;
 }
 
-void UGMCAbility::ModifyEndOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
-{
-	EndOtherAbilitiesQuery = NewQuery;
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("CancelAbilityByDefinitionQuery modified: %s"), *NewQuery.GetDescription());
-}
-
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
 {
 	BlockOtherAbilitiesQuery = NewQuery;

@@ -39,7 +39,7 @@ public:
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;
 	virtual void ClientProgressTask() override;
  
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Set Target Data (Instanced Struct)",Category = "GMCAbilitySystem/Tasks")
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Set Target Data (Instanced Struct)", Category = "GMAS|Abilities|Tasks")
 	static UGMCAbilityTask_SetTargetDataInstancedStruct* SetTargetDataInstancedStruct(UGMCAbility* OwningAbility, FInstancedStruct InstancedStruct);
  
 	//Overriding BP async action base

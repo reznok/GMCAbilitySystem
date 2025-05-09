@@ -214,16 +214,20 @@ public:
 	virtual void Tick(float DeltaTime);
 
 	// Return the current duration of the effect
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
 
-	// Return the current duration of the effect
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	// Return the effect data struct of targeted effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
 
-	// Return the current duration of the effect
-	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
+	// Return the total duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	float GetEffectTotalDuration() const { return EffectData.Duration; }
+
+	// Return the current remaining duration of the effect
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
+	float GetEffectRemainingDuration() const { return EffectData.Duration - EffectData.CurrentDuration; }
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Effect Tick"), Category="GMCAbilitySystem")
 	void TickEvent(float DeltaTime);
@@ -303,10 +307,10 @@ public:
 		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
 	}
 
-	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
 	void ModifyMustMaintainQuery(const FGameplayTagQuery& NewQuery);
 
-	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
 	void ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& NewQuery);
 };
 
