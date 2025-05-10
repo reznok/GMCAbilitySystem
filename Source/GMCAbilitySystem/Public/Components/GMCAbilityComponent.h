@@ -31,12 +31,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag, const UInputAction*, InputAction);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, FGameplayTag, ActivationTag, const UInputAction*, InputAction);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEffectApplied, UGMCAbilityEffect*, AppliedEffect, FGMCAbilityEffectData, EffectData);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEffectRemoved, UGMCAbilityEffect*, RemovedEffect, FGMCAbilityEffectData, EffectData);
 
 USTRUCT()
 struct FEffectStatePrediction
@@ -410,6 +412,10 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnActiveTagsChanged OnActiveTagsChanged;
 
+	// Called when an ability is successfully activated
+	UPROPERTY(BlueprintAssignable)
+	FOnAbilityActivated OnAbilityActivated;
+
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityEnded OnAbilityEnded;
 
@@ -419,9 +425,11 @@ public:
 
 	FGameplayTagContainer PreviousActiveTags;
 
-	// Called when an ability is activated
 	UPROPERTY(BlueprintAssignable)
-	FOnAbilityActivated OnAbilityActivated;
+	FOnEffectApplied OnEffectApplied;
+
+	UPROPERTY(BlueprintAssignable)
+	FOnEffectRemoved OnEffectRemoved;
 
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;

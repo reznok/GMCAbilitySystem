@@ -312,6 +312,8 @@ void UGMCAbility::BeginAbility()
 		return;
 	}
 
+	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag, this->AbilityInputAction);
+
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{
 		FGameplayTagQuery BlockQuery = BlockOtherAbilitiesQuery;
