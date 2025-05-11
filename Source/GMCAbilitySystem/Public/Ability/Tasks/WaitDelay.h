@@ -21,7 +21,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityTask_WaitDelay : public UGMCAbilityTaskBas
 	// virtual FString GetDebugString() const override;
 
 	/** Wait specified time. This is functionally the same as a standard Delay node. */
-	UFUNCTION(BlueprintCallable, Category="GMCAbility|Tasks", meta = (HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"))
+	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Tasks", meta = (HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"))
 	static UGMCAbilityTask_WaitDelay* WaitDelay(UGMCAbility* OwningAbility, float Time);
 
 private:

@@ -20,7 +20,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityTask_WaitForGMCMontageChange : public UGMC
 	// virtual FString GetDebugString() const override;
 
 	/** Triggers if the montage changes (Allows for Networked Interrupt). *ONLY WORKS FOR ORGANIC MOVEMENT COMPONENT* */
-	UFUNCTION(BlueprintCallable, Category="GMCAbility|Tasks", meta = (HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"))
+	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Tasks", meta = (HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"))
 	static UGMCAbilityTask_WaitForGMCMontageChange* WaitForGMCMontageChange(UGMCAbility* OwningAbility);
 
 	UPROPERTY()

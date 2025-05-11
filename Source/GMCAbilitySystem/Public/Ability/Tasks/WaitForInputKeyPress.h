@@ -25,7 +25,7 @@ public:
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;
 	virtual void ClientProgressTask() override;
 	 
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait For Input Key Press",Category = "GMCAbilitySystem/Tasks")
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Wait For Input Key Press", Category = "GMAS|Abilities|Tasks")
 	static UGMCAbilityTask_WaitForInputKeyPress* WaitForKeyPress(UGMCAbility* OwningAbility, bool bCheckForPressDuringActivation = true, float MaxDuration = 0.0f);
 
 	//Overriding BP async action base

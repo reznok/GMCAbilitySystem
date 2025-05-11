@@ -367,9 +367,7 @@ UGMCAbility* UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<U
 	ActiveAbilities.Add(AbilityID, Ability);
 	
 	if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}
-
-	OnAbilityActivated.Broadcast(ActivationTag, InputAction);
-
+	
 	return Ability;
 }
 

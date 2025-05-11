@@ -80,6 +80,8 @@ void UGMCAbilityEffect::StartEffect()
 
 	bHasAppliedEffect = true;
 
+	OwnerAbilityComponent->OnEffectApplied.Broadcast(this);
+
 	// Instant effects modify base value and end instantly
 	if (EffectData.bIsInstant)
 	{
@@ -147,6 +149,8 @@ void UGMCAbilityEffect::EndEffect()
 	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
 	RemoveAbilitiesFromOwner();
 	
+	OwnerAbilityComponent->OnEffectRemoved.Broadcast(this);
+
 	EndEffectEvent();
 }
 

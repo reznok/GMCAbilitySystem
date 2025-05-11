@@ -39,7 +39,7 @@ public:
 	virtual void ProgressTask(FInstancedStruct& TaskData) override;
 	virtual void ClientProgressTask() override;
  
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Set Target Data (Gameplay Tag)",Category = "GMCAbilitySystem/Tasks")
+	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"), DisplayName="Set Target Data (Gameplay Tag)", Category = "GMAS|Abilities|Tasks")
 	static UGMCAbilityTask_SetTargetDataGameplayTag* SetTargetDataGameplayTag(UGMCAbility* OwningAbility, FGameplayTag InTag);
  
 	//Overriding BP async action base

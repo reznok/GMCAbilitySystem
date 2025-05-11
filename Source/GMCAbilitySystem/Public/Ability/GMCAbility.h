@@ -8,8 +8,6 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAbilityEnded);
-
 UENUM(BlueprintType)
 enum class EAbilityState : uint8
 {
@@ -283,10 +281,7 @@ public:
 	// Block Abilities via Definition
 	FGameplayTagQuery BlockOtherAbilitiesQuery;
 
-	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
-	void ModifyEndOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery);
-
-	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Query")
+	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Queries")
 	void ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery);
 
 };

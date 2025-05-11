@@ -312,6 +312,8 @@ void UGMCAbility::BeginAbility()
 		return;
 	}
 
+	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
+
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{
 		FGameplayTagQuery BlockQuery = BlockOtherAbilitiesQuery;
@@ -348,7 +350,7 @@ void UGMCAbility::EndAbility()
 	if (AbilityState != EAbilityState::Ended) {
 		FinishEndAbility();
 		EndAbilityEvent();
-		OnAbilityEnded.Broadcast();
+		OnAbilityEnded.Broadcast(this);
 	}
 }
 
@@ -390,12 +392,6 @@ float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
 	OwnerAbilityComponent->bJustTeleported = bValue;
-}
-
-void UGMCAbility::ModifyEndOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
-{
-	EndOtherAbilitiesQuery = NewQuery;
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("CancelAbilityByDefinitionQuery modified: %s"), *NewQuery.GetDescription());
 }
 
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
