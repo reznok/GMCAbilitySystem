@@ -30,7 +30,8 @@ public class GMCAbilitySystem : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Slate",
-				"SlateCore", "Niagara"
+				"SlateCore",
+				"Niagara"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

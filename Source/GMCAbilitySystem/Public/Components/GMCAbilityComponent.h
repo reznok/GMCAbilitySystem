@@ -31,9 +31,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, const FGameplayTagContainer&, AddedTags, const FGameplayTagContainer&, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, FGameplayTag, ActivationTag, const UInputAction*, InputAction);
@@ -199,11 +197,16 @@ public:
 	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
-	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
+	UGMCAbility* TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
 	
 	// Queue an ability to be executed
 	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="GMAS|Abilities")
 	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
+
+	// Activate an Ability by Class
+	// Only use for server-owned pawns
+	UFUNCTION(BlueprintCallable, DisplayName="[AI] Activate Ability By Class", Category="GMAS|AI|Abilities")
+	UGMCAbility* AI_ActivateAbilityByClass(TSubclassOf<UGMCAbility> ActivatedAbility);
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Queued Ability Instances", Category="GMAS|Abilities")
 	int32 GetQueuedAbilityCount(FGameplayTag AbilityTag);
@@ -410,9 +413,6 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnActiveTagsChanged OnActiveTagsChanged;
 
-	UPROPERTY(BlueprintAssignable)
-	FOnAbilityEnded OnAbilityEnded;
-
 	// Called when a synced event is executed
 	UPROPERTY(BlueprintAssignable)
 	FOnSyncedEvent OnSyncedEvent;
@@ -422,7 +422,7 @@ public:
 	// Called when an ability is activated
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityActivated OnAbilityActivated;
-
+	
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;
 

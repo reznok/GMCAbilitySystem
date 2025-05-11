@@ -325,10 +325,10 @@ void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	}
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag)
+UGMCAbility* UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag)
 {
 	
-	if (ActivatedAbility == nullptr) return false;
+	if (ActivatedAbility == nullptr) return nullptr;
 	
 	
 	// Generated ID is based on ActionTimer so it always lines up on client/server
@@ -341,14 +341,14 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 		// Enforce only one active instance of the ability at a time.
 		if (GetActiveAbilityCount(ActivatedAbility) > 0) {
 			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Ability Activation for %s Stopped (Already Instanced)"), *GetNameSafe(ActivatedAbility));
-			return false;
+			return nullptr;
 		}
 	}
 
 	// Check Activation Tags
 	if (!CheckActivationTags(AbilityCDO)){
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
-		return false;
+		return nullptr;
 	}
 
 	// If multiple abilities are activated on the same frame, add 1 to the ID
@@ -370,7 +370,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 
 	OnAbilityActivated.Broadcast(ActivationTag, InputAction);
 
-	return true;
+	return Ability;
 }
 
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
@@ -383,6 +383,11 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 
 	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
 	QueuedAbilityOperations.QueueOperation(Operation, EGMASBoundQueueOperationType::Activate, InputTag, Data);
+}
+
+UGMCAbility* UGMC_AbilitySystemComponent::AI_ActivateAbilityByClass(TSubclassOf<UGMCAbility> ActivatedAbility)
+{
+	return TryActivateAbility(ActivatedAbility, nullptr, FGameplayTag::EmptyTag);
 }
 
 int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
@@ -1361,7 +1366,7 @@ bool UGMC_AbilitySystemComponent::ShouldProcessOperation(
 	if (bIsServer)
 	{
 		return HasAuthority() && (QueuedOperations.IsAcknowledged(Operation.GetOperationId()) ||
-			Operation.GracePeriodExpired() || GetNetMode() == NM_Standalone);
+			Operation.GracePeriodExpired() || GetNetMode() == NM_Standalone || GMCMovementComponent->IsServerPawn());
 	}
 	else
 	{

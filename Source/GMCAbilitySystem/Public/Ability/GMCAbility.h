@@ -8,6 +8,8 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAbilityEnded);
+
 UENUM(BlueprintType)
 enum class EAbilityState : uint8
 {
@@ -30,6 +32,9 @@ class GMCABILITYSYSTEM_API UGMCAbility : public UObject, public IGameplayTaskOwn
 	GENERATED_BODY()
 
 public:
+
+	UPROPERTY(BlueprintAssignable)
+	FOnAbilityEnded OnAbilityEnded;
 	
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual UWorld* GetWorld() const override;

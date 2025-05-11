@@ -348,7 +348,7 @@ void UGMCAbility::EndAbility()
 	if (AbilityState != EAbilityState::Ended) {
 		FinishEndAbility();
 		EndAbilityEvent();
-		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);
+		OnAbilityEnded.Broadcast();
 	}
 }
 
