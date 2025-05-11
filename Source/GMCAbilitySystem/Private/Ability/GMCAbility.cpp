@@ -312,7 +312,7 @@ void UGMCAbility::BeginAbility()
 		return;
 	}
 
-	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag, this->AbilityInputAction);
+	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
 
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{

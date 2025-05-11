@@ -31,14 +31,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag, const UInputAction*, InputAction);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEffectApplied, UGMCAbilityEffect*, AppliedEffect, FGMCAbilityEffectData, EffectData);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEffectRemoved, UGMCAbilityEffect*, RemovedEffect, FGMCAbilityEffectData, EffectData);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEffectApplied, UGMCAbilityEffect*, AppliedEffect);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEffectRemoved, UGMCAbilityEffect*, RemovedEffect);
 
 USTRUCT()
 struct FEffectStatePrediction
