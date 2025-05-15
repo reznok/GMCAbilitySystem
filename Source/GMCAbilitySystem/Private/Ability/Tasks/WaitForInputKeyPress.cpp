@@ -30,8 +30,10 @@ void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 	if (Ability->AbilityInputAction != nullptr && InputComponent != nullptr)
 	{
 		const FEnhancedInputActionEventBinding& Binding = EnhancedInputComponent->BindAction(
-			Ability->AbilityInputAction, ETriggerEvent::Started, this,
+			Ability->AbilityInputAction, ETriggerEvent::Completed, this,
 			&UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed);
+
+		
 	
 		InputBindingHandle = Binding.GetHandle();
 
@@ -43,7 +45,8 @@ void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer())) {
 				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
 			}
-			if (ActionValue.GetMagnitude() == 1)
+			
+			if (!ActionValue.GetMagnitude())
 			{
 				InputBindingHandle = -1;
 				ClientProgressTask();
@@ -73,6 +76,7 @@ void UGMCAbilityTask_WaitForInputKeyPress::AncillaryTick(float DeltaTime)
 
 void UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed(const FInputActionValue& InputActionValue)
 {
+	
 	// Unbind from the input component so we don't fire multiple times.
 	if (InputComponent)
 	{
