@@ -3,6 +3,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Components/GMCAbilityComponent.h"
+#include "Kismet/KismetSystemLibrary.h"
 
 UGMCAbilityTask_WaitForInputKeyPress* UGMCAbilityTask_WaitForInputKeyPress::WaitForKeyPress(UGMCAbility* OwningAbility, bool bCheckForPressDuringActivation, float MaxDuration)
 {
@@ -30,7 +31,7 @@ void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 	if (Ability->AbilityInputAction != nullptr && InputComponent != nullptr)
 	{
 		const FEnhancedInputActionEventBinding& Binding = EnhancedInputComponent->BindAction(
-			Ability->AbilityInputAction, ETriggerEvent::Completed, this,
+			Ability->AbilityInputAction, ETriggerEvent::Started, this,
 			&UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed);
 
 		
