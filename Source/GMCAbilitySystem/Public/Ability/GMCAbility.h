@@ -206,7 +206,21 @@ public:
 	// Prevent Abilities with these tags from activating when this ability is activated
 	FGameplayTagContainer BlockOtherAbility;
 
-	virtual void CancelAbilities();
+	/**
+	 * Cancels active abilities based on specific conditions.
+	 *
+	 * This method performs the cancellation of abilities on the owner ability component depending on the tags specified in
+	 * `CancelAbilitiesWithTag` and `EndOtherAbilitiesQuery`. It also prevents an ability from unintentionally canceling itself.
+	 *
+	 * Abilities are checked and canceled as follows:
+	 * - Each tag in `CancelAbilitiesWithTag` is evaluated against the current ability tag (`AbilityTag`). If the tag matches,
+	 *   the current ability is skipped.
+	 * - Calls `EndAbilitiesByTag` on the owner ability component for abilities matching a tag in `CancelAbilitiesWithTag`.
+	 * - Iterates through the active abilities in the owner ability component and checks if they match the query in
+	 *   `EndOtherAbilitiesQuery`. If a match is found, those abilities are set to pending end.
+	 *
+	 */
+	virtual void CancelConflictingAbilities();
 	
 	/** 
 	 * If true, activate on movement tick, if false, activate on ancillary tick. Defaults to true.

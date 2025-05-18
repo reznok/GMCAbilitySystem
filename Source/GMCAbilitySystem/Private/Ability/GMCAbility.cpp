@@ -176,7 +176,7 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 	}
 }
 
-void UGMCAbility::CancelAbilities()
+void UGMCAbility::CancelConflictingAbilities()
 {
 	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
 		if (AbilityTag == AbilityToCancelTag) {
@@ -339,7 +339,7 @@ void UGMCAbility::BeginAbility()
 	AbilityState = EAbilityState::Initialized;
 
 	// Cancel Abilities in CancelAbilitiesWithTag container
-	CancelAbilities();
+	CancelConflictingAbilities();
 
 	// Execute BP Event
 	BeginAbilityEvent();
