@@ -371,13 +371,30 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	return true;
 }
 
-void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction)
+void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction, bool bPreventConcurrentActivation)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
 
 	FGMCAbilityData Data;
 	Data.InputTag = InputTag;
 	Data.ActionInput = InputAction;
+
+
+	// Early local check for ability
+	FAbilityMapData* MapEntry = AbilityMap.Find(InputTag);
+	if (MapEntry == nullptr || MapEntry->Abilities.IsEmpty()) return;
+
+	// This local check will prevent concurrent activation of the same ability if the ability is contain in the input map
+	if (bPreventConcurrentActivation) {
+		for (const TPair<int, UGMCAbility*>& ActiveAbility : ActiveAbilities)
+		{
+			if (ActiveAbility.Value && MapEntry->Abilities.ContainsByPredicate([&ActiveAbility](const TSubclassOf<UGMCAbility>& Ability) {
+					return ActiveAbility.Value->IsA(Ability);
+				})) return;
+		}
+	}
+
+	
 
 	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
 	QueuedAbilityOperations.QueueOperation(Operation, EGMASBoundQueueOperationType::Activate, InputTag, Data);

@@ -202,10 +202,19 @@ public:
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
-	
-	// Queue an ability to be executed
+
+
+	/**
+	 * Queue an ability for activation based on the provided input tag and action.
+	 *
+	 * @param InputTag              The gameplay tag associated with the ability to queue.
+	 * @param InputAction           The input action triggering the ability.
+	 * @param bPreventConcurrentActivation If true, prevents the concurrent activation of abilities already in progress. The check is made locally
+	 * 							   reducing server charge, but also required in case of activation key wait inside the ability.
+	 */
 	UFUNCTION(BlueprintCallable, DisplayName="Activate Ability", Category="GMAS|Abilities")
-	void QueueAbility(UPARAM(meta=(Categories="Input"))FGameplayTag InputTag, const UInputAction* InputAction = nullptr);
+	void QueueAbility(UPARAM(meta=(Categories="Input"))
+	                  FGameplayTag InputTag, const UInputAction* InputAction = nullptr, bool bPreventConcurrentActivation = false);
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Queued Ability Instances", Category="GMAS|Abilities")
 	int32 GetQueuedAbilityCount(FGameplayTag AbilityTag);
