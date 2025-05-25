@@ -2001,7 +2001,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 					}
 				}
 
-				return true;			
+				return true;
 			}
 		case EGMCAbilityEffectQueueType::PredictedQueued:
 			{
