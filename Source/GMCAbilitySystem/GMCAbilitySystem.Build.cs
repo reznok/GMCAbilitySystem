@@ -35,6 +35,13 @@ public class GMCAbilitySystem : ModuleRules
 			}
 			);
 		
+		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] {
+				"AutomationController",
+				"AutomationWorker"
+			});
+		}
 		
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]

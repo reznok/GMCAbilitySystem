@@ -89,24 +89,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
-
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.AdditiveModifier,
-			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
-		
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.MultiplyModifier,
-			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
-		
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.DivisionModifier,
-			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
-			EGMC_CombineMode::CombineIfUnchanged,
-			EGMC_SimulationMode::Periodic_Output,
-			EGMC_InterpolationFunction::TargetValue);
 	}
 	
 	// Granted Abilities
@@ -155,9 +137,12 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 	ClientHandlePendingOperation(QueuedEventOperations);
 	
-	
 	CheckActiveTagsChanged();
+	
+	ProcessAttributes(false);
+	
 	CheckAttributeChanged();
+	
 	CheckUnBoundAttributeChanged();
 
 	
@@ -569,12 +554,16 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 	
 	ApplyStartingEffects();
+	
+	PurgeModifierHistory();
 
 	SendTaskDataToActiveAbility(true);
 	TickActiveAbilities(DeltaTime);
 	
 	TickActiveEffects(DeltaTime);
 	
+	ProcessAttributes(true);
+
 	// Abilities
 	CleanupStaleAbilities();
 
@@ -687,18 +676,18 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	
 	for (const FAttribute& Attribute : BoundAttributes.Attributes)
 	{
-		Attribute.CalculateValue();
+		Attribute.Init();
 	}
 
 	for (FAttribute& Attribute : UnBoundAttributes.Items)
 	{
-		Attribute.CalculateValue();
+		Attribute.Init();
 		UnBoundAttributes.MarkItemDirty(Attribute);
 	}
 	
 	for (const FAttribute& Attribute : OldUnBoundAttributes.Items)
 	{
-		Attribute.CalculateValue();
+		Attribute.Init();
 	}
 	
 	OldBoundAttributes = BoundAttributes;
@@ -847,6 +836,54 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	}
 	
 }
+
+void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
+{
+	for (const FAttribute* Attribute : GetAllAttributes())
+	{
+		if (Attribute->bIsGMCBound == bInGenPredictionTick)
+		{
+			Attribute->ProcessPendingModifiers(ModifierHistory);
+		}
+	}
+	
+}
+
+void UGMC_AbilitySystemComponent::PurgeModifierHistory()
+{
+	for (int i = ModifierHistory.Num() - 1; i >= 0; --i)
+	{
+		if (ModifierHistory[i].bIsBound && ModifierHistory[i].ActionTimer > ActionTimer)
+		{
+			ModifierHistory.RemoveAt(i);
+		}
+	}
+}
+
+TArray<FModifierApplicationEntry> UGMC_AbilitySystemComponent::GetModifierHistoryOf(const UGMCAbilityEffect* Effect, bool Pop)
+{
+
+	TArray<FModifierApplicationEntry> Modifiers;
+	
+	for (int i = ModifierHistory.Num() - 1; i >= 0; --i)
+	{
+		if (ModifierHistory[i].SourceEffect == Effect)
+		{
+			if (Pop)
+			{
+				Modifiers.Add(ModifierHistory[i]);
+				ModifierHistory.RemoveAt(i);
+			}
+			else
+			{
+				Modifiers.Add(ModifierHistory[i]);
+			}
+		}
+	}
+
+	return Modifiers;
+}
+
 
 void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 {
@@ -1055,7 +1092,7 @@ void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
 			if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
 				return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
 			})) {
-				ApplyAbilityEffect(Effect, FGMCAbilityEffectData{});
+				ApplyAbilityEffectShort(Effect, EGMCAbilityEffectQueueType::ServerAuth);
 			}
 		}
 		bStartingEffectsApplied = true;
@@ -1831,6 +1868,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	
 	// Force the component this is being applied to to be the owner
 	InitializationData.OwnerAbilityComponent = this;
+	InitializationData.SourceAbilityComponent = this;
 	
 	Effect->InitializeEffect(InitializationData);
 	
@@ -2163,14 +2201,14 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
 	{
-		Att->SetBaseValue(NewValue);
+		/*Att->SetBaseValue(NewValue);
 
 		if (bResetModifiers)
 		{
 			Att->ResetModifiers();
 		}
 
-		Att->CalculateValue();
+		Att->CalculateValue();*/
 		UnBoundAttributes.MarkAttributeDirty(*Att);
 		return true;
 	}
@@ -2225,18 +2263,22 @@ FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 
 #pragma endregion  ToStringHelpers
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, bool bModifyBaseValue, bool bNegateValue,  UGMC_AbilitySystemComponent* SourceAbilityComponent)
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(const FGMCAttributeModifier& AttributeModifier,
+	UGMC_AbilitySystemComponent* SourceAbilityComponent)
 {
-	// Provide an opportunity to modify the attribute modifier before applying it
-	UGMCAttributeModifierContainer* AttributeModifierContainer = NewObject<UGMCAttributeModifierContainer>(this);
-	AttributeModifierContainer->AttributeModifier = AttributeModifier;
+	ApplyAbilityEffectModifier(AttributeModifier, SourceAbilityComponent, nullptr, false, -1.f);
+}
 
+void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier,
+	UGMC_AbilitySystemComponent* SourceAbilityComponent, UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime)
+{
+	// Todo : re-add later
 	// Broadcast the event to allow modifications to happen before application
-	OnPreAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
+	//OnPreAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
 
-	// Apply the modified attribute modifier. If no changes were made, it's just the same as the original
-	// Extra copying going on here? Can this be done with a reference? BPs are weird.
-	AttributeModifier = AttributeModifierContainer->AttributeModifier;
+	AttributeModifier.SourceAbilitySystemComponent = SourceAbilityComponent;
+	AttributeModifier.bRegisterInHistory = bRegisterInHistory;
+	AttributeModifier.SourceAbilityEffect = SourceAbilityEffect;
 	
 	if (const FAttribute* AffectedAttribute = GetAttributeByTag(AttributeModifier.AttributeTag))
 	{
@@ -2246,20 +2288,18 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		float OldValue = AffectedAttribute->Value;
 		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
-		if (bNegateValue)
-		{
-			AttributeModifier.Value = -AttributeModifier.Value;
-		}
-		AffectedAttribute->ApplyModifier(AttributeModifier, bModifyBaseValue);
+		AffectedAttribute->AddModifier(AttributeModifier, DeltaTime);
+
 
 		// Only broadcast a change if we've genuinely changed.
-		if (OldValue != AffectedAttribute->Value)
+		// To add later
+		/*if (OldValue != AffectedAttribute->Value)
 		{
 			if (!AffectedAttribute->bIsGMCBound)
 			{
 				UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
 			}
-		}
+		}*/
 	}
 }
 

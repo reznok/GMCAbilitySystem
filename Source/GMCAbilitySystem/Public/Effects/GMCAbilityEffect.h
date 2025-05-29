@@ -73,8 +73,12 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bIsInstant = true;
 
+	// If true, the modifier will be applied instantly, one time, if false, it will be applied each frame (with delta time applied to values)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	bool bApplyModifierOnlyOnStart = false;
+
 	// Apply an inversed version of the modifiers at effect end
-	UPROPERTY()
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bNegateEffectAtEnd = false;
 
 	// Delay before the effect starts
@@ -85,11 +89,6 @@ struct FGMCAbilityEffectData
 	// Does nothing if effect is instant
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Duration = 0;
-
-	// How often the periodic effect ticks
-	// Suggest keeping this above .01
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	double Period = 0;
 
 	// For Period effects, whether first tick should happen immediately
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -184,7 +183,6 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On End Via Definition Query"))
 	// end ability on effect end if definition matches query
 	FGameplayTagQuery EndAbilityOnEndQuery;
-
 };
 
 /**
@@ -269,6 +267,11 @@ private:
 	bool bHasStarted;
 	bool bHasAppliedEffect;
 
+	
+	// The container for the applied modifiers history, Key by the time they were applied.
+	// On replay, value previous action timer will be erased, and re-processed;
+	TMap<double, FGMCAttributeModifier> AppliedModifiersHistory;
+
 	// Used for calculating when to tick Period effects
 	float PrevPeriodMod = 0;
 	
@@ -283,7 +286,6 @@ private:
 	void AddAbilitiesToOwner();
 	void RemoveAbilitiesFromOwner();
 	void EndActiveAbilitiesFromOwner(const FGameplayTagContainer& TagContainer);
-	
 
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;

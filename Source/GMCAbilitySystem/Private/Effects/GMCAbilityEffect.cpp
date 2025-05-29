@@ -83,38 +83,19 @@ void UGMCAbilityEffect::StartEffect()
 	OwnerAbilityComponent->OnEffectApplied.Broadcast(this);
 
 	// Instant effects modify base value and end instantly
-	if (EffectData.bIsInstant)
+	if (EffectData.bIsInstant || EffectData.bApplyModifierOnlyOnStart)
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, true, false, SourceAbilityComponent);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd, -1.f);
 		}
-		EndEffect();
-		return;
-	}
 
-	// Duration Effects that aren't periodic alter modifiers, not base
-	if (!EffectData.bIsInstant && EffectData.Period == 0)
-	{
-		EffectData.bNegateEffectAtEnd = true;
-		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
+		if (EffectData.bIsInstant)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, false, SourceAbilityComponent);
+			EndEffect();
 		}
 	}
-
-	// Tick period at start
-	if (EffectData.bPeriodTickAtStart && EffectData.Period > 0)
-	{
-		PeriodTick();
-	}
-				
-	// Instant effects instantly end
-	if (EffectData.bIsInstant)
-	{
-		EndEffect();
-	}
-
+	
 	StartEffectEvent();
 
 	UpdateState(EGMASEffectState::Started, true);
@@ -137,10 +118,36 @@ void UGMCAbilityEffect::EndEffect()
 
 	if (EffectData.bNegateEffectAtEnd)
 	{
-		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
+		TArray<FModifierApplicationEntry> History = OwnerAbilityComponent->GetModifierHistoryOf(this, true);
+		
+		TMap<FGameplayTag, FGMCAttributeModifier> ModifiersToNegate;
+
+		for (const FModifierApplicationEntry& Entry : History)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, false, true);
+			FGMCAttributeModifier* NegMod = ModifiersToNegate.Find(Entry.AttributeTarget);
+			if (!NegMod)
+			{
+				FGMCAttributeModifier& NewNegMod = ModifiersToNegate.Add(Entry.AttributeTarget);
+				NewNegMod.AttributeTag = Entry.AttributeTarget;
+				NewNegMod.SourceAbilitySystemComponent = OwnerAbilityComponent;
+				NewNegMod.SourceAbilityEffect = this;
+				NewNegMod.bRegisterInHistory = false;
+				NewNegMod.Op = EModifierType::Add;
+				NewNegMod.Phase = EGMCModifierPhase::EMP_Stack;
+				NewNegMod.Priority = 0;
+				NegMod = &NewNegMod;
+			}
+
+			NegMod->Value -= Entry.Value;
 		}
+
+	
+		for (const TPair<FGameplayTag, FGMCAttributeModifier>& NegateModifier : ModifiersToNegate)
+		{
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("Effect %s is being negated with value %f"), *EffectData.EffectTag.ToString(), NegateModifier.Value.Value);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(NegateModifier.Value, OwnerAbilityComponent);
+		}
+		
 	}
 	
 	EndActiveAbilitiesByDefinitionQuery(EffectData.EndAbilityOnEndQuery);
@@ -191,7 +198,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		return;
 	}
 	
-	EffectData.CurrentDuration += DeltaTime;
+	EffectData.CurrentDuration = OwnerAbilityComponent->ActionTimer - EffectData.StartTime;
 	TickEvent(DeltaTime);
 	
 	// Ensure tag requirements are met before applying the effect
@@ -208,15 +215,14 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	}
 
 	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && EffectData.Period > 0 && CurrentState == EGMASEffectState::Started)
+	if (!IsPeriodPaused() && !EffectData.bApplyModifierOnlyOnStart && CurrentState == EGMASEffectState::Started)
 	{
-		const float Mod = FMath::Fmod(OwnerAbilityComponent->ActionTimer, EffectData.Period);
-		if (Mod < PrevPeriodMod)
+		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			PeriodTick();
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd, DeltaTime);
 		}
-		PrevPeriodMod = Mod;
 	}
+	
 	
 	CheckState();
 }
@@ -233,12 +239,12 @@ bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
 
 void UGMCAbilityEffect::PeriodTick()
 {
-	if (AttributeDynamicCondition()) {
+	/*if (AttributeDynamicCondition()) {
 		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
 		{
 			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true, false, SourceAbilityComponent);
 		}
-	}
+	}*/
 	PeriodTickEvent();
 }
 
@@ -330,7 +336,6 @@ void UGMCAbilityEffect::EndActiveAbilitiesFromOwner(const FGameplayTagContainer&
 		OwnerAbilityComponent->EndAbilitiesByTag(Tag);
 	}
 }
-
 
 bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const
 {

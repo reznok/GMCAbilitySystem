@@ -7,6 +7,23 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
 
+USTRUCT()
+struct FModifierApplicationEntry
+{
+	GENERATED_BODY()
+	
+	TWeakObjectPtr<UGMCAbilityEffect> SourceEffect;
+	
+	FGameplayTag AttributeTarget;
+	
+	float ActionTimer {0};
+	
+	float Value {0};
+	
+	uint8 bIsBound : 1 {false};
+
+};
+
 USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 {
@@ -15,84 +32,17 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	void Init() const
 	{
-		CalculateValue(false);
+		Value = Clamp.ClampValue(BaseValue);
 	}
+
+	
+	void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
+
+	void ProcessPendingModifiers(TArray<FModifierApplicationEntry>& ModifierHistory) const;
+
 
 	UPROPERTY(BlueprintAssignable)
 	FAttributeChanged OnAttributeChanged;
-
-	UPROPERTY()
-	mutable float AdditiveModifier{0};
-	
-	UPROPERTY()
-	mutable float MultiplyModifier{1};
-
-	UPROPERTY()
-	mutable float DivisionModifier{1};
-
-	void ApplyModifier(const FGMCAttributeModifier& Modifier, bool bModifyBaseValue) const
-	{
-		switch(Modifier.ModifierType)
-		{
-		case EModifierType::Add:
-			if (bModifyBaseValue)
-			{
-				BaseValue += Modifier.Value;
-				BaseValue = Clamp.ClampValue(BaseValue);
-			}
-			else
-			{
-				AdditiveModifier += Modifier.Value;
-			}
-			break;
-		case EModifierType::Multiply:
-			MultiplyModifier += Modifier.Value;
-			break;
-		case EModifierType::Divide:
-			DivisionModifier += Modifier.Value;
-			break;
-		default:
-			break;
-		}
-		
-		CalculateValue();
-		
-	}
-
-	void CalculateValue(bool bClamp = true) const
-	{
-		// Prevent divide by 0 and negative divisors
-		float LocalDivisionModifier = DivisionModifier;
-		if (LocalDivisionModifier <= 0){
-			LocalDivisionModifier = 1;
-		}
-
-		// Prevent negative multipliers
-		float LocalMultiplyModifier = MultiplyModifier;
-		if (LocalMultiplyModifier < 0){
-			LocalMultiplyModifier = 0;
-		}
-		
-		Value =((BaseValue + AdditiveModifier) * LocalMultiplyModifier) / LocalDivisionModifier;
-		if (bClamp)
-		{
-			Value = Clamp.ClampValue(Value);
-		}
-	}
-
-	// Reset the modifiers to the base value. May cause jank if there's effects going on.
-	void ResetModifiers() const
-	{
-		MultiplyModifier = 1;
-		DivisionModifier = 1;
-	}
-
-	// Allow for externally directly setting the BaseValue
-	// Usually preferred to go through Effects/Modifiers instead of this
-	void SetBaseValue(const float NewValue) const
-	{
-		BaseValue = Clamp.ClampValue(NewValue);
-	}
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	mutable float Value{0};
@@ -103,6 +53,9 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	// Attribute.* 
 	UPROPERTY(EditDefaultsOnly, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag Tag{FGameplayTag::EmptyTag};
+
+	
+	mutable TArray<FGMCAttributeModifier> PendingModifiers;
 
 	// Whether this should be bound over GMC or not.
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
@@ -123,6 +76,8 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 		return Tag.ToString() < Other.Tag.ToString();
 	}
 };
+
+
 
 USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEM_API FGMCAttributeSet{

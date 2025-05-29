@@ -11,6 +11,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
+#include "Containers/Deque.h"
 #include "Utility/GMASBoundQueue.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
@@ -468,7 +469,10 @@ public:
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
-	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier,bool bModifyBaseValue, bool bNegateValue = false, UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr);
+	void ApplyAbilityEffectModifier(const FGMCAttributeModifier& AttributeModifier, UGMC_AbilitySystemComponent* SourceAbilityComponent);
+	
+	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, UGMC_AbilitySystemComponent* SourceAbilityComponent,
+		UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime);
 
 	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bJustTeleported;
@@ -598,11 +602,23 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ClearAbilityMap();
 
+	// Will return the modifier history of a given effect
+	// If Pop is true, it will remove also entry returned from ModifierHistory
+	TArray<FModifierApplicationEntry> GetModifierHistoryOf(const UGMCAbilityEffect* Effect, bool Pop = true);
+
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
 
 	FGameplayAttributeChangedNative NativeAttributeChangeDelegate;
+
+	// Will calculate and process stack of attributes
+	void ProcessAttributes(bool bInGenPredictionTick);
+
+	// Will discard "future" registered move on replay.
+	void PurgeModifierHistory();
+	
+	TArray<FModifierApplicationEntry> ModifierHistory;
 	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();
@@ -690,6 +706,7 @@ private:
 
 	// Tick Predicted and Active Effects
 	void TickActiveEffects(float DeltaTime);
+
 
 	// Tick active abilities, primarily the Tasks inside them
 	void TickActiveAbilities(float DeltaTime);

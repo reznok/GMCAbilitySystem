@@ -130,6 +130,7 @@ void UGMCAbility::CommitAbilityCost()
 	const UGMCAbilityEffect* EffectCDO = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
 	FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
 	EffectData.OwnerAbilityComponent = OwnerAbilityComponent;
+	EffectData.SourceAbilityComponent = OwnerAbilityComponent;
 	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
 }
 
