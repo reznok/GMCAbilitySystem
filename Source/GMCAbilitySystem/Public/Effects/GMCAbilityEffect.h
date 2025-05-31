@@ -6,7 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "UObject/Object.h"
 #include "GMCAbilitySystem.h"
-#include "Attributes/GMCAttributeModifier.h"
+#include "GMCAttributeModifier.h"
 #include "GMCAbilityEffect.generated.h"
 
 class UGMC_AbilitySystemComponent;
@@ -244,6 +244,8 @@ public:
 
 	virtual bool IsPeriodPaused();
 	
+	float ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* attribute);
+
 	bool bCompleted;
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
@@ -254,6 +256,10 @@ public:
 	void GetOwnerActor(AActor*& OwnerActor) const;
 
 protected:
+
+	UPROPERTY(Transient)
+	TMap<TSubclassOf<UGMCAttributeModifierCustom_Base>, UGMCAttributeModifierCustom_Base*> CustomModifiersInstances;
+	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr;
 

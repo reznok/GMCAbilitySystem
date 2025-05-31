@@ -255,6 +255,23 @@ bool UGMCAbilityEffect::IsPeriodPaused()
 	return DoesOwnerHaveTagFromContainer(EffectData.PausePeriodicEffect);
 }
 
+float UGMCAbilityEffect::ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* Attribute)
+{
+	UGMCAttributeModifierCustom_Base** MCI = CustomModifiersInstances.Find(MCClass);
+	if (MCI == nullptr)
+	{
+		MCI = &CustomModifiersInstances.Add(MCClass, NewObject<UGMCAttributeModifierCustom_Base>(this, MCClass));
+	}
+
+	if (*MCI == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Custom Modifier Instance is null for class %s in UGMCAbilityEffect::ProcessCustomModifier"), *MCClass->GetName());
+		return 0.f;
+	}
+
+	return (*MCI)->Calculate(this, Attribute);
+}
+
 void UGMCAbilityEffect::GetOwnerActor(AActor*& OutOwnerActor) const
 {
 	if (OwnerAbilityComponent)

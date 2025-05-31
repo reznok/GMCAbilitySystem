@@ -217,6 +217,12 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 	for (int i = 0; i < PendingModifiers.Num(); i++) {
 		const FGMCAttributeModifier& Modifier = PendingModifiers[i];
 
+		if (!Modifier.SourceAbilityEffect.IsValid())
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to apply a modifier without a valid SourceAbilityEffect for Attribute: %s"), *Tag.ToString());
+			continue;
+		}
+
 		CurOp = Modifier.Op;
 		if (bIsNewStep)
 		{
@@ -230,7 +236,7 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 		}
 
 		bIsNewStep = false;
-		CurModVal += Modifier.Value; // Add to the stack of current step
+		CurModVal += Modifier.CustomModifierClass ? Modifier.SourceAbilityEffect->ProcessCustomModifier(Modifier.CustomModifierClass, this) : Modifier.Value;  // Add to the stack of current step
 		CurPhase = Modifier.Phase;
 		CurPrio = Modifier.Priority;
 		

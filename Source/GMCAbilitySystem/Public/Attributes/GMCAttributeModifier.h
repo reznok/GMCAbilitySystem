@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include "GameplayTags.h"
+#include "GMCAttributeModifierCustom_Base.h"
 #include "GMCAttributeModifier.generated.h"
 
 
@@ -37,10 +38,10 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag AttributeTag;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(EditCondition = "CustomModifierClass == nullptr"))
 	bool bValueIsAttribute{false};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditCondition = "bValueIsAttribute", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditCondition = "bValueIsAttribute && CustomModifierClass == nullptr", EditConditionHides))
 	FGameplayTag ValueAsAttribute;
 
 	UPROPERTY(Transient)
@@ -53,7 +54,7 @@ struct FGMCAttributeModifier
 	bool bRegisterInHistory{false};
 
 	// Value to modify the attribute by
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bValueIsAttribute", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bValueIsAttribute && CustomModifierClass == nullptr", EditConditionHides))
 	float Value{0};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -61,6 +62,9 @@ struct FGMCAttributeModifier
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EGMCModifierPhase Phase {EGMCModifierPhase::EMP_Stack};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	int Priority{0};
