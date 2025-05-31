@@ -8,20 +8,49 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
 
 USTRUCT()
-struct FModifierApplicationEntry
+struct FModifierHistoryEntry
 {
 	GENERATED_BODY()
-	
-	TWeakObjectPtr<UGMCAbilityEffect> SourceEffect;
-	
-	FGameplayTag AttributeTarget;
-	
-	float ActionTimer {0};
-	
-	float Value {0};
-	
-	uint8 bIsBound : 1 {false};
 
+	TWeakObjectPtr<UGMCAbilityEffect> InstigatorEffect;
+	
+	float ActionTimer = 0.f;
+
+	float Value = 0.f;
+};
+
+USTRUCT()
+struct FModifierHistory
+{
+	GENERATED_BODY()
+
+	public:
+
+		void AddMoveHistory(UGMCAbilityEffect* InstigatorEffect, float ActionTimer, float Value, bool bIsBound);
+
+		void CleanMoveHistory(float CurrentActionTimer);
+
+		// Remove all entries, if bPurge is true, we will remove entries readed
+		float ExtractFromMoveHistory(UGMCAbilityEffect* InstigatorEffect, bool bPurge);
+
+		int Num() const
+		{
+			return History.Num() + ConcatenatedHistory.Num();
+		}
+
+		int GetAllocatedSize() const
+		{
+			return History.GetAllocatedSize() + ConcatenatedHistory.GetAllocatedSize();
+		}
+
+	private:
+	
+		// Bound Attribute who can be replayed at any moment
+		TArray<FModifierHistoryEntry> History;
+
+		// Unbound attribute, and attribute who doesn't need to be replayed (Action timer > Oldest Action Timer)
+		TArray<FModifierHistoryEntry> ConcatenatedHistory;
+	
 };
 
 USTRUCT(BlueprintType)
@@ -38,7 +67,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	
 	void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
 
-	void ProcessPendingModifiers(TArray<FModifierApplicationEntry>& ModifierHistory) const;
+	void ProcessPendingModifiers(float ActionTimer) const;
 
 
 	UPROPERTY(BlueprintAssignable)
@@ -66,6 +95,8 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	// Clamping will only happen if this is modified
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	FAttributeClamp Clamp{};
+
+	mutable FModifierHistory ModifierHistory;
 
 	FString ToString() const{
 		return FString::Printf(TEXT("%s : %f (Bound: %d)"), *Tag.ToString(), Value, bIsGMCBound);

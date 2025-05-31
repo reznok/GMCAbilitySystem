@@ -267,11 +267,6 @@ private:
 	bool bHasStarted;
 	bool bHasAppliedEffect;
 
-	
-	// The container for the applied modifiers history, Key by the time they were applied.
-	// On replay, value previous action timer will be erased, and re-processed;
-	TMap<double, FGMCAttributeModifier> AppliedModifiersHistory;
-
 	// Used for calculating when to tick Period effects
 	float PrevPeriodMod = 0;
 	

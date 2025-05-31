@@ -554,8 +554,12 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 	
 	ApplyStartingEffects();
-	
-	PurgeModifierHistory();
+
+	float OldestActionTimer = GMCMovementComponent->MoveHistory.Num() > 0 ? GMCMovementComponent->MoveHistory[0].MetaData.Timestamp : -1.f;
+	for (const FAttribute* Attribute : GetAllAttributes())
+	{
+		Attribute->ModifierHistory.CleanMoveHistory(ActionTimer);
+	}
 
 	SendTaskDataToActiveAbility(true);
 	TickActiveAbilities(DeltaTime);
@@ -843,45 +847,10 @@ void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
 	{
 		if (Attribute->bIsGMCBound == bInGenPredictionTick)
 		{
-			Attribute->ProcessPendingModifiers(ModifierHistory);
+			Attribute->ProcessPendingModifiers(ActionTimer);
 		}
 	}
 	
-}
-
-void UGMC_AbilitySystemComponent::PurgeModifierHistory()
-{
-	for (int i = ModifierHistory.Num() - 1; i >= 0; --i)
-	{
-		if (ModifierHistory[i].bIsBound && ModifierHistory[i].ActionTimer > ActionTimer)
-		{
-			ModifierHistory.RemoveAt(i);
-		}
-	}
-}
-
-TArray<FModifierApplicationEntry> UGMC_AbilitySystemComponent::GetModifierHistoryOf(const UGMCAbilityEffect* Effect, bool Pop)
-{
-
-	TArray<FModifierApplicationEntry> Modifiers;
-	
-	for (int i = ModifierHistory.Num() - 1; i >= 0; --i)
-	{
-		if (ModifierHistory[i].SourceEffect == Effect)
-		{
-			if (Pop)
-			{
-				Modifiers.Add(ModifierHistory[i]);
-				ModifierHistory.RemoveAt(i);
-			}
-			else
-			{
-				Modifiers.Add(ModifierHistory[i]);
-			}
-		}
-	}
-
-	return Modifiers;
 }
 
 

@@ -602,10 +602,6 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ClearAbilityMap();
 
-	// Will return the modifier history of a given effect
-	// If Pop is true, it will remove also entry returned from ModifierHistory
-	TArray<FModifierApplicationEntry> GetModifierHistoryOf(const UGMCAbilityEffect* Effect, bool Pop = true);
-
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
@@ -614,11 +610,8 @@ private:
 
 	// Will calculate and process stack of attributes
 	void ProcessAttributes(bool bInGenPredictionTick);
-
-	// Will discard "future" registered move on replay.
-	void PurgeModifierHistory();
 	
-	TArray<FModifierApplicationEntry> ModifierHistory;
+	TArray<FModifierHistoryEntry> ModifierHistory;
 	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();

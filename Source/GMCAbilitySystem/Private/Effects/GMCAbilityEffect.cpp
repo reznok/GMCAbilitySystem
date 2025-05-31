@@ -118,35 +118,28 @@ void UGMCAbilityEffect::EndEffect()
 
 	if (EffectData.bNegateEffectAtEnd)
 	{
-		TArray<FModifierApplicationEntry> History = OwnerAbilityComponent->GetModifierHistoryOf(this, true);
-		
-		TMap<FGameplayTag, FGMCAttributeModifier> ModifiersToNegate;
 
-		for (const FModifierApplicationEntry& Entry : History)
+		for (FGMCAttributeModifier& Mod : EffectData.Modifiers)
 		{
-			FGMCAttributeModifier* NegMod = ModifiersToNegate.Find(Entry.AttributeTarget);
-			if (!NegMod)
+			if (const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Mod.AttributeTag))
 			{
-				FGMCAttributeModifier& NewNegMod = ModifiersToNegate.Add(Entry.AttributeTarget);
-				NewNegMod.AttributeTag = Entry.AttributeTarget;
-				NewNegMod.SourceAbilitySystemComponent = OwnerAbilityComponent;
-				NewNegMod.SourceAbilityEffect = this;
-				NewNegMod.bRegisterInHistory = false;
-				NewNegMod.Op = EModifierType::Add;
-				NewNegMod.Phase = EGMCModifierPhase::EMP_Stack;
-				NewNegMod.Priority = 0;
-				NegMod = &NewNegMod;
+				float Value = Attribute->ModifierHistory.ExtractFromMoveHistory(this, true);
+				if (Value != 0.f)
+				{
+					FGMCAttributeModifier NegateModifier;
+					NegateModifier.AttributeTag = Mod.AttributeTag;
+					NegateModifier.Value = -Value;
+					NegateModifier.Op = EModifierType::Add; // Negate is always an Add operation
+					NegateModifier.Phase = Mod.Phase;
+					NegateModifier.SourceAbilitySystemComponent = SourceAbilityComponent;
+					NegateModifier.SourceAbilityEffect = this;
+					NegateModifier.bRegisterInHistory = false;
+					
+					OwnerAbilityComponent->ApplyAbilityEffectModifier(NegateModifier, SourceAbilityComponent, this, false, -1.f);
+				}
 			}
-
-			NegMod->Value -= Entry.Value;
 		}
-
-	
-		for (const TPair<FGameplayTag, FGMCAttributeModifier>& NegateModifier : ModifiersToNegate)
-		{
-			UE_LOG(LogGMCAbilitySystem, Log, TEXT("Effect %s is being negated with value %f"), *EffectData.EffectTag.ToString(), NegateModifier.Value.Value);
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(NegateModifier.Value, OwnerAbilityComponent);
-		}
+		
 		
 	}
 	
