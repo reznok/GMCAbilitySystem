@@ -153,7 +153,7 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 
 	float OldValue = Value;
 	
-	// We iterate trough the whole array, sort value Phase > Operator > Priority
+	// We iterate trough the whole array, sort value Phase > Priority > Operator > bRegisterInHistory
 	PendingModifiers.Sort([](const FGMCAttributeModifier& A, const FGMCAttributeModifier& B) {
 		if (A.Phase != B.Phase) { return A.Phase < B.Phase; }
 
