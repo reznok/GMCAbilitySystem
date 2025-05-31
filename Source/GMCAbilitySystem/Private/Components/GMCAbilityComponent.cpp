@@ -144,7 +144,6 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	CheckAttributeChanged();
 	
 	CheckUnBoundAttributeChanged();
-
 	
 	TickActiveCooldowns(DeltaTime);
 
@@ -847,7 +846,14 @@ void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
 	{
 		if (Attribute->bIsGMCBound == bInGenPredictionTick)
 		{
-			Attribute->ProcessPendingModifiers(ActionTimer);
+			
+			bool bHasBeenModified = Attribute->ProcessPendingModifiers(ActionTimer);
+
+			// Broadcast dirty change if unbound
+			if (!Attribute->bIsGMCBound && bHasBeenModified)
+			{
+				UnBoundAttributes.MarkAttributeDirty(*Attribute);
+			}
 		}
 	}
 	
@@ -2258,17 +2264,6 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
 		AffectedAttribute->AddModifier(AttributeModifier, DeltaTime);
-
-
-		// Only broadcast a change if we've genuinely changed.
-		// To add later
-		/*if (OldValue != AffectedAttribute->Value)
-		{
-			if (!AffectedAttribute->bIsGMCBound)
-			{
-				UnBoundAttributes.MarkAttributeDirty(*AffectedAttribute);
-			}
-		}*/
 	}
 }
 

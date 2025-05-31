@@ -208,7 +208,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	}
 
 	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && !EffectData.bApplyModifierOnlyOnStart && CurrentState == EGMASEffectState::Started)
+	if (!IsPeriodPaused() && !EffectData.bApplyModifierOnlyOnStart && CurrentState == EGMASEffectState::Started && AttributeDynamicCondition())
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
@@ -232,12 +232,7 @@ bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
 
 void UGMCAbilityEffect::PeriodTick()
 {
-	/*if (AttributeDynamicCondition()) {
-		for (const FGMCAttributeModifier& AttributeModifier : EffectData.Modifiers)
-		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(AttributeModifier, true, false, SourceAbilityComponent);
-		}
-	}*/
+
 	PeriodTickEvent();
 }
 

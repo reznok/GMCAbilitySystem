@@ -144,12 +144,14 @@ void FAttribute::AddModifier(FGMCAttributeModifier PendingModifier, float DeltaT
 	PendingModifiers.Add(PendingModifier);
 }
 
-void FAttribute::ProcessPendingModifiers(float ActionTimer) const
+bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 {
+	
 	if (PendingModifiers.IsEmpty()) {
-		return;
+		return false;
 	}
 
+	float OldValue = Value;
 	
 	// We iterate trough the whole array, sort value Phase > Operator > Priority
 	PendingModifiers.Sort([](const FGMCAttributeModifier& A, const FGMCAttributeModifier& B) {
@@ -228,24 +230,10 @@ void FAttribute::ProcessPendingModifiers(float ActionTimer) const
 		}
 
 		bIsNewStep = false;
-
-		//UE_LOG(LogGMCAbilitySystem, Log, TEXT("Adding Modifier %f to %f"), CurModVal, Modifier.Value);
 		CurModVal += Modifier.Value; // Add to the stack of current step
-		
 		CurPhase = Modifier.Phase;
-		
 		CurPrio = Modifier.Priority;
-
-		/*UE_LOG(LogGMCAbilitySystem, Log, TEXT("Process %s on Attribute %s (Value: %s (%s)%s-> %s) | Phase: %s(%d))"),
-			*GetNameSafe(Modifier.SourceAbilityEffect.Get()),
-			*Tag.ToString(),
-			*FString::SanitizeFloat(PreApplicationVal),
-			Modifier.Op == EModifierType::Set ? TEXT("=") : Modifier.Op == EModifierType::Add ? TEXT("+") : TEXT("*"),
-			*FString::SanitizeFloat(CurModVal),
-			*FString::SanitizeFloat(Agglomerate(Value)),
-			*UEnum::GetValueAsString(Modifier.Phase),
-			Modifier.Priority);*/
-
+		
 		// We must register the change value in the history
 		if (Modifier.bRegisterInHistory) {
 			float DeltaValue = Agglomerate(Value) - PreApplicationVal;
@@ -264,6 +252,10 @@ void FAttribute::ProcessPendingModifiers(float ActionTimer) const
 			bIsNewStep = true; // Next step will be a new step
 		}
 	}
+
+	
 	
 	PendingModifiers.Empty();
+
+	return OldValue != Value;
 }
