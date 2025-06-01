@@ -81,7 +81,8 @@ private:
 	float HeartbeatInterval = .1f;
 
 	// Max time between heartbeats before server cancels task
-	float HeartbeatMaxInterval =.3f;
+	// Aherys: previous value was 0.3f it's maybe a bit too low for harsh network conditions
+	float HeartbeatMaxInterval =1.5f;
 	
 	float ClientLastHeartbeatSentTime;
 	float LastHeartbeatReceivedTime;

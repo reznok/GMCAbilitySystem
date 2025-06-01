@@ -33,7 +33,8 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual UWorld* GetWorld() const override;
-	
+
+
 	//// Ability State
 	// EAbilityState. Use Getters/Setters
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
@@ -74,6 +75,9 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
 	bool PreExecuteCheckEvent();
+
+	// Declare an effect, that will allow to automatically end it when the ability ends
+	void DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType EffectType);
 
 	UFUNCTION()
 	virtual bool PreBeginAbility();
@@ -278,6 +282,9 @@ public:
 		UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	// Container for a more generalized definition of abilities
 	FGameplayTagContainer AbilityDefinition;
+
+	
+	TMap<int, EGMCAbilityEffectQueueType> DeclaredEffect;
 
 		// Queries
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Activation Tags Query"))

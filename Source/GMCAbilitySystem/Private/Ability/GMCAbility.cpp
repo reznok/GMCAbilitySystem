@@ -262,10 +262,27 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 
 
 void UGMCAbility::FinishEndAbility() {
+	
 	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
 	{
 		if (Task.Value == nullptr) continue;
 		Task.Value->EndTaskGMAS();
+	}
+
+	// End handled effect
+	for (const auto& EfData : DeclaredEffect)
+	{
+		// Skip Auth effect removal on client 
+		if (EfData.Value == EGMCAbilityEffectQueueType::ServerAuth && !OwnerAbilityComponent->HasAuthority())  { continue;}
+
+		if (UGMCAbilityEffect* Effect =	OwnerAbilityComponent->GetActiveEffectByHandle(EfData.Key))
+		{
+			// Don't try to close effects that are already ended
+			if (Effect->CurrentState == EGMASEffectState::Started)
+			{
+				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, EfData.Value);
+			}
+		}
 	}
 
 	AbilityState = EAbilityState::Ended;
@@ -282,6 +299,11 @@ bool UGMCAbility::PreExecuteCheckEvent_Implementation() {
 	return true;
 }
 
+
+void UGMCAbility::DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType EffectType)
+{
+	DeclaredEffect.Add(OutEffectHandle, EffectType);
+}
 
 bool UGMCAbility::PreBeginAbility() {
 	if (IsOnCooldown())

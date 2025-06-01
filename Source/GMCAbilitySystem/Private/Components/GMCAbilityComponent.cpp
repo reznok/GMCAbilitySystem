@@ -163,6 +163,10 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	bInAncillaryTick = false;
 }
 
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetActiveEffectByHandle(int EffectID) const
+{
+	return ActiveEffects.Contains(EffectID) ? ActiveEffects[EffectID] : nullptr;
+}
 
 TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(FGameplayTag GameplayTag, bool bMatchExact) const
 {
@@ -807,9 +811,12 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 
 		// Check for predicted effects that have not been server confirmed
 		if (!HasAuthority() &&
-			ProcessedEffectIDs.Contains(Effect.Key) &&
-			!ProcessedEffectIDs[Effect.Key] && Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+			!Effect.Value->EffectData.bServerAuth
+			&& ProcessedEffectIDs.Contains(Effect.Key) 
+			&& ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending
+			&& Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
+			ProcessedEffectIDs[Effect.Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(Effect.Value), Effect.Key);
 			Effect.Value->EndEffect();
 			CompletedActiveEffects.Push(Effect.Key);
@@ -893,16 +900,17 @@ void UGMC_AbilitySystemComponent::OnRep_ActiveEffectsData()
 	{
 		if (ActiveEffectData.EffectID == 0) continue;
 		
-		if (!ProcessedEffectIDs.Contains(ActiveEffectData.EffectID))
+		if (!ProcessedEffectIDs.Contains(ActiveEffectData.EffectID) || ProcessedEffectIDs[ActiveEffectData.EffectID] == EGMCEffectAnswerState::Timeout)
 		{
+			// The client never predicted this effect, so we process it as a new effect.
 			UGMCAbilityEffect* EffectCDO = DuplicateObject(UGMCAbilityEffect::StaticClass()->GetDefaultObject<UGMCAbilityEffect>(), this);
-			FGMCAbilityEffectData EffectData = ActiveEffectData;
-			ApplyAbilityEffect(EffectCDO, EffectData);
-			ProcessedEffectIDs.Add(EffectData.EffectID, true);
-			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Replicated Effect: %d"), ActiveEffectData.EffectID);
+
+			ApplyAbilityEffect(EffectCDO, ActiveEffectData);
+			ProcessedEffectIDs.Add(ActiveEffectData.EffectID, EGMCEffectAnswerState::Validated);
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[Client] Effect [%d] %s has been force apply by the server"), ActiveEffectData.EffectID, *ActiveEffectData.EffectTag.ToString());
 		}
 		
-		ProcessedEffectIDs[ActiveEffectData.EffectID] = true;
+		ProcessedEffectIDs[ActiveEffectData.EffectID] = EGMCEffectAnswerState::Validated;
 	}
 }
 
@@ -915,7 +923,7 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 
 		// Ensure this effect has already been confirmed by the server so that if it's now missing,
 		// it means the server removed it
-		if (!ProcessedEffectIDs[Effect.Key]){return;}
+		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending){return;}
 		
 		if (!ActiveEffectsData.ContainsByPredicate([Effect](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == Effect.Key;}))
 		{
@@ -1543,6 +1551,12 @@ int UGMC_AbilitySystemComponent::CreateEffectOperation(
 		PayloadData = EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
 	}
 
+	if (QueueType == EGMCAbilityEffectQueueType::ServerAuth)
+	{
+		PayloadData.bServerAuth = true;
+	}
+	
+
 	if (bForcedEffectId)
 	{
 		if (PayloadData.EffectID == 0)
@@ -1675,20 +1689,27 @@ void UGMC_AbilitySystemComponent::RemoveEffectHandle(int EffectHandle)
 
 void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass,
                                                          FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, bool& OutSuccess, int& OutEffectHandle, int& OutEffectId,
-                                                         UGMCAbilityEffect*& OutEffect)
+                                                         UGMCAbilityEffect*& OutEffect, UGMCAbility* HandlingAbility)
 {
 	OutSuccess = ApplyAbilityEffect(EffectClass, InitializationData, QueueType, OutEffectHandle, OutEffectId, OutEffect);
+
+	if (OutSuccess && HandlingAbility)
+	{
+		HandlingAbility->DeclareEffect(OutEffectHandle, QueueType);
+	}
 }
 
 
-UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectShort(TSubclassOf<UGMCAbilityEffect> EffectClass, EGMCAbilityEffectQueueType QueueType) {
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectShort(TSubclassOf<UGMCAbilityEffect> EffectClass,
+                                                                        EGMCAbilityEffectQueueType QueueType, UGMCAbility* HandlingAbility)
+{
 	
 	bool bOutSuccess;
 	int OutEffectHandle;
 	int OutEffectId;
 	UGMCAbilityEffect* OutEffect = nullptr;
 	
-	ApplyAbilityEffectSafe(EffectClass, FGMCAbilityEffectData{}, QueueType, bOutSuccess, OutEffectHandle, OutEffectId, OutEffect);
+	ApplyAbilityEffectSafe(EffectClass, FGMCAbilityEffectData{}, QueueType, bOutSuccess, OutEffectHandle, OutEffectId, OutEffect, HandlingAbility);
 	return bOutSuccess ? OutEffect : nullptr;
 }
 
@@ -1706,7 +1727,8 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	}
 
 	const bool bPregenerateEffectId = QueueType != EGMCAbilityEffectQueueType::Predicted && QueueType != EGMCAbilityEffectQueueType::PredictedQueued;
-	
+
+
 	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
 	const int EffectID = CreateEffectOperation(Operation, EffectClass, InitializationData, bPregenerateEffectId, QueueType);
 	if (bPregenerateEffectId && EffectID == -1)
@@ -1720,6 +1742,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	HandleData.Handle = GetNextAvailableEffectHandle();
 	HandleData.NetworkId = EffectID;
 	HandleData.OperationId = Operation.Header.OperationId;
+	
 	EffectHandles.Add(HandleData.Handle, HandleData);
 	
 	switch(QueueType)
@@ -1859,7 +1882,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	}
 	else
 	{
-		ProcessedEffectIDs.Add(Effect->EffectData.EffectID, false);
+		ProcessedEffectIDs.Add(Effect->EffectData.EffectID, EGMCEffectAnswerState::Pending);
 	}
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
@@ -1879,8 +1902,21 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	Effect->EndEffect();
 }
 
+void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType)
+{
+	UGMCAbilityEffect* Effect =	GetEffectById(EffectHandle);
+	if (Effect == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove effect with handle %d, but it doesn't exist!"),
+			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectHandle);
+		return;
+	}
+
+	RemoveActiveAbilityEffectSafe(Effect, QueueType);
+}
+
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectSafe(UGMCAbilityEffect* Effect,
-	EGMCAbilityEffectQueueType QueueType)
+                                                                EGMCAbilityEffectQueueType QueueType)
 {
 	if (Effect == nullptr) return;
 	
@@ -2244,8 +2280,9 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(const FGMCAttribute
 	ApplyAbilityEffectModifier(AttributeModifier, SourceAbilityComponent, nullptr, false, -1.f);
 }
 
+
 void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier,
-	UGMC_AbilitySystemComponent* SourceAbilityComponent, UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime)
+                                                             UGMC_AbilitySystemComponent* SourceAbilityComponent, UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime)
 {
 	// Todo : re-add later
 	// Broadcast the event to allow modifications to happen before application

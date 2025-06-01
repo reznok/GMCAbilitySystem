@@ -94,6 +94,17 @@ enum class EGMCAbilityEffectQueueType : uint8
 	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]")
 };
 
+UENUM(BlueprintType)
+enum class EGMCEffectAnswerState : uint8
+{
+	// Effect is not answered yet
+	Pending UMETA(DisplayName="Pending"),
+	// Effect reach out of prediction windows, was cancelled but can be re-applied
+	Timeout UMETA(DisplayName="Timeout"),
+	// Effect was answered and applied
+	Validated UMETA(DisplayName="Accepted")
+};
+
 class UGMCAbility;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"), meta=(Categories="GMAS"))
@@ -126,6 +137,8 @@ public:
 
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
+
+	UGMCAbilityEffect* GetActiveEffectByHandle(int EffectID) const;
 
 	// Return active Effect with tag
 	// Match exact doesn't look for depth in the tag, it will only match the exact tag
@@ -313,15 +326,23 @@ public:
 	 * Applies an effect to the ability component. If the Queue Type is Predicted, the effect will be immediately added
 	 * on both client and server; this must happen within the GMC movement lifecycle for it to be valid. If the
 	 * Queue Type is anything else, the effect must be queued on the server and will be replicated to the client.
+	 * @param HandlingAbility : Optional ability handling, if provided, the end ability will trigger also automatically the end of the effect.
 	 */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Apply Ability Effect")
 	void ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType,
-		UPARAM(DisplayName="Success") bool& OutSuccess, UPARAM(DisplayName="Effect Handle") int& OutEffectHandle, UPARAM(DisplayName="Effect Network ID") int& OutEffectId, UPARAM(DisplayName="Effect Instance") UGMCAbilityEffect*& OutEffect);
+		UPARAM(DisplayName="Success")
+		bool& OutSuccess,
+		UPARAM(DisplayName="Effect Handle") int& OutEffectHandle,
+		UPARAM(DisplayName="Effect Network ID") int& OutEffectId,
+		UPARAM(DisplayName="Effect Instance") UGMCAbilityEffect*& OutEffect,
+		UPARAM(DisplayName="(Opt) Ability Handling") UGMCAbility* HandlingAbility = nullptr);
 
 	/** Short version of ApplyAbilityEffect (Fire and Forget, return nullptr if fail, or the effect instance if success)
 	 * Don't suggest it for BP user to avoid confusion.
+	 *  @param HandlingAbility : Optional ability handling, if provided, the end ability will trigger al
 	 */
-	UGMCAbilityEffect* ApplyAbilityEffectShort(TSubclassOf<UGMCAbilityEffect> EffectClass, EGMCAbilityEffectQueueType QueueType);
+	UGMCAbilityEffect* ApplyAbilityEffectShort(TSubclassOf<UGMCAbilityEffect> EffectClass, EGMCAbilityEffectQueueType QueueType, 
+		UPARAM(DisplayName="(Opt) Ability Handling") UGMCAbility* HandlingAbility = nullptr);
 
 	/**
 	 * Applies an effect to the ability component. If the Queue Type is Predicted, the effect will be immediately added
@@ -356,6 +377,9 @@ public:
 	// doing this from outside of the component, to allow queuing and sanity-check.
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
+
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	void RemoveActiveAbilityEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Active Ability Effect (Safe)")
 	void RemoveActiveAbilityEffectSafe(UGMCAbilityEffect* Effect, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
@@ -759,7 +783,7 @@ private:
 	// This need to be persisted for a while
 	// This never empties out so it'll infinitely grow, probably a better way to accomplish this
 	UPROPERTY()
-	TMap<int /*ID*/, bool /*bServerConfirmed*/> ProcessedEffectIDs;
+	TMap<int /*ID*/, EGMCEffectAnswerState /*bServerConfirmed*/> ProcessedEffectIDs;
 
 	// Let the client know that the server has activated this ability as well
 	// Needed for the client to cancel mis-predicted abilities

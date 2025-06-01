@@ -60,6 +60,9 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	int EffectID;
 
+	UPROPERTY()
+	uint8 bServerAuth : 1 {false}; // The server will never be acknowledge/predicted
+
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
 	
@@ -97,9 +100,6 @@ struct FGMCAbilityEffectData
 	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	float ClientGraceTime = 1.f;
-	
-	UPROPERTY()
-	int LateApplicationID = -1;
 
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -272,9 +272,6 @@ protected:
 private:
 	bool bHasStarted;
 	bool bHasAppliedEffect;
-
-	// Used for calculating when to tick Period effects
-	float PrevPeriodMod = 0;
 	
 	void CheckState();
 
