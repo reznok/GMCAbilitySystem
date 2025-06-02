@@ -836,5 +836,5 @@ public:
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
 
-	
+	friend class FGameplayDebuggerCategory_GMCAbilitySystem;
 };

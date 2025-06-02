@@ -11,15 +11,15 @@ UENUM(BlueprintType)
 enum class EModifierType : uint8
 {
 	// Adds to value
-	Add = 4 UMETA(DisplayName = "+", AdvancedDisplay = "Adds to current value (Step 5)"),
+	Add = 4 UMETA(DisplayName = "+ [Add]", AdvancedDisplay = "Adds to current value (Step 5)"),
 	// Adds to value multiplier. Base Multiplier is 1. A modifier value of 1 will double the value.
-	Multiply = 3 UMETA(DisplayName = "%", AdvancedDisplay = "Percentage of current value (0.1 = +10%) (Step 4)"),
+	Multiply = 3 UMETA(DisplayName = "% [Percentage]", AdvancedDisplay = "Percentage of current value (0.1 = +10%) (Step 4)"),
 	// Sets the value to the modifier value
-	Set = 1 UMETA(DisplayName = "=", AdvancedDisplay = "Set the current value (Step 2)"),
+	Set = 1 UMETA(DisplayName = "= [Set]", AdvancedDisplay = "Set the current value (Step 2)"),
 	// Adds to the base value of the attribute
-	AddMultiplyBaseValue = 2 UMETA(DisplayName = "⊕%", AdvancedDisplay = "Percentage of base value added to current value (0.1 = +10%) (Step 3)"),
+	AddMultiplyBaseValue = 2 UMETA(DisplayName = "% [Percentage Base]", AdvancedDisplay = "Percentage of base value added to current value (0.1 = +10%) (Step 3)"),
 	// Reset to the base value of the attribute
-	SetToBaseValue = 0 UMETA(DisplayName = "⟲", AdvancedDisplay = "Reset current value to the base value (Step 1)"),
+	SetToBaseValue = 0 UMETA(DisplayName = "= [Set To BaseValue]", AdvancedDisplay = "Reset current value to the base value (Step 1)"),
 };
 
 UENUM(BlueprintType)
@@ -38,10 +38,10 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag AttributeTag;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(EditCondition = "CustomModifierClass == nullptr"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(EditCondition = "CustomModifierClass == nullptr", EditConditionHides))
 	bool bValueIsAttribute{false};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditCondition = "bValueIsAttribute && CustomModifierClass == nullptr", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides, EditCondition = "bValueIsAttribute && CustomModifierClass == nullptr", DisplayAfter = "bValueIsAttribute"))
 	FGameplayTag ValueAsAttribute;
 
 	UPROPERTY(Transient)
@@ -60,10 +60,10 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EModifierType Op{EModifierType::Add};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	EGMCModifierPhase Phase {EGMCModifierPhase::EMP_Stack};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayAfter = "bValueIsAttribute", EditConditionHides, EditCondition = "!bValueIsAttribute"))
 	TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)

@@ -25,11 +25,17 @@ protected:
 		// Put all data you want to display here
 		FString ActorName;
 		FString GrantedAbilities;
+		int NBGrantedAbilities;
 		FString ActiveTags;
+		int NBActiveTags;
 		FString Attributes;
+		int NBAttributes;
 		FString ActiveEffects;
+		int NBActiveEffects;
 		FString ActiveEffectData;
+		int NBActiveEffectData;
 		FString ActiveAbilities;
+		int NBActiveAbilities;
         
 		void Serialize(FArchive& Ar);
 	};

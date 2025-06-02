@@ -33,7 +33,7 @@ UCLASS()
 class GMCABILITYSYSTEM_API UGMCAbilityMapData : public UPrimaryDataAsset{
 	GENERATED_BODY()
 
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="{InputTag}"))
 	TArray<FAbilityMapData> AbilityMapData;
 
 public:

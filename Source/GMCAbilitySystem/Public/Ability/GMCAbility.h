@@ -276,7 +276,7 @@ private:
 
 public:
 	FString ToString() const{
-		return FString::Printf(TEXT("[name: ] %s (State %s) [Tag %s] | NumTasks %d"), *GetName(), *EnumToString(AbilityState), *AbilityTag.ToString(), RunningTasks.Num());
+		return FString::Printf(TEXT("[name: %s] [Tag %s] (%s) | NumTasks %d"), *GetName().Left(30), *AbilityTag.ToString(), *EnumToString(AbilityState), RunningTasks.Num());
 	}
 
 		UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")

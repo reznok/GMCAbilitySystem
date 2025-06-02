@@ -7,6 +7,32 @@
 #include "Components/GMCAbilityComponent.h"
 #include "Kismet/KismetSystemLibrary.h"
 
+#if WITH_EDITOR
+void UGMCAbilityEffect::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
+{
+	UObject::PostEditChangeProperty(PropertyChangedEvent);
+
+	if (PropertyChangedEvent.GetMemberPropertyName() == GET_MEMBER_NAME_CHECKED(UGMCAbilityEffect, EffectData))
+	{
+		if (EffectData.bIsInstant)
+		{
+			EffectData.bApplyModifierOnlyOnStart = false;
+			EffectData.bNegateEffectAtEnd = false;
+		}
+
+		if (EffectData.bApplyModifierOnlyOnStart)
+		{
+			EffectData.bIsInstant = false;
+		}
+
+		if (EffectData.bNegateEffectAtEnd)
+		{
+			EffectData.bIsInstant = false;
+		}
+	}
+	
+}
+#endif
 
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
 {
@@ -42,6 +68,13 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	{
 		EffectData.EndTime = EffectData.StartTime + EffectData.Duration;
 	}
+
+	ensureAlwaysMsgf(EffectData.bIsInstant != EffectData.bApplyModifierOnlyOnStart ,
+		TEXT("EffectData.bIsInstant and EffectData.bApplyModifierOnlyOnStart cannot be both true or both false. "
+			 "If bIsInstant is true, bApplyModifierOnlyOnStart must be false, and vice versa."));
+
+	ensureAlwaysMsgf((EffectData.bIsInstant && !EffectData.bNegateEffectAtEnd) || !EffectData.bIsInstant,
+		TEXT("EffectData.bNegateEffectAtEnd must be false if EffectData.bIsInstant is true."));
 
 	// Start Immediately
 	if (EffectData.Delay == 0)

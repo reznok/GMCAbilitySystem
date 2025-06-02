@@ -37,6 +37,6 @@ class GMCABILITYSYSTEM_API UGMCAttributesData : public UPrimaryDataAsset{
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditDefaultsOnly, Category="AttributeData")
+	UPROPERTY(EditDefaultsOnly, Category="AttributeData", meta=(TitleProperty="{AttributeTag} ({DefaultValue})"))
 	TArray<FAttributeData> AttributeData;
 };

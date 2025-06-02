@@ -94,13 +94,20 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// Clamp the attribute to a certain range
 	// Clamping will only happen if this is modified
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="({min}, {max} {MinAttributeTag}, {MaxAttributeTag})"))
 	FAttributeClamp Clamp{};
 
 	mutable FModifierHistory ModifierHistory;
 
 	FString ToString() const{
-		return FString::Printf(TEXT("%s : %f (Bound: %d)"), *Tag.ToString(), Value, bIsGMCBound);
+		if (bIsGMCBound)
+		{
+			return FString::Printf(TEXT("%s : %0.3f Bound[n%i/%0.4fmb]"), *Tag.ToString(), Value, ModifierHistory.Num(), ModifierHistory.GetAllocatedSize() / 1048576.0f);
+		}
+		else
+		{
+			return FString::Printf(TEXT("%s : %0.3f"), *Tag.ToString(), Value);
+		}
 	}
 
 	bool operator < (const FAttribute& Other) const

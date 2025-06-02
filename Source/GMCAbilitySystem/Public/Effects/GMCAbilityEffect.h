@@ -73,15 +73,15 @@ struct FGMCAbilityEffectData
 	double CurrentDuration{0.f};
 
 	// Instantly applies effect then exits. Will not tick.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bApplyModifierOnlyOnStart && !bNegateEffectAtEnd", EditConditionHides))
 	bool bIsInstant = true;
 
 	// If true, the modifier will be applied instantly, one time, if false, it will be applied each frame (with delta time applied to values)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
 	bool bApplyModifierOnlyOnStart = false;
 
 	// Apply an inversed version of the modifiers at effect end
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
 	bool bNegateEffectAtEnd = false;
 
 	// Delay before the effect starts
@@ -90,13 +90,9 @@ struct FGMCAbilityEffectData
 
 	// How long the effect lasts, 0 for infinite
 	// Does nothing if effect is instant
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
 	double Duration = 0;
-
-	// For Period effects, whether first tick should happen immediately
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	bool bPeriodTickAtStart = false;
-
+	
 	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	float ClientGraceTime = 1.f;
@@ -160,7 +156,7 @@ struct FGMCAbilityEffectData
 	}
 
 	FString ToString() const{
-		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Duration: %.3lf) (CurrentDuration: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
+		return FString::Printf(TEXT("[id: %d] [Tag: %s] (Dur: %.3lf) (CurDur: %.3lf)"), EffectID, *EffectTag.ToString(), Duration, CurrentDuration);
 	}
 
 	// query stuff
@@ -194,6 +190,11 @@ UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 {
 	GENERATED_BODY()
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+	
 
 public:
 	EGMASEffectState CurrentState;
@@ -304,7 +305,7 @@ public:
 
 	
 	FString ToString() {
-		return FString::Printf(TEXT("[name: %s] (State %s) | Started: %d | Period Paused: %d | Data: %s"), *GetName(), *EnumToString(CurrentState), bHasStarted, IsPeriodPaused(), *EffectData.ToString());
+		return FString::Printf(TEXT("[name: %s] (%s) | %s | %s | Data: %s"), *GetName().Right(30), *EnumToString(CurrentState), bHasStarted ? TEXT("Started") : TEXT("Not Started"), IsPeriodPaused() ? TEXT("Paused") : TEXT("Running"), *EffectData.ToString());
 	}
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
