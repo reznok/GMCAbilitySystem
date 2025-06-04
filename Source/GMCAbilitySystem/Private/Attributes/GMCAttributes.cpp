@@ -1,7 +1,6 @@
 #include "Attributes/GMCAttributes.h"
 
 #include "GMCAbilityComponent.h"
-#include "ToolMenusEditor.h"
 
 
 void FModifierHistory::AddMoveHistory(UGMCAbilityEffect* InstigatorEffect, float ActionTimer, float Value,
