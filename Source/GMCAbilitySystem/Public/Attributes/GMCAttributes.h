@@ -67,7 +67,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	}
 
 	
-	FORCEINLINE void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
+	void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
 
 	// Return true if the attribute has been modified
 	bool ProcessPendingModifiers(float ActionTimer) const;
