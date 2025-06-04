@@ -92,7 +92,7 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	PreBeginAbility();
 }
 
-bool UGMCAbility::CanAffordAbilityCost() const
+bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
 {
 	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return true;
 
@@ -103,7 +103,7 @@ bool UGMCAbility::CanAffordAbilityCost() const
 		{
 			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
 			{
-				if (Attribute->Value + AttributeModifier.Value < 0) return false;
+				if (Attribute->Value + AttributeModifier.GetModifierValue(Attribute, AbilityEffect->EffectData.EffectType == EGMASEffectType::Ticking ? DeltaTime : -1.f) < 0) return false;
 			}
 		}
 	}

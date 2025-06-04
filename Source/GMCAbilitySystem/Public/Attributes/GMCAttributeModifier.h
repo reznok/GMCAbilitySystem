@@ -10,16 +10,13 @@ class UGMC_AbilitySystemComponent;
 UENUM(BlueprintType)
 enum class EModifierType : uint8
 {
-	// Adds to value
-	Add = 4 UMETA(DisplayName = "+ [Add]", AdvancedDisplay = "Adds to current value (Step 5)"),
-	// Adds to value multiplier. Base Multiplier is 1. A modifier value of 1 will double the value.
-	Multiply = 3 UMETA(DisplayName = "% [Percentage]", AdvancedDisplay = "Percentage of current value (0.1 = +10%) (Step 4)"),
-	// Sets the value to the modifier value
-	Set = 1 UMETA(DisplayName = "= [Set]", AdvancedDisplay = "Set the current value (Step 2)"),
-	// Adds to the base value of the attribute
-	AddMultiplyBaseValue = 2 UMETA(DisplayName = "% [Percentage Base]", AdvancedDisplay = "Percentage of base value added to current value (0.1 = +10%) (Step 3)"),
-	// Reset to the base value of the attribute
-	SetToBaseValue = 0 UMETA(DisplayName = "= [Set To BaseValue]", AdvancedDisplay = "Reset current value to the base value (Step 1)"),
+	Add = 7 UMETA(DisplayName = "+ [Add]", ToolTip = "Adds to current value (Step 7)"),
+	Percentage = 3 UMETA(DisplayName = "% [Percentage]", ToolTip = "Set Current value to a Percentage of Current value (10 = 10%) (Step 4)"),
+	Set = 1 UMETA(DisplayName = "= [Set]", ToolTip = "Set current value (Step 2)"),
+	AddPercentageBaseValue = 2 UMETA(DisplayName = "% [Add Percentage BaseValue]", ToolTip = "Percentage of base value added to current value (10 = +10%) (Step 3)"),
+	AddPercentage = 4 UMETA(DisplayName = "% [Add Percentage]", ToolTip = "Percentage of value added to current value (10 = +10%) (Step 5)"),
+	PercentageBaseValue = 5 UMETA(DisplayName = "% [Percentage BaseValue]", ToolTip = "Set Current Value to a Percentage of Base Value (10 = 10%) (Step 6)"),
+	SetToBaseValue = 0 UMETA(DisplayName = "= [Set To BaseValue]", ToolTip = "Reset current value to the base value (Step 1)"),
 };
 
 UENUM(BlueprintType)
@@ -30,18 +27,41 @@ enum class EGMCModifierPhase : uint8 {
 	EMP_Final UMETA(DisplayName = "Final", ToolTip = "At the very end"),
 };
 
+UENUM(BlueprintType)
+enum class EGMCAttributeModifierType : uint8
+{
+	AMT_Value UMETA(DisplayName = "Value", ToolTip = "Raw Value"),
+	AMT_Attribute UMETA(DisplayName = "Attribute", ToolTip = "Attribute that will be used to calculate the value"),
+	AMT_Custom UMETA(DisplayName = "Custom", ToolTip = "Custom modifier class that will be used to calculate the value"),
+};
+
 USTRUCT(BlueprintType)
 struct FGMCAttributeModifier
 {
 	GENERATED_BODY()
+
+	public:
+	
+	float GetModifierValue(const FAttribute* LinkedAttribute, float DeltaTime = -1.f) const;
+
+	// This is the final value of the attribute, only valid after ProcessValue is called
+	float GetRegisteredValue() const
+	{
+		return CurrentModifierValue;
+	}
+
+	void RegisterModifierValue(const FAttribute* LinkedAttribute, float DeltaTime = -1.f)
+	{
+		CurrentModifierValue = GetModifierValue(LinkedAttribute, DeltaTime);
+	}
 		
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag AttributeTag;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(EditCondition = "CustomModifierClass == nullptr", EditConditionHides))
-	bool bValueIsAttribute{false};
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(DisplayAfter = "AttributeTag"))
+	EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides, EditCondition = "bValueIsAttribute && CustomModifierClass == nullptr", DisplayAfter = "bValueIsAttribute"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute", DisplayAfter = "ValueType"))
 	FGameplayTag ValueAsAttribute;
 
 	UPROPERTY(Transient)
@@ -53,9 +73,7 @@ struct FGMCAttributeModifier
 	UPROPERTY(Transient)
 	bool bRegisterInHistory{false};
 
-	// Value to modify the attribute by
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bValueIsAttribute && CustomModifierClass == nullptr", EditConditionHides))
-	float Value{0};
+
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EModifierType Op{EModifierType::Add};
@@ -63,7 +81,7 @@ struct FGMCAttributeModifier
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	EGMCModifierPhase Phase {EGMCModifierPhase::EMP_Stack};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayAfter = "bValueIsAttribute", EditConditionHides, EditCondition = "!bValueIsAttribute"))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayAfter = "ValueType", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Custom"))
 	TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
@@ -73,5 +91,13 @@ struct FGMCAttributeModifier
 	// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MetaTags;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Value", EditConditionHides, DisplayAfter = "ValueType"))
+	float ModifierValue{0};
+
+	protected:
+	
+	// Final value processed
+	float CurrentModifierValue{0};
 	
 };

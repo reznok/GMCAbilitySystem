@@ -663,6 +663,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.BaseValue = AttributeData.DefaultValue;
+			SetAttributeBaseValue(NewAttribute.Tag, NewAttribute.BaseValue);
 			NewAttribute.Clamp = AttributeData.Clamp;
 			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
@@ -1170,6 +1171,11 @@ void UGMC_AbilitySystemComponent::ClearAbilityMap()
 	}
 	
 	AbilityMap.Empty();
+}
+
+void UGMC_AbilitySystemComponent::SetAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue)
+{
+	OnInitializeAttributeBaseValue(AttributeTag, BaseValue);
 }
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
@@ -2195,7 +2201,7 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	{
 		return Att->Value;
 	}
-	return 0;
+	return 0.f;
 }
 
 
@@ -2296,9 +2302,6 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifi
 	{
 		// If attribute is unbound and this is the client that means we shouldn't predict.
 		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
-		
-		float OldValue = AffectedAttribute->Value;
-		FGMCUnboundAttributeSet OldUnboundAttributes = UnBoundAttributes;
 		
 		AffectedAttribute->AddModifier(AttributeModifier, DeltaTime);
 	}

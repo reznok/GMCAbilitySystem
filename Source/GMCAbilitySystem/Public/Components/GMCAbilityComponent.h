@@ -626,6 +626,11 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ClearAbilityMap();
 
+	virtual void SetAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue);
+
+	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
+	void OnInitializeAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue);
+
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
@@ -707,6 +712,8 @@ private:
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
 	void InstantiateAttributes();
+
+	
 
 	void SetStartingTags();
 

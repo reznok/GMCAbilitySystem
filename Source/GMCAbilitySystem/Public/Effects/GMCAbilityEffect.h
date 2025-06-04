@@ -14,9 +14,10 @@ class UGMC_AbilitySystemComponent;
 UENUM(BlueprintType)
 enum class EGMASEffectType : uint8
 {
-	Instant,  // Applies Instantly
-	Duration, // Lasts for X time
-	Infinite  // Lasts forever
+	Instant UMETA(DisplayName = "Instant", ToolTip = "Effect applies instantly, Apply fully and immediatly die, no tick"),
+	Ticking UMETA(DisplayName = "Ticking", ToolTip = "Effect applies periodically, Apply each tick multiplied by DeltaTime (Modifiers is Amount per second), and die after Duration or Removal"),
+	Persistent UMETA(DisplayName = "Persistent", ToolTip = "Effect applies persistently, Apply fully immediatly, and die after Duration or Removal"),
+	Periodic UMETA(DisplayName = "Periodic", ToolTip = "Effect applies periodically, Each interval applu fully the modifier value. Ticking. Die after duration of Removal"),
 };
 
 UENUM(BlueprintType)
@@ -26,6 +27,8 @@ enum class EGMASEffectState : uint8
 	Started, // Lasts for X time
 	Ended  // Lasts forever
 };
+
+
 
 // Container for exposing the attribute modifier to blueprints
 UCLASS()
@@ -72,25 +75,27 @@ struct FGMCAbilityEffectData
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double CurrentDuration{0.f};
 
-	// Instantly applies effect then exits. Will not tick.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bApplyModifierOnlyOnStart && !bNegateEffectAtEnd", EditConditionHides))
-	bool bIsInstant = true;
-
-	// If true, the modifier will be applied instantly, one time, if false, it will be applied each frame (with delta time applied to values)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
-	bool bApplyModifierOnlyOnStart = false;
-
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GMCAbilitySystem")
+	EGMASEffectType EffectType = EGMASEffectType::Instant;
+	
 	// Apply an inversed version of the modifiers at effect end
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	bool bNegateEffectAtEnd = false;
 
 	// Delay before the effect starts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Delay = 0;
 
+	// Periodic will tick immediatly if true
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem" , meta=(EditCondition = "EffectType == EGMASEffectType::Periodic", EditConditionHides))
+	bool bPeriodicFirstTick = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem" , meta=(EditCondition = "EffectType == EGMASEffectType::Periodic", EditConditionHides, ClampMin = "0.1", UIMin = "0.1"))
+	bool PeriodicInterval = 1.f;
+
 	// How long the effect lasts, 0 for infinite
 	// Does nothing if effect is instant
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "!bIsInstant", EditConditionHides))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	double Duration = 0;
 	
 	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
@@ -128,9 +133,9 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
 
-	// If tag is present, periodic effect will not tick. Duration is not affected.
+	// If tag is present, this effect will not tick. Duration is not affected.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer PausePeriodicEffect;
+	FGameplayTagContainer PauseEffect;
 
 	// On activation, will end ability present in this container
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -212,6 +217,8 @@ public:
 	
 	virtual void Tick(float DeltaTime);
 
+	int32 CalculatePeriodicTicksBetween(float Period, float StartActionTimer, float EndActionTimer);
+
 	// Return the current duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
@@ -243,7 +250,7 @@ public:
 	
 	void UpdateState(EGMASEffectState State, bool Force=false);
 
-	virtual bool IsPeriodPaused();
+	virtual bool IsPaused();
 	
 	float ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* attribute);
 
@@ -305,7 +312,7 @@ public:
 
 	
 	FString ToString() {
-		return FString::Printf(TEXT("[name: %s] (%s) | %s | %s | Data: %s"), *GetName().Right(30), *EnumToString(CurrentState), bHasStarted ? TEXT("Started") : TEXT("Not Started"), IsPeriodPaused() ? TEXT("Paused") : TEXT("Running"), *EffectData.ToString());
+		return FString::Printf(TEXT("[name: %s] (%s) | %s | %s | Data: %s"), *GetName().Right(30), *EnumToString(CurrentState), bHasStarted ? TEXT("Started") : TEXT("Not Started"), IsPaused() ? TEXT("Paused") : TEXT("Running"), *EffectData.ToString());
 	}
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")

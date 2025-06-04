@@ -104,43 +104,11 @@ float FModifierHistory::ExtractFromMoveHistory(UGMCAbilityEffect* InstigatorEffe
 void FAttribute::AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const
 {
 
-	if (PendingModifier.bValueIsAttribute)
-	{
-		if (!PendingModifier.SourceAbilitySystemComponent.IsValid())
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to add a modifier with bValueIsAttribute set to true, but no SourceAbilitySystemComponent was provided for Attribute: %s"), *Tag.ToString());
-			return;
-		}
-
-		const FAttribute* Attribute = PendingModifier.SourceAbilitySystemComponent->GetAttributeByTag(PendingModifier.ValueAsAttribute);
-		if (!Attribute)
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to add a modifier with bValueIsAttribute set to true, but no attribute was found for ValueAsAttribute: %s"), *PendingModifier.ValueAsAttribute.ToString());
-			return;
-		}
-
-		PendingModifier.Value = Attribute->Value;
+	if (DeltaTime == 0.f) {
+		return;
 	}
-		
-		
-	switch (PendingModifier.Op)
-	{
-		case EModifierType::Add:
-			if (DeltaTime != -1.f) {
-				PendingModifier.Value *= DeltaTime;
-			}
-			break;
-		case EModifierType::Multiply:
-			{
-				if (DeltaTime != -1.f) {
-					PendingModifier.Value = FMath::Pow(PendingModifier.Value, DeltaTime);
-				}
-			}
-			break;
-		default:
-			break;
-	}
-
+	
+	PendingModifier.RegisterModifierValue(this, DeltaTime);
 	PendingModifiers.Add(PendingModifier);
 }
 
@@ -172,7 +140,7 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 	// We want to agglomerate all Modifier of the same Priority, Operator, and Phase, then apply it to the base value
 
 	// Init value
-	float CurModVal = 0.0f;
+	float StackedModVal = 0.0f;
 	int CurPrio = PendingModifiers[0].Priority;
 	EModifierType CurOp = PendingModifiers[0].Op;
 	EGMCModifierPhase CurPhase = PendingModifiers[0].Phase;
@@ -186,30 +154,36 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 
 	// Lambda to agglomerate value depending of the operator
 	// return the value after agglomeration
-	auto Agglomerate = [&CurModVal, &CurOp, this](float ValueToApply) {
+	auto Agglomerate = [&StackedModVal, &CurOp, this](float AttributeValue) {
 
-		float Result = 0.f;
+		double NewValue = 0.f;
 		
 		switch (CurOp) {
 			case EModifierType::Add:
-				Result = ValueToApply + CurModVal;
+				NewValue = AttributeValue + StackedModVal; // NewValue = AttributeValue + ModifierValue
 				break;
-			case EModifierType::Multiply:
-				Result = ValueToApply * CurModVal;
+			case EModifierType::Percentage:
+				NewValue = AttributeValue * StackedModVal; // NewValue = AttributeValue * ModifierValue
 				break;
-			case EModifierType::AddMultiplyBaseValue:
-				Result = ValueToApply + (BaseValue * CurModVal);
+			case EModifierType::AddPercentageBaseValue:
+				NewValue = AttributeValue + (BaseValue * StackedModVal); // NewValue = AttributeValue + (BaseValue * ModifierValue)
+				break;
+			case EModifierType::AddPercentage:
+				NewValue = AttributeValue + (AttributeValue * StackedModVal); // NewValue = AttributeValue + (BaseValue * ModifierValue)
+			break;
+			case EModifierType::PercentageBaseValue:
+				NewValue = BaseValue * StackedModVal; // NewValue = BaseValue * ModifierValue
 				break;
 			case EModifierType::SetToBaseValue:
-				Result = BaseValue;
+				NewValue = BaseValue; // NewValue = BaseValue
 				break;
 			case EModifierType::Set:
-				Result = CurModVal;
+				NewValue = StackedModVal; // NewValue = ModifierValue
 				break;
 			default: ;
 		}
 		
-		return Clamp.ClampValue(Result);
+		return Clamp.ClampValue(NewValue);
 	};
 
 	bool bIsNewStep = true;
@@ -224,11 +198,6 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 		}
 
 		CurOp = Modifier.Op;
-		if (bIsNewStep)
-		{
-			// If this is a multipler, set current value to 1.f
-			CurModVal = Modifier.Op == EModifierType::Multiply || Modifier.Op == EModifierType::AddMultiplyBaseValue ? 1.f : 0.f;
-		}
 		
 		float PreApplicationVal = Value;
 		if (Modifier.bRegisterInHistory && !bIsNewStep) {
@@ -236,7 +205,7 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 		}
 
 		bIsNewStep = false;
-		CurModVal += Modifier.CustomModifierClass ? Modifier.SourceAbilityEffect->ProcessCustomModifier(Modifier.CustomModifierClass, this) : Modifier.Value;  // Add to the stack of current step
+		StackedModVal += Modifier.GetRegisteredValue();  // Add to the stack of current step
 		CurPhase = Modifier.Phase;
 		CurPrio = Modifier.Priority;
 		
@@ -256,6 +225,7 @@ bool FAttribute::ProcessPendingModifiers(float ActionTimer) const
 			
 			Value = Agglomerate(Value);
 			bIsNewStep = true; // Next step will be a new step
+			StackedModVal = 0.f;
 		}
 	}
 

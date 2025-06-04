@@ -11,25 +11,7 @@
 void UGMCAbilityEffect::PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent)
 {
 	UObject::PostEditChangeProperty(PropertyChangedEvent);
-
-	if (PropertyChangedEvent.GetMemberPropertyName() == GET_MEMBER_NAME_CHECKED(UGMCAbilityEffect, EffectData))
-	{
-		if (EffectData.bIsInstant)
-		{
-			EffectData.bApplyModifierOnlyOnStart = false;
-			EffectData.bNegateEffectAtEnd = false;
-		}
-
-		if (EffectData.bApplyModifierOnlyOnStart)
-		{
-			EffectData.bIsInstant = false;
-		}
-
-		if (EffectData.bNegateEffectAtEnd)
-		{
-			EffectData.bIsInstant = false;
-		}
-	}
+	
 	
 }
 #endif
@@ -68,14 +50,7 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	{
 		EffectData.EndTime = EffectData.StartTime + EffectData.Duration;
 	}
-
-	ensureAlwaysMsgf(EffectData.bIsInstant != EffectData.bApplyModifierOnlyOnStart ,
-		TEXT("EffectData.bIsInstant and EffectData.bApplyModifierOnlyOnStart cannot be both true or both false. "
-			 "If bIsInstant is true, bApplyModifierOnlyOnStart must be false, and vice versa."));
-
-	ensureAlwaysMsgf((EffectData.bIsInstant && !EffectData.bNegateEffectAtEnd) || !EffectData.bIsInstant,
-		TEXT("EffectData.bNegateEffectAtEnd must be false if EffectData.bIsInstant is true."));
-
+	
 	// Start Immediately
 	if (EffectData.Delay == 0)
 	{
@@ -116,14 +91,16 @@ void UGMCAbilityEffect::StartEffect()
 	OwnerAbilityComponent->OnEffectApplied.Broadcast(this);
 
 	// Instant effects modify base value and end instantly
-	if (EffectData.bIsInstant || EffectData.bApplyModifierOnlyOnStart)
+	if (EffectData.EffectType == EGMASEffectType::Instant
+		|| EffectData.EffectType == EGMASEffectType::Persistent
+		|| (EffectData.EffectType == EGMASEffectType::Periodic && EffectData.bPeriodicFirstTick))
 	{
 		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd, -1.f);
+			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.EffectType != EGMASEffectType::Instant && EffectData.bNegateEffectAtEnd, -1.f);
 		}
 
-		if (EffectData.bIsInstant)
+		if (EffectData.EffectType == EGMASEffectType::Instant)
 		{
 			EndEffect();
 		}
@@ -149,19 +126,19 @@ void UGMCAbilityEffect::EndEffect()
 	// Only remove tags and abilities if the effect has started and applied
 	if (!bHasStarted || !bHasAppliedEffect) return;
 
-	if (EffectData.bNegateEffectAtEnd)
+	if (EffectData.bNegateEffectAtEnd && EffectData.EffectType != EGMASEffectType::Instant)
 	{
 
 		for (FGMCAttributeModifier& Mod : EffectData.Modifiers)
 		{
 			if (const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Mod.AttributeTag))
 			{
-				float Value = Attribute->ModifierHistory.ExtractFromMoveHistory(this, true);
-				if (Value != 0.f)
+				float ModifierStackerValue = Attribute->ModifierHistory.ExtractFromMoveHistory(this, true);
+				if (ModifierStackerValue != 0.f)
 				{
 					FGMCAttributeModifier NegateModifier;
 					NegateModifier.AttributeTag = Mod.AttributeTag;
-					NegateModifier.Value = -Value;
+					NegateModifier.ModifierValue = -ModifierStackerValue;
 					NegateModifier.Op = EModifierType::Add; // Negate is always an Add operation
 					NegateModifier.Phase = Mod.Phase;
 					NegateModifier.SourceAbilitySystemComponent = SourceAbilityComponent;
@@ -240,17 +217,63 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		EndEffect();
 	}
 
-	// If there's a period, check to see if it's time to tick
-	if (!IsPeriodPaused() && !EffectData.bApplyModifierOnlyOnStart && CurrentState == EGMASEffectState::Started && AttributeDynamicCondition())
+	
+	if (!IsPaused() && CurrentState == EGMASEffectState::Started && AttributeDynamicCondition())
 	{
-		for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers)
+		if (EffectData.EffectType == EGMASEffectType::Ticking) {
+		// If there's a period, check to see if it's time to tick
+
+			for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers) {
+				OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd, DeltaTime);
+			} // End for each modifier
+
+			
+		} // End Ticking
+		else if (EffectData.EffectType == EGMASEffectType::Periodic)
 		{
-			OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd, DeltaTime);
+			FGMC_MoveHistory& MoveHistory = OwnerAbilityComponent->GMCMovementComponent->MoveHistory;
+			int PreviousMoveIdx = MoveHistory.Num() - 1;
+
+			const float CurrentActionTimer = OwnerAbilityComponent->ActionTimer;
+			const float StartActionTimer = EffectData.StartTime;
+			const float PreviousActionTimer = MoveHistory.Num() > 2 ? MoveHistory[PreviousMoveIdx - 1].MetaData.Timestamp : StartActionTimer;
+
+			int32 TicksToApply = CalculatePeriodicTicksBetween(
+			EffectData.PeriodicInterval, 
+			PreviousActionTimer - StartActionTimer, 
+			CurrentActionTimer - StartActionTimer);
+
+			for (int32 i = 0; i < TicksToApply; i++) {
+				for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers) {
+					OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd,-1.f);
+				} 
+			}
+
+			if (TicksToApply > 0)
+			{
+				PeriodTick();
+			}
+			
 		}
 	}
+
+	
 	
 	
 	CheckState();
+}
+
+int32 UGMCAbilityEffect::CalculatePeriodicTicksBetween(float Period, float StartActionTimer, float EndActionTimer)
+{
+	if (Period <= 0.0f || EndActionTimer <= StartActionTimer) { return 0; }
+	
+	float FirstTick = FMath::CeilToFloat(StartActionTimer / Period) * Period;
+	if (FirstTick > EndActionTimer) { return 0; }
+
+
+	float LastTick = FMath::FloorToFloat(EndActionTimer / Period) * Period;
+	
+	return FMath::RoundToInt((LastTick - FirstTick) / Period) + 1;
 }
 
 void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
@@ -265,7 +288,6 @@ bool UGMCAbilityEffect::AttributeDynamicCondition_Implementation() const {
 
 void UGMCAbilityEffect::PeriodTick()
 {
-
 	PeriodTickEvent();
 }
 
@@ -283,9 +305,9 @@ void UGMCAbilityEffect::UpdateState(EGMASEffectState State, bool Force)
 	CurrentState = State;
 }
 
-bool UGMCAbilityEffect::IsPeriodPaused()
+bool UGMCAbilityEffect::IsPaused()
 {
-	return DoesOwnerHaveTagFromContainer(EffectData.PausePeriodicEffect);
+	return DoesOwnerHaveTagFromContainer(EffectData.PauseEffect);
 }
 
 float UGMCAbilityEffect::ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* Attribute)

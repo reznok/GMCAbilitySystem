@@ -142,8 +142,9 @@ public:
 	bool bAllowMultipleInstances {false};
 	
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
+	// Delta time can be required if the cost is time based.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
-	virtual bool CanAffordAbilityCost() const;
+	virtual bool CanAffordAbilityCost(float DeltaTime = -1.f) const;
 
 	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown

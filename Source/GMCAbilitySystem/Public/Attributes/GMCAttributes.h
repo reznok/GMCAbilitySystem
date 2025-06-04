@@ -7,6 +7,8 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
 
+
+
 USTRUCT()
 struct FModifierHistoryEntry
 {
@@ -65,7 +67,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	}
 
 	
-	void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
+	FORCEINLINE void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
 
 	// Return true if the attribute has been modified
 	bool ProcessPendingModifiers(float ActionTimer) const;
@@ -84,8 +86,6 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY(EditDefaultsOnly, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag Tag{FGameplayTag::EmptyTag};
 
-	
-	mutable TArray<FGMCAttributeModifier> PendingModifiers;
 
 	// Whether this should be bound over GMC or not.
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
@@ -114,6 +114,11 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	{
 		return Tag.ToString() < Other.Tag.ToString();
 	}
+
+	protected:
+	
+	mutable TArray<FGMCAttributeModifier> PendingModifiers;
+
 };
 
 
