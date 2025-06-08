@@ -2,74 +2,122 @@
 
 #include "GMCAbilityComponent.h"
 
-float FGMCAttributeModifier::GetModifierValue(const FAttribute* LinkedAttribute, float DeltaTime) const
+float FGMCAttributeModifier::GetValue() const
 {
-
-	if (LinkedAttribute == nullptr)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to apply a modifier without a valid LinkedAttribute for Attribute: %s"), *AttributeTag.ToString());
-		return 0.f;
-	}
-
-	float TempModifierValue = ModifierValue;
-
-	if (Op == EModifierType::Percentage
-		|| Op == EModifierType::AddPercentageBaseValue
-		|| Op == EModifierType::AddPercentage
-		|| Op == EModifierType::PercentageBaseValue)
-	{
-		 TempModifierValue /= 100.f;
-	}
-	
+	// Get The Value Type
 	switch (ValueType)
 	{
-		case EGMCAttributeModifierType::AMT_Attribute:
-			if (!SourceAbilitySystemComponent.IsValid())
+	case EGMCAttributeModifierType::AMT_Value:
+		return ModifierValue;
+	case EGMCAttributeModifierType::AMT_Attribute:
+		{
+			if (SourceAbilityEffect.IsValid() && SourceAbilityEffect->GetOwnerAbilityComponent())
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to apply an attribute modifier without a valid SourceAbilitySystemComponent for Attribute: %s"), *AttributeTag.ToString());
-				return TempModifierValue;
+				return SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(ValueAsAttribute);
 			}
-			TempModifierValue = SourceAbilitySystemComponent->GetAttributeValueByTag(AttributeTag);
-			break;
-		case EGMCAttributeModifierType::AMT_Custom:
-			if (!SourceAbilityEffect.IsValid())
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("SourceAbilityEffect is null in FAttribute::AddModifier"));
+			return 0.f;
+		}
+	case EGMCAttributeModifierType::AMT_Custom:
+		if (CustomModifierClass && SourceAbilityEffect.IsValid() && SourceAbilityEffect->GetOwnerAbilityComponent())
+		{
+			if (UGMCAttributeModifierCustom_Base* CustomModifier = CustomModifierClass->GetDefaultObject<UGMCAttributeModifierCustom_Base>())
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to apply a custom modifier without a valid SourceAbilityEffect for Attribute: %s"), *AttributeTag.ToString());
-				return TempModifierValue;
+				return CustomModifier->Calculate(SourceAbilityEffect.Get(), SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeByTag(AttributeTag));
 			}
-			TempModifierValue = SourceAbilityEffect->ProcessCustomModifier(CustomModifierClass, LinkedAttribute);
-			break;
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Custom Modifier Class is null in FAttribute::AddModifier"));
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("CustomModifierClass is null or SourceAbilityEffect/SourceAbilitySystemComponent is invalid in FAttribute::AddModifier"));
+		}
+		break;
+	}
+
+	checkNoEntry()
+	return 0.f;
+}
+
+float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute) const
+{
+		float TargetValue = GetValue();
+	
+	// First set Percentage values to a fraction
+	switch (Op)
+	{
+		case EModifierType::AddPercentageAttribute:
+		case EModifierType::AddPercentageInitialValue:
+		case EModifierType::AddPercentageAttributeSum:
+		case EModifierType::AddPercentageMissing:
+		case EModifierType::AddPercentageMinClamp:
+		case EModifierType::AddPercentageMaxClamp:
+			TargetValue /= 100.f;
+		break;
 	}
 	
 	switch (Op)
 	{
 		case EModifierType::Add:
-			if (DeltaTime != -1.f) {
-				TempModifierValue *= DeltaTime;
+			return TargetValue * DeltaTime;
+		case EModifierType::AddPercentageInitialValue:
+			return Attribute.InitialValue * TargetValue * DeltaTime;
+		case EModifierType::AddPercentageAttribute:
+			return SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(ValueAsAttribute) * TargetValue * DeltaTime;
+		case EModifierType::AddPercentageMaxClamp:
+			{
+				const float MaxValue = Attribute.Clamp.MaxAttributeTag.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(Attribute.Clamp.MaxAttributeTag) : Attribute.Clamp.Max;
+				return MaxValue * TargetValue * DeltaTime;
 			}
-			break;
-	case EModifierType::Percentage:
-	case EModifierType::PercentageBaseValue:
-		{
-			if (DeltaTime != -1.f) {
-				if (TempModifierValue >= 0.0f) {
-					TempModifierValue = FMath::Pow(TempModifierValue, DeltaTime);
-				} else {
-					// Avoid NaN
-					TempModifierValue = FMath::Pow(FMath::Abs(TempModifierValue), DeltaTime);
+		case EModifierType::AddPercentageMinClamp:
+			{
+				const float MinValue = Attribute.Clamp.MinAttributeTag.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(Attribute.Clamp.MinAttributeTag) : Attribute.Clamp.Min;
+				return MinValue * TargetValue * DeltaTime;
+			}
+		case EModifierType::AddPercentageAttributeSum:
+			{
+				float Sum = 0.f;
+				for (auto& AttTag : Attributes)
+				{
+					Sum += SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(AttTag);
 				}
+				return TargetValue * Sum * DeltaTime;
 			}
-		}
-		break;
-	case EModifierType::AddPercentage:
-	case EModifierType::AddPercentageBaseValue:
-		{
-			if (DeltaTime != -1.f) {
-				TempModifierValue = TempModifierValue * DeltaTime;
+		case EModifierType::AddScaledBetween:
+			{
+				const float XBound = XAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(XAttribute) : X;
+				const float YBound = YAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(YAttribute) : Y;
+				return FMath::Clamp(FMath::Lerp(XBound, YBound, TargetValue), X, Y) * DeltaTime;
 			}
-		}
-		break;
+		case EModifierType::AddClampedBetween:
+			{
+				const float XBound = XAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(XAttribute) : X;
+				const float YBound = YAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(YAttribute) : Y;
+				return FMath::Clamp(TargetValue, XBound, YBound) * DeltaTime;
+			}
+		case EModifierType::AddPercentageMissing:
+			{
+				const float MissingValue =  Attribute.InitialValue - Attribute.Value;
+				return TargetValue * MissingValue * DeltaTime;
+			}
 	}
 
-	return TempModifierValue;
+	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Modifier Type in FAttribute::AddModifier"));
+	checkNoEntry();
+	return 0.f;
+}
+
+void FGMCAttributeModifier::InitModifier(UGMCAbilityEffect* Effect, double InActionTimer, int InApplicationIdx, bool bInRegisterInHistory, float InDeltaTime)
+{
+	if (!Effect)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect or AbilitySystemComponent is null in FGMCAttributeModifier::InitModifier"));
+		return;
+	}
+
+	SourceAbilityEffect = Effect;
+	bRegisterInHistory = bInRegisterInHistory;
+	DeltaTime = InDeltaTime;
+	ApplicationIndex = InApplicationIdx;
+	ActionTimer = InActionTimer;
+	
 }

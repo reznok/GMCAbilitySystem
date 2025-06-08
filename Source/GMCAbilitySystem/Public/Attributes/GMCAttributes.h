@@ -21,38 +21,25 @@ struct FModifierHistoryEntry
 	float Value = 0.f;
 };
 
-USTRUCT()
-struct FModifierHistory
+USTRUCT(Blueprintable)
+struct FAttributeTemporaryModifier
 {
 	GENERATED_BODY()
 
-	public:
+	UPROPERTY()
+	// Index used to identify the application of this modifier
+	int ApplicationIndex = 0;
 
-		void AddMoveHistory(UGMCAbilityEffect* InstigatorEffect, float ActionTimer, float Value, bool bIsBound);
+	UPROPERTY()
+	// The value that we would like to apply
+	float Value = 0.f;
 
-		void CleanMoveHistory(float CurrentActionTimer);
+	UPROPERTY()
+	double ActionTimer = 0.0;
 
-		// Remove all entries, if bPurge is true, we will remove entries readed
-		float ExtractFromMoveHistory(UGMCAbilityEffect* InstigatorEffect, bool bPurge);
-
-		int Num() const
-		{
-			return History.Num() + ConcatenatedHistory.Num();
-		}
-
-		int GetAllocatedSize() const
-		{
-			return History.GetAllocatedSize() + ConcatenatedHistory.GetAllocatedSize();
-		}
-
-	private:
-	
-		// Bound Attribute who can be replayed at any moment
-		TArray<FModifierHistoryEntry> History;
-
-		// Unbound attribute, and attribute who doesn't need to be replayed (Action timer > Oldest Action Timer)
-		TArray<FModifierHistoryEntry> ConcatenatedHistory;
-	
+	// The effect that applied this modifier
+	UPROPERTY()
+	TWeakObjectPtr<UGMCAbilityEffect> InstigatorEffect = nullptr;
 };
 
 USTRUCT(BlueprintType)
@@ -63,30 +50,37 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	void Init() const
 	{
-		Value = Clamp.ClampValue(BaseValue);
+		RawValue = Clamp.ClampValue(InitialValue);
+		CalculateValue();
 	}
 
 	
-	void AddModifier(FGMCAttributeModifier PendingModifier, float DeltaTime) const;
+	void AddModifier(const FGMCAttributeModifier& PendingModifier) const;
 
 	// Return true if the attribute has been modified
-	bool ProcessPendingModifiers(float ActionTimer) const;
+	void CalculateValue() const;
 
+	void RemoveTemporalModifier(int ApplicationIndex, const UGMCAbilityEffect* InstigatorEffect) const;
+
+	// Used to purge "future modifiers" during replay
+	void PurgeTemporalModifier(double CurrentActionTimer);
+	
 
 	UPROPERTY(BlueprintAssignable)
 	FAttributeChanged OnAttributeChanged;
-	
+
+	// Temporal Modifier + Accumulated Value
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	mutable float Value{0};
 
+	// Value when the attribute has been initialized
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	mutable float BaseValue{0};
+	mutable float InitialValue{0};
 
 	// Attribute.* 
 	UPROPERTY(EditDefaultsOnly, Category="Attribute", meta = (Categories="Attribute"))
 	FGameplayTag Tag{FGameplayTag::EmptyTag};
-
-
+	
 	// Whether this should be bound over GMC or not.
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
@@ -97,28 +91,26 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="({min}, {max} {MinAttributeTag}, {MaxAttributeTag})"))
 	FAttributeClamp Clamp{};
 
-	mutable FModifierHistory ModifierHistory;
+	FString ToString() const;
 
-	FString ToString() const{
-		if (bIsGMCBound)
-		{
-			return FString::Printf(TEXT("%s : %0.3f Bound[n%i/%0.4fmb]"), *Tag.ToString(), Value, ModifierHistory.Num(), ModifierHistory.GetAllocatedSize() / 1048576.0f);
-		}
-		else
-		{
-			return FString::Printf(TEXT("%s : %0.3f"), *Tag.ToString(), Value);
-		}
-	}
-
-	bool operator < (const FAttribute& Other) const
+	bool IsDirty() const
 	{
-		return Tag.ToString() < Other.Tag.ToString();
+		return bIsDirty;
 	}
 
-	protected:
-	
-	mutable TArray<FGMCAttributeModifier> PendingModifiers;
+	bool operator< (const FAttribute& Other) const;
 
+	// This is the sum of permanent modification applied to this attribute.
+	UPROPERTY()
+	mutable float RawValue = 0.f;
+
+protected:
+
+		UPROPERTY()
+		mutable TArray<FAttributeTemporaryModifier> ValueTemporalModifiers;
+
+		mutable bool bIsDirty = false;
+	
 };
 
 
@@ -174,10 +166,11 @@ struct FGMCUnboundAttributeSet : public FFastArraySerializer
 		}
 	}
 
+	
+
 	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParams)
 	{
-		return FFastArraySerializer::FastArrayDeltaSerialize<FAttribute, FGMCUnboundAttributeSet>(Items, DeltaParams,
-			*this);
+		return FFastArraySerializer::FastArrayDeltaSerialize<FAttribute, FGMCUnboundAttributeSet>(Items, DeltaParams,*this);
 	}
 };
 
@@ -186,6 +179,6 @@ struct TStructOpsTypeTraits<FGMCUnboundAttributeSet> : public TStructOpsTypeTrai
 {
 	enum
 	{
-		WithNetDeltaSerializer = true
+		WithNetDeltaSerializer = true,
 	};
 };

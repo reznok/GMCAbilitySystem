@@ -48,7 +48,8 @@ public:
 	UFUNCTION()
 	int GetNextTaskID(){TaskIDCounter += 1;
 		return TaskIDCounter;}
-	
+
+	bool IsActive() const;
 
 	int GetAbilityID() const {return AbilityID;};;
 	
@@ -144,7 +145,7 @@ public:
 	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
 	// Delta time can be required if the cost is time based.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
-	virtual bool CanAffordAbilityCost(float DeltaTime = -1.f) const;
+	virtual bool CanAffordAbilityCost(float DeltaTime = 1.f) const;
 
 	// Apply the effects in AbilityCost and (Re-)apply the CooldownTime of this ability
 	// Warning : Will apply CooldownTime regardless of already being on cooldown
@@ -210,6 +211,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
 	// Prevent Abilities with these tags from activating when this ability is activated
 	FGameplayTagContainer BlockOtherAbility;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
+	// If those ability are active, they will prevent this ability from activating
+	FGameplayTagContainer BlockedByOtherAbility;
 
 	/**
 	 * Cancels active abilities based on specific conditions.

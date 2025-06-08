@@ -31,6 +31,11 @@ UWorld* UGMCAbility::GetWorld() const
 	return Contexts[0].World();
 }
 
+bool UGMCAbility::IsActive() const
+{
+	return AbilityState != EAbilityState::PreExecution && AbilityState != EAbilityState::Ended;
+}
+
 void UGMCAbility::Tick(float DeltaTime)
 {
 	// Don't tick before the ability is initialized or after it has ended
@@ -103,7 +108,11 @@ bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
 		{
 			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
 			{
-				if (Attribute->Value + AttributeModifier.GetModifierValue(Attribute, AbilityEffect->EffectData.EffectType == EGMASEffectType::Ticking ? DeltaTime : -1.f) < 0) return false;
+				AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
+				if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
+				{
+					return false;
+				}
 			}
 		}
 	}
@@ -275,13 +284,21 @@ void UGMCAbility::FinishEndAbility() {
 		// Skip Auth effect removal on client 
 		if (EfData.Value == EGMCAbilityEffectQueueType::ServerAuth && !OwnerAbilityComponent->HasAuthority())  { continue;}
 
-		if (UGMCAbilityEffect* Effect =	OwnerAbilityComponent->GetActiveEffectByHandle(EfData.Key))
+		if (UGMCAbilityEffect* Effect =	OwnerAbilityComponent->GetEffectById(EfData.Key))
 		{
 			// Don't try to close effects that are already ended
 			if (Effect->CurrentState == EGMASEffectState::Started)
 			{
 				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, EfData.Value);
 			}
+			else
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Handle %d already ended for ability %s"), EfData.Key, *AbilityTag.ToString());
+			}
+		}
+		else
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Handle %d not found for ability %s"), EfData.Key, *AbilityTag.ToString());
 		}
 	}
 
@@ -302,10 +319,16 @@ bool UGMCAbility::PreExecuteCheckEvent_Implementation() {
 
 void UGMCAbility::DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType EffectType)
 {
+	if (DeclaredEffect.Contains(OutEffectHandle))
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Handle %d already declared for ability %s"), OutEffectHandle, *AbilityTag.ToString());
+		return;
+	}
 	DeclaredEffect.Add(OutEffectHandle, EffectType);
 }
 
-bool UGMCAbility::PreBeginAbility() {
+bool UGMCAbility::PreBeginAbility()
+{
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
@@ -321,6 +344,32 @@ bool UGMCAbility::PreBeginAbility() {
 		return false;
 	}
 
+
+	TArray<UGMCAbility*> ActiveAbilities;
+	OwnerAbilityComponent->GetActiveAbilities().GenerateValueArray(ActiveAbilities);
+
+	for (auto& OtherAbilityTag : BlockedByOtherAbility)
+	{
+		if (ActiveAbilities.FindByPredicate([&OtherAbilityTag](const UGMCAbility* ActiveAbility) {
+			return ActiveAbility
+			&& ActiveAbility->IsActive()
+			&& ActiveAbility->AbilityTag.MatchesTag(OtherAbilityTag);
+		}))
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped because Blocked By Other Ability (%s)"), *AbilityTag.ToString(), *OtherAbilityTag.ToString());
+			CancelAbility();
+			return false;
+		}
+	}
+	
+
+	if (OwnerAbilityComponent->IsAbilityTagBlocked(AbilityTag)) {
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped because Blocked By Other Ability"), *AbilityTag.ToString());
+		CancelAbility();
+		return false;
+	}
+
+
 	BeginAbility();
 
 	return true;
@@ -330,10 +379,6 @@ bool UGMCAbility::PreBeginAbility() {
 void UGMCAbility::BeginAbility()
 {
 
-	if (OwnerAbilityComponent->IsAbilityTagBlocked(AbilityTag)) {
-		CancelAbility();
-		return;
-	}
 
 	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
 

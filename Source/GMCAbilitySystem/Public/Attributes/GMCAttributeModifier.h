@@ -10,21 +10,23 @@ class UGMC_AbilitySystemComponent;
 UENUM(BlueprintType)
 enum class EModifierType : uint8
 {
-	Add = 7 UMETA(DisplayName = "+ [Add]", ToolTip = "Adds to current value (Step 7)"),
-	Percentage = 3 UMETA(DisplayName = "% [Percentage]", ToolTip = "Set Current value to a Percentage of Current value (10 = 10%) (Step 4)"),
-	Set = 1 UMETA(DisplayName = "= [Set]", ToolTip = "Set current value (Step 2)"),
-	AddPercentageBaseValue = 2 UMETA(DisplayName = "% [Add Percentage BaseValue]", ToolTip = "Percentage of base value added to current value (10 = +10%) (Step 3)"),
-	AddPercentage = 4 UMETA(DisplayName = "% [Add Percentage]", ToolTip = "Percentage of value added to current value (10 = +10%) (Step 5)"),
-	PercentageBaseValue = 5 UMETA(DisplayName = "% [Percentage BaseValue]", ToolTip = "Set Current Value to a Percentage of Base Value (10 = 10%) (Step 6)"),
-	SetToBaseValue = 0 UMETA(DisplayName = "= [Set To BaseValue]", ToolTip = "Reset current value to the base value (Step 1)"),
-};
-
-UENUM(BlueprintType)
-enum class EGMCModifierPhase : uint8 {
-	EMP_Pre UMETA(DisplayName = "Pre-Stack", ToolTip = "Will be applied before Stack to the value"),
-	EMP_Stack UMETA(DisplayName = "Stack", ToolTip = "Operator of the same kind will be added together, then apply to the value"),
-	EMP_Post UMETA(DisplayName = "Post-Stack", ToolTip = "Will be applied after Stack to the value"),
-	EMP_Final UMETA(DisplayName = "Final", ToolTip = "At the very end"),
+	Add UMETA(DisplayName = "+ [Add]"),
+	// Add To Attribute a Percentage of the Base Value
+	AddPercentageInitialValue UMETA(DisplayName = "% [Add Percentage Of Initial Value]"),
+	// Add to Attribute the Percentage of an selected Attribute (Value is the Percentage, Attribute as Value is the Attribute to use)
+	AddPercentageAttribute UMETA(DisplayName = "% [Add Percentage Of Attribute]"),
+	// Add to Attribute the Percentage of the Max Clamp Value
+	AddPercentageMaxClamp UMETA(DisplayName = "% [Add Percentage Of Max Clamp]"),
+	// Add to Attribute the Percentage of the Min Clamp Value
+	AddPercentageMinClamp UMETA(DisplayName = "% [Add Percentage Of Min Clamp]"),
+	// Add to Attribute the Percentage of the sum of selecteds Attributes (+20% of the Intelligence + Strength)
+	AddPercentageAttributeSum UMETA(DisplayName = "% [Add Percentage Of Attribute Sum]"),
+	// Add to Attribute a Value Scaled between X and Y depending of Value
+	AddScaledBetween UMETA(DisplayName = "X-y [Scaled Between]"),
+	// Add to Attribute a value, but this is Clamped between X and Y
+	AddClampedBetween UMETA(DisplayName = "+ [Add Clamped]"),
+	// Add to Attribute the Percentage of the Missing Value compare to the Base Value
+	AddPercentageMissing UMETA(DisplayName = "% [Add Percentage Of Missing Value]"),
 };
 
 UENUM(BlueprintType)
@@ -41,63 +43,86 @@ struct FGMCAttributeModifier
 	GENERATED_BODY()
 
 	public:
-	
-	float GetModifierValue(const FAttribute* LinkedAttribute, float DeltaTime = -1.f) const;
 
-	// This is the final value of the attribute, only valid after ProcessValue is called
-	float GetRegisteredValue() const
-	{
-		return CurrentModifierValue;
-	}
+		// Return the value (Auto apply Custom Modifier if set, or return target attribute, or raw value)
+		float GetValue() const;
 
-	void RegisterModifierValue(const FAttribute* LinkedAttribute, float DeltaTime = -1.f)
-	{
-		CurrentModifierValue = GetModifierValue(LinkedAttribute, DeltaTime);
-	}
+		// Return the value to apply to an attribute on calculation.
+		float CalculateModifierValue(const FAttribute& Attribute) const;
+
+		// If isn't ticking, set DeltaTime to 1.f !
+		void InitModifier(UGMCAbilityEffect* Effect, double InActionTimer, int InApplicationIdx, bool bInRegisterInHistory = false, float
+		                  InDeltaTime = 1.f);
 		
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
-	FGameplayTag AttributeTag;
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
+		FGameplayTag AttributeTag;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(DisplayAfter = "AttributeTag"))
-	EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(DisplayAfter = "AttributeTag"))
+		EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute", DisplayAfter = "ValueType"))
-	FGameplayTag ValueAsAttribute;
-
-	UPROPERTY(Transient)
-	TWeakObjectPtr<UGMC_AbilitySystemComponent> SourceAbilitySystemComponent{nullptr};
-
-	UPROPERTY(Transient)
-	TWeakObjectPtr<UGMCAbilityEffect> SourceAbilityEffect{nullptr};
-
-	UPROPERTY(Transient)
-	bool bRegisterInHistory{false};
-
-
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	EModifierType Op{EModifierType::Add};
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
-	EGMCModifierPhase Phase {EGMCModifierPhase::EMP_Stack};
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayAfter = "ValueType", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Custom"))
-	TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
-	int Priority{0};
-
-	// Metadata tags to be passed with the attribute
-	// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	FGameplayTagContainer MetaTags;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Value", EditConditionHides, DisplayAfter = "ValueType"))
-	float ModifierValue{0};
-
-	protected:
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides,
+			EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute || Op == EModifierType::AddPercentageAttribute",
+			DisplayAfter = "ValueType"))
+		FGameplayTag ValueAsAttribute;
 	
-	// Final value processed
-	float CurrentModifierValue{0};
+		UPROPERTY(Transient)
+		TWeakObjectPtr<UGMCAbilityEffect> SourceAbilityEffect{nullptr};
+
+		UPROPERTY(Transient)
+		bool bRegisterInHistory{false};
+
+		float DeltaTime {1.f};
+
+		double ActionTimer {0.0};
+
+		int ApplicationIndex{0};
+
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+		EModifierType Op{EModifierType::Add};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(DisplayAfter = "ValueType", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Custom"))
+		TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
+	
+		// Metadata tags to be passed with the attribute
+		// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+		FGameplayTagContainer MetaTags;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Value", EditConditionHides, DisplayAfter = "ValueType"))
+		float ModifierValue{0};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "(Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween) && !XAsAttribute", EditConditionHides
+			, DisplayAfter = "XAsAttribute"))
+		float X {0.f};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "(Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween) && !YAsAttribute", EditConditionHides
+			, DisplayAfter = "YAsAttribute"))
+		float Y {0.f};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", DisplayName="X As Attribute", 
+		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides));
+		bool XAsAttribute{false};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", DisplayName="Y As Attribute",
+		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides));
+		bool YAsAttribute{false};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "(Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween) && XAsAttribute", EditConditionHides,
+			DisplayAfter = "XAsAttribute"))
+		FGameplayTag XAttribute;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "(Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween) && YAsAttribute", EditConditionHides,
+			DisplayAfter = "YAsAttribute"))
+		FGameplayTag YAttribute;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
+		meta=(EditCondition = "Op == EModifierType::AddPercentageAttributeSum", EditConditionHides, DisplayAfter = "ValueType"))
+		FGameplayTagContainer Attributes;
 	
 };

@@ -84,7 +84,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// We sort our attributes alphabetically by tag so that it's deterministic.
 	for (auto& AttributeForBind : BoundAttributes.Attributes)
 	{
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.RawValue,
 			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -430,7 +430,7 @@ int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
 	{
 		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
 		{
-			ActiveAbilityData.Value->SetPendingEnd();
+			ActiveAbilityData.Value->EndAbility();
 			AbilitiesEnded++;
 		}
 	}
@@ -558,12 +558,15 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	
 	ApplyStartingEffects();
 
-	float OldestActionTimer = GMCMovementComponent->MoveHistory.Num() > 0 ? GMCMovementComponent->MoveHistory[0].MetaData.Timestamp : -1.f;
-	for (const FAttribute* Attribute : GetAllAttributes())
+	// Purge "future" temporary modifiers on replay
+	if (GMCMovementComponent->CL_IsReplaying())
 	{
-		Attribute->ModifierHistory.CleanMoveHistory(ActionTimer);
+		for (FAttribute& Attribute : BoundAttributes.Attributes)
+		{
+			Attribute.PurgeTemporalModifier(ActionTimer);
+		}
 	}
-
+	
 	SendTaskDataToActiveAbility(true);
 	TickActiveAbilities(DeltaTime);
 	
@@ -662,8 +665,8 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
-			NewAttribute.BaseValue = AttributeData.DefaultValue;
-			SetAttributeBaseValue(NewAttribute.Tag, NewAttribute.BaseValue);
+			NewAttribute.InitialValue = AttributeData.DefaultValue;
+			SetAttributeInitialValue(NewAttribute.Tag, NewAttribute.InitialValue);
 			NewAttribute.Clamp = AttributeData.Clamp;
 			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
@@ -852,13 +855,12 @@ void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
 {
 	for (const FAttribute* Attribute : GetAllAttributes())
 	{
-		if (Attribute->bIsGMCBound == bInGenPredictionTick)
+		if (Attribute->IsDirty() && Attribute->bIsGMCBound == bInGenPredictionTick)
 		{
-			
-			bool bHasBeenModified = Attribute->ProcessPendingModifiers(ActionTimer);
 
+			Attribute->CalculateValue();
 			// Broadcast dirty change if unbound
-			if (!Attribute->bIsGMCBound && bHasBeenModified)
+			if (!Attribute->bIsGMCBound)
 			{
 				UnBoundAttributes.MarkAttributeDirty(*Attribute);
 			}
@@ -1173,9 +1175,9 @@ void UGMC_AbilitySystemComponent::ClearAbilityMap()
 	AbilityMap.Empty();
 }
 
-void UGMC_AbilitySystemComponent::SetAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue)
+void UGMC_AbilitySystemComponent::SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue)
 {
-	OnInitializeAttributeBaseValue(AttributeTag, BaseValue);
+	OnInitializeAttributeInitialValue(AttributeTag, BaseValue);
 }
 
 void UGMC_AbilitySystemComponent::InitializeAbilityMap(){
@@ -1699,9 +1701,12 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbility
 {
 	OutSuccess = ApplyAbilityEffect(EffectClass, InitializationData, QueueType, OutEffectHandle, OutEffectId, OutEffect);
 
+
+	
+	
 	if (OutSuccess && HandlingAbility)
 	{
-		HandlingAbility->DeclareEffect(OutEffectHandle, QueueType);
+		HandlingAbility->DeclareEffect(OutEffectId, QueueType);
 	}
 }
 
@@ -1924,7 +1929,15 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByHandle(int EffectHa
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectSafe(UGMCAbilityEffect* Effect,
                                                                 EGMCAbilityEffectQueueType QueueType)
 {
-	if (Effect == nullptr) return;
+	if (Effect == nullptr)
+	{
+		ensureAlwaysMsgf(false, TEXT("[%20s] %s tried to remove a null effect!"),
+			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName());
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove a null effect!"),
+			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName());
+		return;
+	}
+		
 	
 	RemoveEffectByIdSafe({ Effect->EffectData.EffectID }, QueueType);
 }
@@ -2204,6 +2217,15 @@ float UGMC_AbilitySystemComponent::GetAttributeValueByTag(const FGameplayTag Att
 	return 0.f;
 }
 
+float UGMC_AbilitySystemComponent::GetAttributeRawValue(FGameplayTag AttributeTag) const
+{
+	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
+	{
+		return Att->RawValue;
+	}
+	return 0.f;
+}
+
 
 FAttributeClamp UGMC_AbilitySystemComponent::GetAttributeClampByTag(FGameplayTag AttributeTag) const {
 	if (const FAttribute* Att = GetAttributeByTag(AttributeTag))
@@ -2232,7 +2254,7 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 	return false;
 }
 
-float UGMC_AbilitySystemComponent::GetBaseAttributeValueByTag(FGameplayTag AttributeTag) const{
+float UGMC_AbilitySystemComponent::GetAttributeInitialValueByTag(FGameplayTag AttributeTag) const{
 	if(!AttributeTag.IsValid()){return -1.0f;}
 	for(UGMCAttributesData* DataAsset : AttributeDataAssets){
 		for(FAttributeData DefaultAttribute : DataAsset->AttributeData){
@@ -2280,30 +2302,21 @@ FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 
 #pragma endregion  ToStringHelpers
 
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(const FGMCAttributeModifier& AttributeModifier,
-	UGMC_AbilitySystemComponent* SourceAbilityComponent)
-{
-	ApplyAbilityEffectModifier(AttributeModifier, SourceAbilityComponent, nullptr, false, -1.f);
-}
 
-
-void UGMC_AbilitySystemComponent::ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier,
-                                                             UGMC_AbilitySystemComponent* SourceAbilityComponent, UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime)
+void UGMC_AbilitySystemComponent::ApplyAbilityAttributeModifier(const FGMCAttributeModifier& AttributeModifier)
 {
 	// Todo : re-add later
 	// Broadcast the event to allow modifications to happen before application
 	//OnPreAttributeChanged.Broadcast(AttributeModifierContainer, SourceAbilityComponent);
-
-	AttributeModifier.SourceAbilitySystemComponent = SourceAbilityComponent;
-	AttributeModifier.bRegisterInHistory = bRegisterInHistory;
-	AttributeModifier.SourceAbilityEffect = SourceAbilityEffect;
 	
 	if (const FAttribute* AffectedAttribute = GetAttributeByTag(AttributeModifier.AttributeTag))
 	{
 		// If attribute is unbound and this is the client that means we shouldn't predict.
-		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) return;
+		if(!AffectedAttribute->bIsGMCBound && !HasAuthority()) {
+			return;
+		}
 		
-		AffectedAttribute->AddModifier(AttributeModifier, DeltaTime);
+		AffectedAttribute->AddModifier(AttributeModifier);
 	}
 }
 

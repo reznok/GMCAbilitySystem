@@ -469,13 +469,17 @@ public:
 	TArray<const FAttribute*> GetAllAttributes() const;
 
 	/** Get an Attribute using its Tag */
-	const FAttribute* GetAttributeByTag(FGameplayTag AttributeTag) const;
+	const FAttribute* GetAttributeByTag(UPARAM(meta=(Categories="Attribute")) FGameplayTag AttributeTag) const;
 
 	TMap<int, UGMCAbility*> GetActiveAbilities() const { return ActiveAbilities; }
 
-	// Get Attribute value by Tag
+	// Get Attribute value (RawValue + Temporal Modifiers) by Tag
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
+
+	// Get Attribute Value without Temporal Modifiers
+	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
+	float GetAttributeRawValue(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
 	// Get Attribute value by Tag
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
@@ -484,19 +488,16 @@ public:
 	// Set Attribute value by Tag
 	// Will NOT trigger an "OnAttributeChanged" Event
 	// bResetModifiers: Will reset all modifiers on the attribute to the base value. DO NOT USE if you have any active effects that modify this attribute.
-	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes", meta=(DeprecatedFunction, DeprecationMessage="Please use ApplyAbilityAttributeModifier instead."))
 	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue, bool bResetModifiers = false);
 	
 	/** Get the default value of an attribute from the data assets. */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
-	float GetBaseAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
+	float GetAttributeInitialValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
 	// Apply modifiers that affect attributes
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
-	void ApplyAbilityEffectModifier(const FGMCAttributeModifier& AttributeModifier, UGMC_AbilitySystemComponent* SourceAbilityComponent);
-	
-	void ApplyAbilityEffectModifier(FGMCAttributeModifier AttributeModifier, UGMC_AbilitySystemComponent* SourceAbilityComponent,
-		UGMCAbilityEffect* SourceAbilityEffect, bool bRegisterInHistory, float DeltaTime);
+	void ApplyAbilityAttributeModifier(const FGMCAttributeModifier& AttributeModifier);
 
 	UPROPERTY(BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bJustTeleported;
@@ -626,10 +627,10 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void ClearAbilityMap();
 
-	virtual void SetAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue);
+	virtual void SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
-	void OnInitializeAttributeBaseValue(const FGameplayTag& AttributeTag, float& BaseValue);
+	void OnInitializeAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
 private:
 	// List of filtered tag delegates to call when tags change.

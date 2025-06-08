@@ -251,6 +251,8 @@ public:
 	void UpdateState(EGMASEffectState State, bool Force=false);
 
 	virtual bool IsPaused();
+
+	bool IsEffectModifiersRegisterInHistory() const;
 	
 	float ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* attribute);
 
@@ -263,13 +265,13 @@ public:
 	UFUNCTION(BlueprintPure)
 	void GetOwnerActor(AActor*& OwnerActor) const;
 
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	UGMC_AbilitySystemComponent* GetOwnerAbilityComponent() const { return OwnerAbilityComponent; }
+
 protected:
 
 	UPROPERTY(Transient)
 	TMap<TSubclassOf<UGMCAttributeModifierCustom_Base>, UGMCAttributeModifierCustom_Base*> CustomModifiersInstances;
-	
-	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
-	UGMC_AbilitySystemComponent* SourceAbilityComponent = nullptr;
 
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent = nullptr;
