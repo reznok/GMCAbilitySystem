@@ -222,27 +222,30 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		} // End Ticking
 		else if (EffectData.EffectType == EGMASEffectType::Periodic)
 		{
-			FGMC_MoveHistory& MoveHistory = OwnerAbilityComponent->GMCMovementComponent->MoveHistory;
-			int PreviousMoveIdx = MoveHistory.Num() - 1;
+			
+			
+			const float CurrentElapsedTime = OwnerAbilityComponent->ActionTimer -  EffectData.StartTime;
+			float PreviousElapsedTime = CurrentElapsedTime - OwnerAbilityComponent->GMCMovementComponent->GetMoveDeltaTime();
+			PreviousElapsedTime = FMath::Max(PreviousElapsedTime, 0.f); // Ensure we don't go negative
 
-			const float CurrentActionTimer = OwnerAbilityComponent->ActionTimer;
-			const float StartActionTimer = EffectData.StartTime;
-			const float PreviousActionTimer = MoveHistory.Num() > 2 ? MoveHistory[PreviousMoveIdx - 1].MetaData.Timestamp : StartActionTimer;
+			int32 PreviousPeriod = FMath::TruncToInt(PreviousElapsedTime / EffectData.PeriodicInterval);
+			int32 CurrentPeriod =	FMath::TruncToInt(CurrentElapsedTime / EffectData.PeriodicInterval);
+			
+			if (CurrentPeriod > PreviousPeriod) {
+				int32 NumTickToApply = CurrentPeriod - PreviousPeriod;
+				
+				for (int i = 0; i < NumTickToApply; i++) {
+					for (int y = 0; y < EffectData.Modifiers.Num(); y++) {
+						FGMCAttributeModifier Modifier = EffectData.Modifiers[y];
+						Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, y, IsEffectModifiersRegisterInHistory(), 1.f);
+						OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
+					}
+				}
 
-			int32 TicksToApply = CalculatePeriodicTicksBetween(
-			EffectData.PeriodicInterval, 
-			PreviousActionTimer - StartActionTimer, 
-			CurrentActionTimer - StartActionTimer);
-
-			for (int32 i = 0; i < TicksToApply; i++) {
-				for (const FGMCAttributeModifier& Modifier : EffectData.Modifiers) {
-					//OwnerAbilityComponent->ApplyAbilityEffectModifier(Modifier, SourceAbilityComponent, this, EffectData.bNegateEffectAtEnd,-1.f);
-				} 
-			}
-
-			if (TicksToApply > 0)
-			{
-				PeriodTick();
+				if (NumTickToApply > 0)
+				{
+					PeriodTick();
+				}
 			}
 			
 		}

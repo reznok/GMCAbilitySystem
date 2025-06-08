@@ -91,7 +91,7 @@ struct FGMCAbilityEffectData
 	bool bPeriodicFirstTick = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem" , meta=(EditCondition = "EffectType == EGMASEffectType::Periodic", EditConditionHides, ClampMin = "0.1", UIMin = "0.1"))
-	bool PeriodicInterval = 1.f;
+	float PeriodicInterval = 1.f;
 
 	// How long the effect lasts, 0 for infinite
 	// Does nothing if effect is instant
