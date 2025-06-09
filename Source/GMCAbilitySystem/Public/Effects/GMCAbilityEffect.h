@@ -75,7 +75,7 @@ struct FGMCAbilityEffectData
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double CurrentDuration{0.f};
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GMCAbilitySystem")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	EGMASEffectType EffectType = EGMASEffectType::Instant;
 	
 	// Apply an inversed version of the modifiers at effect end
