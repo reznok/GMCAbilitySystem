@@ -101,7 +101,7 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 			}
 	}
 
-	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Modifier Type in FAttribute::AddModifier"));
+	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Modifier Type in FAttribute::AddModifier for Attribute %s, operator %d"), *Attribute.Tag.ToString(), static_cast<int32>(Op));
 	checkNoEntry();
 	return 0.f;
 }
