@@ -2062,11 +2062,13 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 						*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *GetEffectsNameAsString(GetEffectsByIds(Ids)));
 					return false;
 				}
+
+				TMap<int, UGMCAbilityEffect*> EffectHandlesToRemove = ActiveEffects.FilterByPredicate([&Ids](const UGMCAbilityEffect* Effect) {
+					return Ids.Contains(Effect->EffectData.EffectID);
+				});
 				
-				for (auto& Effect : ActiveEffects) {
-					if (Ids.Contains(Effect.Key)) {
-						RemoveActiveAbilityEffect(Effect.Value);
-					}
+				for (TPair<int, UGMCAbilityEffect*>& Effect : EffectHandlesToRemove) {
+					RemoveActiveAbilityEffect(Effect.Value);
 				}
 
 				return true;
@@ -2076,10 +2078,12 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				// If in move, silenttly remove the effect as predicted
 				if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
 				{
-					for (auto& Effect : ActiveEffects) {
-						if (Ids.Contains(Effect.Key)) {
-							RemoveActiveAbilityEffect(Effect.Value);
-						}
+					TMap<int, UGMCAbilityEffect*> EffectHandlesToRemove = ActiveEffects.FilterByPredicate([&Ids](const UGMCAbilityEffect* Effect) {
+						return Ids.Contains(Effect->EffectData.EffectID);
+					});
+				
+					for (TPair<int, UGMCAbilityEffect*>& Effect : EffectHandlesToRemove) {
+						RemoveActiveAbilityEffect(Effect.Value);
 					}
 					
 				}
