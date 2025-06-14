@@ -27,6 +27,8 @@ enum class EModifierType : uint8
 	AddClampedBetween UMETA(DisplayName = "+ [Add Clamped]"),
 	// Add to Attribute the Percentage of the Missing Value compare to the Base Value
 	AddPercentageMissing UMETA(DisplayName = "% [Add Percentage Of Missing Value]"),
+	// Add to Attribute the Percentage of an Attribute Raw Value (Raw Value is the attribute value without any temporal modifiers)
+	AddPercentageOfAttributeRawValue UMETA(DisplayName = "% [Add Percentage Of Attribute Raw Value"),
 };
 
 UENUM(BlueprintType)
@@ -61,7 +63,7 @@ struct FGMCAttributeModifier
 		EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
 
 		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides,
-			EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute || Op == EModifierType::AddPercentageAttribute",
+			EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute || Op == EModifierType::AddPercentageAttribute || Op == EModifierType::AddPercentageOfAttributeRawValue",
 			DisplayAfter = "ValueType"))
 		FGameplayTag ValueAsAttribute;
 	

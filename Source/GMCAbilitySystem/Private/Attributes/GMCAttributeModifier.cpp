@@ -51,6 +51,7 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 		case EModifierType::AddPercentageMissing:
 		case EModifierType::AddPercentageMinClamp:
 		case EModifierType::AddPercentageMaxClamp:
+		case EModifierType::AddPercentageOfAttributeRawValue:
 			TargetValue /= 100.f;
 		break;
 	}
@@ -98,6 +99,11 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 			{
 				const float MissingValue =  Attribute.InitialValue - Attribute.Value;
 				return TargetValue * MissingValue * DeltaTime;
+			}
+		case EModifierType::AddPercentageOfAttributeRawValue:
+			{
+				const float RawValue = SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeRawValue(Attribute.Tag);
+				return TargetValue * RawValue * DeltaTime;
 			}
 	}
 
