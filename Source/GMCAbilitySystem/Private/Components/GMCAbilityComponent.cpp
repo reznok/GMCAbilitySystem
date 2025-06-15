@@ -2063,12 +2063,15 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 					return false;
 				}
 
-				TMap<int, UGMCAbilityEffect*> EffectHandlesToRemove = ActiveEffects.FilterByPredicate([&Ids](const UGMCAbilityEffect* Effect) {
-					return Ids.Contains(Effect->EffectData.EffectID);
-				});
+				TArray<UGMCAbilityEffect*> EffectsToRemove;
+				for (int Id : Ids) {
+					if (ActiveEffects.Contains(Id)) {
+						EffectsToRemove.Add(ActiveEffects[Id]);
+					}
+				}
 				
-				for (TPair<int, UGMCAbilityEffect*>& Effect : EffectHandlesToRemove) {
-					RemoveActiveAbilityEffect(Effect.Value);
+				for (auto Effect : EffectsToRemove) {
+					RemoveActiveAbilityEffect(Effect);
 				}
 
 				return true;
@@ -2078,12 +2081,15 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				// If in move, silenttly remove the effect as predicted
 				if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
 				{
-					TMap<int, UGMCAbilityEffect*> EffectHandlesToRemove = ActiveEffects.FilterByPredicate([&Ids](const UGMCAbilityEffect* Effect) {
-						return Ids.Contains(Effect->EffectData.EffectID);
-					});
+					TArray<UGMCAbilityEffect*> EffectsToRemove;
+					for (int Id : Ids) {
+						if (ActiveEffects.Contains(Id)) {
+							EffectsToRemove.Add(ActiveEffects[Id]);
+						}
+					}
 				
-					for (TPair<int, UGMCAbilityEffect*>& Effect : EffectHandlesToRemove) {
-						RemoveActiveAbilityEffect(Effect.Value);
+					for (auto Effect : EffectsToRemove) {
+						RemoveActiveAbilityEffect(Effect);
 					}
 					
 				}
