@@ -12,6 +12,7 @@
 #include "Components/ActorComponent.h"
 #include "Containers/Deque.h"
 #include "Utility/GMASBoundQueue.h"
+#include "Utility/GMASBoundQueueV2.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
 
@@ -585,8 +586,20 @@ public:
 #pragma endregion ToStringHelpers
 	
 protected:
-	virtual void BeginPlay() override;
 
+	//TODO: Move these functions
+
+	UFUNCTION(Client, Reliable)
+	void RPCOnServerOperationAdded(int OperationID, const FInstancedStruct Operation);
+
+	UFUNCTION(BlueprintCallable)
+	void BoundQueueV2Debug();
+
+	UFUNCTION()
+	void OnServerOperationForced(FInstancedStruct OperationData);
+	
+	virtual void BeginPlay() override;
+	
 	// Abilities that are granted to the player (bound)
 	FGameplayTagContainer GrantedAbilityTags;
 
@@ -660,13 +673,15 @@ private:
 	TArray<FInstancedStruct> QueuedTaskData;
 
 	// Queued ability operations (activate, cancel, etc.)
-	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
-	bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
+	// TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
+	// bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
 
 	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
 	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
 
 	TGMASBoundQueue<UGMASSyncedEvent, FGMASSyncedEventContainer, false> QueuedEventOperations;
+
+	FGMASBoundQueueV2 BoundQueueV2 = {};
 
 	
 	template<typename C, typename T>
@@ -676,7 +691,7 @@ private:
 	bool ShouldProcessOperation(const TGMASBoundQueueOperation<C, T>& Operation, TGMASBoundQueue<C, T, false>& QueuedOperations, bool bIsServer = true) const;
 	
 	// Events	
-	virtual void ProcessOperation(const TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& Operation);
+	virtual void ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true);
 
 	// Event Implementations
 
