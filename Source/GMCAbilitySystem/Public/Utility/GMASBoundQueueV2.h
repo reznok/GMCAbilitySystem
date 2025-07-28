@@ -12,7 +12,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnServerOperationAdded, int, Opera
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnServerOperationForced, FInstancedStruct, OperationData);
 
 USTRUCT()
-struct FGMASBoundQueueV2
+struct  FGMASBoundQueueV2
 {
 	GENERATED_BODY()
 	// Events
@@ -25,8 +25,8 @@ struct FGMASBoundQueueV2
 	int NextOperationID = 0;
 	
 	// Get the next operation ID
-	// Any positive ID is a server operation
-	// Any negative ID is a client operation
+	// Any positive ID is a server generated operation
+	// Any negative ID is a client generated operation
 	int GetNextOperationID()
 	{
 		if (GMCMovementComponent->GetNetMode() != NM_Client)
@@ -96,7 +96,7 @@ struct FGMASBoundQueueV2
 	void ServerAcknowledgeOperation(int ID);
 	
 	// Operations (referenced by ID to OperationPayloads) that the Client has queued
-	// Key: Operation Id, Bool: bSendOperationDataToServer
+	// Key: Operation Id
 	TArray<int> ClientQueuedOperations;
 
 	// Operations that the server has sent to the client but haven't been acknowledged yet

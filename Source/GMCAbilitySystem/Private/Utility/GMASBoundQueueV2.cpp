@@ -73,7 +73,7 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 	{
 		It.Value() -= DeltaTime;
 		
-		if (It.Value() <= 0)
+		if (It.Value() <= 0) 
 		{
 			if (OperationPayloads.Contains(It.Key()))
 			{

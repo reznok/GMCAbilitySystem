@@ -579,7 +579,7 @@ protected:
 	void RPCOnServerOperationAdded(int OperationID, const FInstancedStruct Operation);
 
 	UFUNCTION(BlueprintCallable)
-	void BoundQueueV2Debug();
+	void BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffect> Effect);
 
 	UFUNCTION()
 	void OnServerOperationForced(FInstancedStruct OperationData);

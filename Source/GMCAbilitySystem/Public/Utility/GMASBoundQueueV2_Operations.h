@@ -49,5 +49,5 @@ struct FGMASBoundQueueV2EffectApplicationOperation : public FGMASBoundQueueV2Ope
 	TSubclassOf<UGMCAbilityEffect> EffectClass;
 
 	UPROPERTY()
-	FGMCAbilityEffectData EffectData;
+	FGMCAbilityEffectData EffectData; 
 };
