@@ -309,19 +309,6 @@ public:
 	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 	int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
 	
-	
-	/**
-	 * Applies an effect to the Ability Component. If bOuterActivation is false, the effect will be immediately
-	 * applied; if either is true, the operation will be queued but no valid effect will be returned. If
-	 * Outer Activation is true, the effect *must* be applied on the server.
-	 *
-	 * @param	Effect		        Effect to apply
-	 * @param   InitializationData  Effect initialization data.
-	 * @param   bOuterActivation    Whether this effect should be replicated outside of GMC, via normal Unreal RPC
-	 */
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Apply Ability Effect (Legacy)", meta=(DeprecatedFunction, DeprecationMessage="Please use the more modern ApplyAbilityEffect which takes a queue type."))
-	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation = false);
-
 	// BP-specific version of 
 	
 	/**
@@ -361,6 +348,8 @@ public:
 	 */
 	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
+	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2EffectApplicationOperation& Operatio);
+	
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 	

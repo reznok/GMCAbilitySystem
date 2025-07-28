@@ -360,23 +360,9 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	FGMASBoundQueueV2AbilityActivationOperation ActivationData;
 	ActivationData.InputTag = InputTag;
 	ActivationData.InputAction = InputAction;
-	
-	// Early local check for ability
-	FAbilityMapData* MapEntry = AbilityMap.Find(InputTag);
-	if (MapEntry == nullptr || MapEntry->Abilities.IsEmpty()) return;
-
-	// This local check will prevent concurrent activation of the same ability if the ability is contain in the input map
-	if (bPreventConcurrentActivation) {
-		for (const TPair<int, UGMCAbility*>& ActiveAbility : ActiveAbilities)
-		{
-			if (ActiveAbility.Value && MapEntry->Abilities.ContainsByPredicate([&ActiveAbility](const TSubclassOf<UGMCAbility>& Ability) {
-					return ActiveAbility.Value->IsA(Ability);
-				})) return;
-		}
-	}
-	TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData> Operation;
 	int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AbilityActivationOperation>(ActivationData);
 	BoundQueueV2.QueueClientOperation(OperationID);
+	
 }
 
 int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
@@ -1329,43 +1315,6 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	return NewEffectID;
 }
 
-//BP Version
-UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation)
-{
-	if (Effect == nullptr)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
-		return nullptr;
-	}
-
-	TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-	// if (CreateEffectOperation(Operation, Effect, InitializationData, bOuterActivation, bOuterActivation ? EGMCAbilityEffectQueueType::ServerAuth : EGMCAbilityEffectQueueType::Predicted) == -1)
-	// {
-	// 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s could not create an effect of type %s!"),
-	// 		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *Effect->GetName())
-	// 	return nullptr;
-	// }
-
-	// We are trying to apply an effect from an outside source, so we will need to go trough a different routing to apply it
-	if (bOuterActivation) {
-		if (HasAuthority()) {
-			// QueuedEffectOperations.QueuePreparedOperation(Operation, false);
-			// ClientQueueOperation(Operation);
-		}
-		return nullptr;
-	}
-
-	if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone)
-	{
-		// For backwards compatibility, we do not reject this if we're outside a movement cycle. However, we will at least
-		// log it.
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to apply a predicted effect of type %s outside a movement cycle!"),
-			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *Effect->GetName())
-	}
-	return nullptr;
-	// return ProcessOperation(Operation);
-}
-
 int32 UGMC_AbilitySystemComponent::GetNextAvailableEffectHandle() const
 {
 	if (ActionTimer == 0)
@@ -1453,7 +1402,11 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectShort(TSubclas
 
 
 bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass,
-                                                     FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect)
+                                                     FGMCAbilityEffectData InitializationData,
+                                                     EGMCAbilityEffectQueueType QueueType,
+                                                     int& OutEffectHandle,
+                                                     int& OutEffectId,
+                                                     UGMCAbilityEffect*& OutEffect)
 {
 	OutEffect = nullptr;
 	OutEffectId = -1;
@@ -1463,8 +1416,6 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
 		return false;
 	}
-
-	const bool bPregenerateEffectId = QueueType != EGMCAbilityEffectQueueType::Predicted && QueueType != EGMCAbilityEffectQueueType::PredictedQueued;
 	
 	// TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
 	// // const int EffectID = CreateEffectOperation(Operation, EffectClass, InitializationData, bPregenerateEffectId, QueueType);
@@ -1481,20 +1432,25 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	// HandleData.OperationId = Operation.Header.OperationId;
 	// EffectHandles.Add(HandleData.Handle, HandleData);
 
+
+	FGMASBoundQueueV2EffectApplicationOperation Operation;
+	Operation.EffectClass = EffectClass;
+	Operation.EffectData = InitializationData;
+	
 	switch(QueueType)
 	{
 	case EGMCAbilityEffectQueueType::Predicted:
 		{
-			if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone && !bInAncillaryTick)
-			{
-				// UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply predicted effect %d of type %s outside of a GMC move!"),
-				// 	*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectID, *EffectClass->GetName())
-				return false;
-			}
+			// if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone && !bInAncillaryTick)
+			// {
+			// 	// UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply predicted effect %d of type %s outside of a GMC move!"),
+			// 	// 	*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectID, *EffectClass->GetName())
+			// 	return false;
+			// }
 
 			// Apply effect immediately.
-			// OutEffect = ProcessOperation(Operation);
-			// OutEffectId = OutEffect->EffectData.EffectID;
+			OutEffect = ApplyAbilityEffectViaOperation(Operation);
+			OutEffectId = OutEffect->EffectData.EffectID;
 			// OutEffectHandle = HandleData.Handle;
 			return true;
 		}
@@ -1533,6 +1489,28 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply effect of type %s but something has gone BADLY wrong!"),
 		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *EffectClass->GetName())
 	return false;
+}
+
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2EffectApplicationOperation& Operation)
+{
+	FGMCAbilityEffectData EffectData = {};
+	if (Operation.EffectData.IsValid())
+	{
+		EffectData = Operation.EffectData;
+	}
+	else
+	{
+		EffectData = Operation.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
+	}
+	
+	
+	UGMCAbilityEffect* Effect = DuplicateObject(Operation.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+	Effect = ApplyAbilityEffect(Effect, EffectData);
+	FString isExecutingMove = GMCMovementComponent->IsExecutingMove() ? TEXT("True") : TEXT("False");
+	UE_LOG(LogTemp, Warning, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s"),
+		ActionTimer, *isExecutingMove);
+	
+	return Effect;
 }
 
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetEffectById(const int EffectId) const

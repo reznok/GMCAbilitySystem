@@ -27,13 +27,15 @@ void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
 	
-	bIsServer = MovementComponent->GetOwner()->HasAuthority();
+	GMCMovementComponent = MovementComponent;
 }
 
 void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 {
 	// Client Logic
-	if (!bIsServer)
+	if (GMCMovementComponent->GetNetMode() == NM_Client ||
+		GMCMovementComponent->GetNetMode() == NM_Standalone ||
+		GMCMovementComponent->IsLocallyControlledListenServerPawn())
 	{
 		// Get a pending operation
 		if (ClientQueuedOperations.Num() > 0)
@@ -51,7 +53,7 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
-	if (bIsServer)
+	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
 		if (OperationData.IsValid())
 		{

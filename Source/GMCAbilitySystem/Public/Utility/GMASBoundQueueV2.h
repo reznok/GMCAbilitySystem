@@ -2,6 +2,7 @@
 
 #include "StructUtils/InstancedStruct.h"
 #include "GMASBoundQueueV2_Operations.h"
+#include "GMCMovementUtilityComponent.h"
 #include "GMASBoundQueueV2.generated.h"
 
 class UGMC_MovementUtilityCmp;
@@ -18,7 +19,8 @@ struct FGMASBoundQueueV2
 	FOnServerOperationAdded OnServerOperationAdded;
 	FOnServerOperationForced OnServerOperationForced;
 
-	bool bIsServer{false};
+	UPROPERTY()
+	UGMC_MovementUtilityCmp* GMCMovementComponent = nullptr;
 
 	int NextOperationID = 0;
 	
@@ -27,7 +29,7 @@ struct FGMASBoundQueueV2
 	// Any negative ID is a client operation
 	int GetNextOperationID()
 	{
-		if (bIsServer)
+		if (GMCMovementComponent->GetNetMode() != NM_Client)
 		{
 			return ++NextOperationID;
 		}

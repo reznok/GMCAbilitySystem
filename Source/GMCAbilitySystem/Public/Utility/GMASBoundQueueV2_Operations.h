@@ -43,6 +43,9 @@ struct FGMASBoundQueueV2EffectApplicationOperation : public FGMASBoundQueueV2Ope
 	GENERATED_BODY()
 
 	UPROPERTY()
+	int EffectID {-1};
+
+	UPROPERTY()
 	TSubclassOf<UGMCAbilityEffect> EffectClass;
 
 	UPROPERTY()
