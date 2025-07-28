@@ -84,7 +84,7 @@ struct FGMASBoundQueueV2
 	void QueueClientOperation(const int OperationID);
 
 	// Queue a ServerAuth operation
-	void QueueServerOperation(const int OperationID);
+	void QueueServerOperation(const int OperationID, const float Timeout = 1.0f);
 	
 	bool CurrentOperationIsOfType(const UScriptStruct* T) const
 	{

@@ -78,7 +78,7 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 				OnServerOperationForced.Broadcast(OperationPayloads[It.Key()]);
 				OperationPayloads.Remove(It.Key());
 			}
-			// It.RemoveCurrent();
+			It.RemoveCurrent();
 		}
 	}
 }
@@ -88,7 +88,7 @@ void FGMASBoundQueueV2::QueueClientOperation(const int OperationID)
 	ClientQueuedOperations.Add(OperationID);
 }
 
-void FGMASBoundQueueV2::QueueServerOperation(const int OperationID)
+void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float Timeout)
 {
 	if (!OperationPayloads.Contains(OperationID))
 	{
@@ -99,7 +99,7 @@ void FGMASBoundQueueV2::QueueServerOperation(const int OperationID)
 	const FInstancedStruct QueuedOperation = OperationPayloads[OperationID];
 
 	// Add to server timeout map
-	ServerQueuedBoundOperationsGracePeriods.Add(OperationID, 1.0f);
+	ServerQueuedBoundOperationsGracePeriods.Add(OperationID, Timeout);
 
 	// Notify
 	OnServerOperationAdded.Broadcast(OperationID, QueuedOperation);

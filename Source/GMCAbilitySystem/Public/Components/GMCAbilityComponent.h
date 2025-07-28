@@ -564,9 +564,6 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
-
-	UFUNCTION(BlueprintCallable, Category="GMAS")
-	virtual void PreRemoteMoveExecution();
 	
 #pragma endregion GMC
 
@@ -675,11 +672,11 @@ private:
 	// Queued ability operations (activate, cancel, etc.)
 	// TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
 	// bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
-
-	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
-	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
-
-	TGMASBoundQueue<UGMASSyncedEvent, FGMASSyncedEventContainer, false> QueuedEventOperations;
+	//
+	// TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
+	// TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
+	//
+	// TGMASBoundQueue<UGMASSyncedEvent, FGMASSyncedEventContainer, false> QueuedEventOperations;
 
 	FGMASBoundQueueV2 BoundQueueV2 = {};
 
@@ -698,31 +695,11 @@ private:
 	// Execute an event that is created by the server where execution is synced between server and client
 	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
-
-
 	
 	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "Impulse")
 	void AddImpulse(FVector Impulse, bool bVelChange = false);
 	void AddImpulseEvent(const FGMASSyncedEventContainer& EventData) const;
 	
-	// Effects	
-	virtual UGMCAbilityEffect* ProcessOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
-
-	
-	void ClientQueueOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
-	void ClientQueueOperation(const TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& Operation);
-	
-	UFUNCTION(Client, Reliable)
-	void RPCClientQueueEffectOperation(const FGMASBoundQueueRPCHeader& Header);
-	
-	UFUNCTION(Client, Reliable)
-	void RPCClientQueueEventOperation(const FGMASBoundQueueRPCHeader& Header);
-
-	// Predictions of Effect state changes
-	FEffectStatePrediction EffectStatePrediction{};
-
-	TArray<FEffectStatePrediction> QueuedEffectStates;
-
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 	
@@ -797,14 +774,7 @@ private:
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInAncillaryTick = false;
-
-	void ServerHandlePendingEffect(float DeltaTime);
-	void ServerHandlePredictedPendingEffect(float DeltaTime);
-
-	template<typename C, typename T>
-	void ClientHandlePendingOperation(TGMASBoundQueue<C, T, false>& QueuedOperations);
 	
-	void ClientHandlePredictedPendingEffect();
 
 	int LateApplicationIDCounter = 0;
 
