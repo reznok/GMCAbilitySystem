@@ -20,7 +20,6 @@ struct FGMASBoundQueueV2OperationBaseData
 	int32 OperationID { 0 };
 };
 
-
 USTRUCT()
 struct FGMASBoundQueueV2AbilityActivationOperation : public FGMASBoundQueueV2OperationBaseData
 {

@@ -534,6 +534,11 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 	
+	if (BoundQueueV2.OperationData.IsValid())
+	{
+		ProcessOperation(BoundQueueV2.OperationData, true);
+	}
+	
 	ApplyStartingEffects();
 
 	// Purge "future" temporary modifiers on replay
@@ -553,13 +558,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ProcessAttributes(true);
 
 	// Abilities
-	CleanupStaleAbilities();
-	
-	if (BoundQueueV2.OperationData.IsValid())
-	{
-		ProcessOperation(BoundQueueV2.OperationData, true);
-	}
-		
+	CleanupStaleAbilities();		
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -1140,7 +1139,7 @@ void UGMC_AbilitySystemComponent::ExecuteSyncedEvent(FGMASSyncedEventContainer E
 
 	EventData.EventType = EGMASSyncedEventType::BlueprintImplemented;
 	
-	TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer> Operation;	
+	// TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer> Operation;	
 	// if (CreateSyncedEventOperation(Operation, EventData) == -1 )
 	// {
 	// 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Failed to create SyncedEvent"));
@@ -1244,59 +1243,24 @@ void UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 
 }
 
-template <typename C, typename T>
-bool UGMC_AbilitySystemComponent::IsOperationValid(const TGMASBoundQueueOperation<C, T>& Operation) const
-{
-	if (!Operation.IsValid())
-	{
-		if (Operation.Header.OperationId != -1)
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%s] %s received invalid queued operation %d!"),
-				*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), Operation.Header.OperationId)
-			return false;
-		}
-		return false;
-	}
-	return true;
-}
-
-template <typename C, typename T>
-bool UGMC_AbilitySystemComponent::ShouldProcessOperation(
-	const TGMASBoundQueueOperation<C, T>& Operation, TGMASBoundQueue<C, T, false>& QueuedOperations, bool bIsServer) const
-{
-	if (!IsOperationValid(Operation))
-	{
-		return false;
-	}
-
-	if (bIsServer)
-	{
-		return HasAuthority() && (QueuedOperations.IsAcknowledged(Operation.GetOperationId()) ||
-			Operation.GracePeriodExpired() || GetNetMode() == NM_Standalone);
-	}
-	else
-	{
-		return !QueuedOperations.IsAcknowledged(Operation.GetOperationId()) && (GMCMovementComponent->IsLocallyControlledServerPawn() || GMCMovementComponent->IsAutonomousProxy());
-	}
-}
 
 void UGMC_AbilitySystemComponent::AddImpulse(FVector Impulse, bool bVelChange)
 {
-	if (!HasAuthority())
-	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to apply knock back effect"));
-		return;
-	}
-	
-	TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer> Operation;
-	FGMASSyncedEventContainer EventData;
-
-	FGMASSyncedEventData_AddImpulse ImpulseData;
-	ImpulseData.Impulse = Impulse;
-	ImpulseData.bVelocityChange = bVelChange;
-	
-	EventData.EventType = EGMASSyncedEventType::AddImpulse;
-	EventData.InstancedPayload = FInstancedStruct::Make(ImpulseData);
+	// if (!HasAuthority())
+	// {
+	// 	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to apply knock back effect"));
+	// 	return;
+	// }
+	//
+	// TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer> Operation;
+	// FGMASSyncedEventContainer EventData;
+	//
+	// FGMASSyncedEventData_AddImpulse ImpulseData;
+	// ImpulseData.Impulse = Impulse;
+	// ImpulseData.bVelocityChange = bVelChange;
+	//
+	// EventData.EventType = EGMASSyncedEventType::AddImpulse;
+	// EventData.InstancedPayload = FInstancedStruct::Make(ImpulseData);
 	//
 	// if (CreateSyncedEventOperation(Operation, EventData) == -1 )
 	// {
@@ -1464,22 +1428,6 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
 		return false;
 	}
-	
-	// TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-	// // const int EffectID = CreateEffectOperation(Operation, EffectClass, InitializationData, bPregenerateEffectId, QueueType);
-	// if (bPregenerateEffectId && EffectID == -1)
-	// {
-	// 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s could not create an effect of type %s!"),
-	// 		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *EffectClass->GetName())
-	// 	return false;
-	// }
-	//
-	// FGMASQueueOperationHandle HandleData;
-	// HandleData.Handle = GetNextAvailableEffectHandle();
-	// HandleData.NetworkId = EffectID;
-	// HandleData.OperationId = Operation.Header.OperationId;
-	// EffectHandles.Add(HandleData.Handle, HandleData);
-
 
 	FGMASBoundQueueV2EffectApplicationOperation Operation;
 	Operation.EffectClass = EffectClass;
@@ -1489,13 +1437,6 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	{
 	case EGMCAbilityEffectQueueType::Predicted:
 		{
-			// if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone && !bInAncillaryTick)
-			// {
-			// 	// UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply predicted effect %d of type %s outside of a GMC move!"),
-			// 	// 	*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectID, *EffectClass->GetName())
-			// 	return false;
-			// }
-
 			// Apply effect immediately.
 			OutEffect = ApplyAbilityEffectViaOperation(Operation);
 			OutEffectId = OutEffect->EffectData.EffectID;
@@ -1548,8 +1489,8 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectViaOperation(c
 	UGMCAbilityEffect* Effect = DuplicateObject(Operation.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 	Effect = ApplyAbilityEffect(Effect, EffectData);
 	FString isExecutingMove = GMCMovementComponent->IsExecutingMove() ? TEXT("True") : TEXT("False");
-	UE_LOG(LogTemp, Warning, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s"),
-		ActionTimer, *isExecutingMove);
+	UE_LOG(LogTemp, Warning, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s | IsServer: %s"),
+		ActionTimer, *isExecutingMove, HasAuthority() ? TEXT("True") : TEXT("False"));
 	
 	return Effect;
 }
@@ -1812,8 +1753,8 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 					return false;
 				}
 				
-				TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
-				FGMCAbilityEffectData Data;
+				 //TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
+				// FGMCAbilityEffectData Data;
 				// QueuedEffectOperations.MakeOperation(Operation, EGMASBoundQueueOperationType::Remove, FGameplayTag::EmptyTag, Data, Ids);
 				// QueuedEffectOperations.QueuePreparedOperation(Operation, QueueType == EGMCAbilityEffectQueueType::ServerAuthMove);
 				

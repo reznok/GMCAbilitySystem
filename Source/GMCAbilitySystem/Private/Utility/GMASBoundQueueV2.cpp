@@ -1,5 +1,7 @@
 ﻿#include "Utility/GMASBoundQueueV2.h"
 
+#include <Utility/GMASBoundQueueV2.h>
+
 #include "GMCAbilitySystem.h"
 #include "GMCMovementUtilityComponent.h"
 
@@ -53,6 +55,10 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
+
+	///
+	/// Server receiving the confirmation that a client processed a server-auth operation
+	///
 	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
 		if (OperationData.IsValid())
@@ -68,6 +74,8 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 			}
 		}
 	}
+
+	
 	// Tick all Server Queued Operations
 	for (auto It = ServerQueuedBoundOperationsGracePeriods.CreateIterator(); It; ++It)
 	{

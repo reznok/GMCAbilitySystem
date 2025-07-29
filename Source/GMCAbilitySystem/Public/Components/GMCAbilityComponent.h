@@ -10,8 +10,6 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
-#include "Containers/Deque.h"
-#include "Utility/GMASBoundQueue.h"
 #include "Utility/GMASBoundQueueV2.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
@@ -306,8 +304,8 @@ public:
 
 	int GetNextAvailableEffectID() const;
 	bool CheckIfEffectIDQueued(int EffectID) const;
-	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
-	int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
+	// int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
+	// int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
 	
 	// BP-specific version of 
 	
@@ -657,25 +655,8 @@ private:
 	void InitializeStartingAbilities();
 	
 	TArray<FInstancedStruct> QueuedTaskData;
-
-	// Queued ability operations (activate, cancel, etc.)
-	// TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
-	// bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
-	//
-	// TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
-	// TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
-	//
-	// TGMASBoundQueue<UGMASSyncedEvent, FGMASSyncedEventContainer, false> QueuedEventOperations;
-
+	
 	FGMASBoundQueueV2 BoundQueueV2 = {};
-
-	
-	template<typename C, typename T>
-	bool IsOperationValid(const TGMASBoundQueueOperation<C, T>& Operation) const;
-
-	template <typename C, typename T>
-	bool ShouldProcessOperation(const TGMASBoundQueueOperation<C, T>& Operation, TGMASBoundQueue<C, T, false>& QueuedOperations, bool bIsServer = true) const;
-	
 	// Events	
 	virtual void ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true);
 
