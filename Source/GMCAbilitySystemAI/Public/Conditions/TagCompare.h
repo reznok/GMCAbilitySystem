@@ -4,44 +4,42 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/StateTreeConditionBlueprintBase.h"
-#include "HasActiveTag.generated.h"
+#include "TagCompare.generated.h"
 
 
 class UGMC_AbilitySystemComponent;
 class UStateTreeConditionBlueprintBase;
 
 USTRUCT()
-struct GMCABILITYSYSTEMAI_API FGMASHasActiveTagInstanceData
+struct GMCABILITYSYSTEMAI_API FGMASCompareTagConditionInstanceData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = Context)
-	UGMC_AbilitySystemComponent* AbilitySystemComponent;
+	UPROPERTY(EditAnywhere, Category = Parameter)
+	FGameplayTag LeftTag;
 	
 	UPROPERTY(EditAnywhere, Category = Parameter)
-	FGameplayTag TagToCheck;
+	FGameplayTag RightTag;
 };
 
 /**
- * HasActiveTag condition
- * Succeeds if the ASC has the specified tag.
- * 
- * Condition can be used with multiple configurations:
- *	Does TagContainer {"A.1"} has Tag "A" ?
- *		exact match 'false' will SUCCEED
- *		exact match 'true' will FAIL
+ * Tag Compare condition
+ * Succeeds if the Left Tag matches the Right Tag
+ *
+ * if bMatchesExact is true, the Left Tag must match the Right Tag exactly
+ * if bMatchesExact is false, the Left Tag must match the Right Tag or any of its parents
  */
 
-USTRUCT(DisplayName="Has Active Tag", Category="GMAS")
-struct GMCABILITYSYSTEMAI_API FGMASHasActiveTagCondition : public FStateTreeConditionCommonBase
+USTRUCT(DisplayName="Tag Compare")
+struct GMCABILITYSYSTEMAI_API FGMASTagCompareCondition : public FStateTreeConditionCommonBase
 {
 	GENERATED_BODY()
 
-	using FInstanceDataType = FGMASHasActiveTagInstanceData;
+	using FInstanceDataType = FGMASCompareTagConditionInstanceData;
 
 	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
 
-	FGMASHasActiveTagCondition() = default;
+	FGMASTagCompareCondition() = default;
 
 	virtual bool TestCondition(FStateTreeExecutionContext& Context) const override;
 
@@ -56,11 +54,8 @@ struct GMCABILITYSYSTEMAI_API FGMASHasActiveTagCondition : public FStateTreeCond
 		return UE::StateTree::Colors::DarkGrey;
 	}
 #endif
-
+	
 	/** If true, the tag has to be exactly present, if false then TagContainer will include its parent tags while matching */
 	UPROPERTY(EditAnywhere, Category = Condition)
 	bool bExactMatch = true;
-
-	UPROPERTY(EditAnywhere, Category = Condition)
-	bool bInvert = false;
 };

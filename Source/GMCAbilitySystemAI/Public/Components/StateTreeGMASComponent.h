@@ -22,12 +22,27 @@ public:
 	TSubclassOf<UStateTreeSchema> GetSchema() const override;
 	//~ END
 
-	virtual bool SetContextRequirements(FStateTreeExecutionContext& Context, bool bLogErrors = false) override;
+public:
 
 	UFUNCTION()
 	void OnActiveTagsChanged(const FGameplayTagContainer& AddedTags, const FGameplayTagContainer& RemovedTags);
+
+	UFUNCTION()
+	void OnEffectApplied(UGMCAbilityEffect* AppliedEffect);
+
+	UFUNCTION()
+	void OnEffectRemoved(UGMCAbilityEffect* RemovedEffect);
 	
-	void BeginPlay() override;
+	UFUNCTION()
+	void OnAbilityActivated(UGMCAbility* Ability, FGameplayTag AbilityTag);
+	
+	UFUNCTION()
+	void OnAbilityEnded(UGMCAbility* Ability);
+
+	UFUNCTION()
+	void OnAttributeChanged(FGameplayTag AttributeTag, float OldValue, float NewValue);
+
+	virtual void BeginPlay() override;
 
 private:
 	UPROPERTY()

@@ -1,7 +1,7 @@
 ﻿#pragma once
 #include "StateTreeGMASTask.h"
 #include "Components/StateTreeComponent.h"
-#include "StateTreeGMASLogTask.generated.h"
+#include "LogTask.generated.h"
 
 USTRUCT()
 struct GMCABILITYSYSTEMAI_API FGMASLogInstanceData
@@ -9,14 +9,14 @@ struct GMCABILITYSYSTEMAI_API FGMASLogInstanceData
 	GENERATED_BODY()
 };
 
-USTRUCT(meta = (DisplayName = "Write Log Message", Category = "GMAS|Log"))
-struct GMCABILITYSYSTEMAI_API FStateTreeGMASLogTask : public FStateTreeGMASTaskBase
+USTRUCT(meta = (DisplayName = "Write Log Message", Category = "GMAS"))
+struct GMCABILITYSYSTEMAI_API FLogTask : public FStateTreeGMASTaskBase
 {
 	GENERATED_BODY()
 
 	using FInstanceDataType = FGMASLogInstanceData;
 
-	FStateTreeGMASLogTask() = default;
+	FLogTask() = default;
 
 	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
 

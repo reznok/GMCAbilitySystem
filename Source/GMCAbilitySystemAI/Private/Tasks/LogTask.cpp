@@ -1,9 +1,9 @@
-﻿#include "Tasks/StateTreeGMASLogTask.h"
+﻿#include "Tasks/LogTask.h"
 
 #include "GMCAbilitySystemAI.h"
 #include "StateTreeExecutionContext.h"
 
-EStateTreeRunStatus FStateTreeGMASLogTask::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
+EStateTreeRunStatus FLogTask::EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const
 {
 	// Get the instance data
 	const FGMASLogInstanceData& InstanceData = Context.GetInstanceData(*this);

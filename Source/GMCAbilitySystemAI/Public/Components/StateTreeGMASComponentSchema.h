@@ -7,6 +7,7 @@
 #include "Components/StateTreeComponentSchema.h"
 #include "StateTreeGMASComponentSchema.generated.h"
 
+class AAIController;
 /**
  * 
  */
@@ -29,6 +30,7 @@ public:
 #endif // WITH_EDITOR
 
 protected:
+	
 	/** AbilitySystemComponent class the StateTree is expected to run on. Allows to bind to specific Actor class' properties. */
 	UPROPERTY(EditAnywhere, Category = "Defaults", NoClear)
 	TSubclassOf<UGMC_AbilitySystemComponent> AbilitySystemComponentClass = nullptr;

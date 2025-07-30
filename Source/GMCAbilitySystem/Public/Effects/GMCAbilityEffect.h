@@ -165,24 +165,25 @@ struct FGMCAbilityEffectData
 	}
 
 	// query stuff
+	
+	// Container providing a definition for this effects. This definition is used for querying the effect.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	// Container for a more generalized definition of effects
 	FGameplayTagContainer EffectDefinition;
 
+	// Query must match on effect activation
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	// query must match on effect activation
 	FGameplayTagQuery ActivationQuery;
 
+	// Query must be maintained throughout effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	// query must be maintained throughout effect
 	FGameplayTagQuery MustMaintainQuery;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On Activation Via Definition Query"))
-	// end ability on effect activation if definition matches query
+	// End ability on effect activation if definition matches query
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On Activation via Definition Query"))
 	FGameplayTagQuery EndAbilityOnActivationQuery;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On End Via Definition Query"))
-	// end ability on effect end if definition matches query
+	// End ability on effect end if definition matches query
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On End via Definition Query"))
 	FGameplayTagQuery EndAbilityOnEndQuery;
 
 };

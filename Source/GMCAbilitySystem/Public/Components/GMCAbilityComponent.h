@@ -193,6 +193,15 @@ public:
 	// Checks whether every tag provided is in current tags, without matching on child tags.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	bool HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasActiveEffectWithTag(const FGameplayTag GameplayTag, bool bExactMatch) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool QueryActiveEffects(const FGameplayTagQuery& GameplayTagQuery);
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasActiveEffectWithClass(const TSubclassOf<UGMCAbilityEffect>& EffectClass) const;
 	
 	/** Get all active tags that match a given parent tag */
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")

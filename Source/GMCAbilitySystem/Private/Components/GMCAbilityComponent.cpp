@@ -302,6 +302,37 @@ bool UGMC_AbilitySystemComponent::HasAllTagsExact(const FGameplayTagContainer Ta
 	return ActiveTags.HasAllExact(TagsToCheck);
 }
 
+bool UGMC_AbilitySystemComponent::HasActiveEffectWithTag(const FGameplayTag GameplayTag, const bool bExactMatch) const
+{
+	const TArray<UGMCAbilityEffect*> ActiveEffectsFound = GetActiveEffectsByTag(GameplayTag, bExactMatch);
+	return ActiveEffectsFound.Num() > 0;
+}
+
+bool UGMC_AbilitySystemComponent::QueryActiveEffects(const FGameplayTagQuery& GameplayTagQuery)
+{
+	FGameplayTagContainer ActiveEffectTags;
+	// For every active effect, add its tag to the container
+	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
+		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.IsValid()) {
+			ActiveEffectTags.AddTag(EffectFound.Value->EffectData.EffectTag);
+		}
+	}
+
+	return ActiveEffectTags.MatchesQuery(GameplayTagQuery);
+}
+
+
+bool UGMC_AbilitySystemComponent::HasActiveEffectWithClass(const TSubclassOf<UGMCAbilityEffect>& EffectClass) const
+{
+	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
+	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
+		if (EffectFound.Value && EffectFound.Value->IsA(EffectClass)) {
+			ActiveEffectsFound.Add(EffectFound.Value);
+		}
+	}
+	return ActiveEffectsFound.Num() > 0;
+}
+
 TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const FGameplayTag ParentTag){
 	TArray<FGameplayTag> MatchedTags;
 	if(!ParentTag.IsValid()) return MatchedTags;
@@ -1583,10 +1614,11 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<U
 		return nullptr;
 	}
 
-	if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone)
+	if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone && !GMCMovementComponent->IsServerPawn())
 	{
 		// For backwards compatibility, we do not reject this if we're outside a movement cycle. However, we will at least
 		// log it.
+		// ServerPawns can do this
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to apply a predicted effect of type %s outside a movement cycle!"),
 			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *Effect->GetName())
 	}

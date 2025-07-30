@@ -9,7 +9,9 @@ public class GMCAbilitySystemAI : ModuleRules
         PublicDependencyModuleNames.AddRange(
             new string[]
             {
-                "Core",
+                "Core", 
+                "AIModule",
+                "GameplayStateTreeModule",
             }
         );
 
@@ -21,10 +23,8 @@ public class GMCAbilitySystemAI : ModuleRules
                 "Slate",
                 "SlateCore",
                 "StateTreeModule",
-                "GameplayStateTreeModule",
                 "GMCAbilitySystem",
                 "GMCCore",
-                "AIModule",
                 "GameplayTags",
                 "GameplayTasks"
             }

@@ -78,10 +78,10 @@ protected:
 
 private:
 	// How often client sends heartbeats to server
-	float HeartbeatInterval = .1f;
+	float HeartbeatInterval = .25f;
 
 	// Max time between heartbeats before server cancels task
-	float HeartbeatMaxInterval =.3f;
+	float HeartbeatMaxInterval =1.f;
 	
 	float ClientLastHeartbeatSentTime;
 	float LastHeartbeatReceivedTime;

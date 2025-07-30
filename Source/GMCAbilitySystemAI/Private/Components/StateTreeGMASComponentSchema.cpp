@@ -3,6 +3,7 @@
 
 #include "Components/StateTreeGMASComponentSchema.h"
 
+#include "AIController.h"
 #include "BrainComponent.h"
 #include "GMCAbilitySystemAI.h"
 #include "GMCPawn.h"
@@ -55,10 +56,17 @@ bool UStateTreeGMASComponentSchema::SetContextRequirements(UBrainComponent& Brai
 	
 	UGMC_AbilitySystemComponent* ASC = nullptr;
 	AActor* OwnerActor = Cast<AActor>(BrainComponent.GetOwner());
-	if (OwnerActor)
+	
+	if (OwnerActor->IsA(AGMC_Pawn::StaticClass()))
 	{
 		ASC = Cast<UGMC_AbilitySystemComponent>(OwnerActor->GetComponentByClass<UGMC_AbilitySystemComponent>());
 	}
+	else if (OwnerActor->IsA(AAIController::StaticClass()))
+	{
+		AAIController* AIController = Cast<AAIController>(OwnerActor);
+		ASC = Cast<UGMC_AbilitySystemComponent>(AIController->GetPawn()->GetComponentByClass<UGMC_AbilitySystemComponent>());
+	}
+	
 
 	if (ASC == nullptr)
 	{

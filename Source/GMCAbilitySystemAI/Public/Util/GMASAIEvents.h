@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include "NativeGameplayTags.h"
-
+#include "Effects/GMCAbilityEffect.h"
+#include "Ability/GMCAbility.h"
 #include "GMASAIEvents.generated.h"
 
 class UGMCAbility;
@@ -34,6 +35,16 @@ struct GMCABILITYSYSTEMAI_API FGMAS_AIEventActiveTagsChanged
 	FGameplayTagContainer RemovedTags;
 };
 
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GMAS_AI_Event_AbilityStarted)
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEMAI_API FGMAS_AIEventAbilityStarted
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UGMCAbility* Ability;
+};
+
 UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GMAS_AI_Event_AbilityEnded)
 USTRUCT(BlueprintType)
 struct GMCABILITYSYSTEMAI_API FGMAS_AIEventAbilityEnded
@@ -42,4 +53,24 @@ struct GMCABILITYSYSTEMAI_API FGMAS_AIEventAbilityEnded
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	UGMCAbility* Ability;
+};
+
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GMAS_AI_Event_EffectAdded)
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEMAI_API FGMAS_AIEventEffectAdded
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UGMCAbilityEffect* Effect;
+};
+
+UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_GMAS_AI_Event_EffectRemoved)
+USTRUCT(BlueprintType)
+struct GMCABILITYSYSTEMAI_API FGMAS_AIEventEffectRemoved
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	UGMCAbilityEffect* Effect;
 };

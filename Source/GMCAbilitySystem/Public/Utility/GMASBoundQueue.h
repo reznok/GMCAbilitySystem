@@ -232,28 +232,28 @@ public:
 				CurrentOperation.Header.OperationId,
 				Prediction,
 				EGMC_CombineMode::CombineIfUnchanged,
-				EGMC_SimulationMode::Periodic_Output,
+				EGMC_SimulationMode::None,
 				EGMC_InterpolationFunction::TargetValue);
 
 			BI_OperationType = MovementComponent->BindByte(
 				CurrentOperation.Header.OperationTypeRaw,
 				Prediction,
 				EGMC_CombineMode::CombineIfUnchanged,
-				EGMC_SimulationMode::Periodic_Output,
+				EGMC_SimulationMode::None,
 				EGMC_InterpolationFunction::TargetValue);
 
 			BI_OperationTag = MovementComponent->BindGameplayTag(
 				CurrentOperation.Header.Tag,
 				Prediction,
 				EGMC_CombineMode::CombineIfUnchanged,
-				EGMC_SimulationMode::Periodic_Output,
+				EGMC_SimulationMode::None,
 				EGMC_InterpolationFunction::TargetValue);
 
 			BI_OperationClass = MovementComponent->BindName(
 				CurrentOperation.Header.ItemClassName,
 				Prediction,
 				EGMC_CombineMode::CombineIfUnchanged,
-				EGMC_SimulationMode::Periodic_Output,
+				EGMC_SimulationMode::None,
 				EGMC_InterpolationFunction::TargetValue);
 
 			BI_OperationPayload = MovementComponent->BindInstancedStruct(
