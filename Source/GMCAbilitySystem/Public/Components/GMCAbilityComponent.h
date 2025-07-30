@@ -551,6 +551,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
+
+	UFUNCTION(BlueprintCallable, Category="GMAS")
+	virtual void PostLocalMoveExecution();
+	
 	
 #pragma endregion GMC
 

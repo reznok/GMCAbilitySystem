@@ -590,6 +590,11 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 	BoundQueueV2.GenPreLocalMoveExecution();
 }
 
+void UGMC_AbilitySystemComponent::PostLocalMoveExecution()
+{
+	BoundQueueV2.GenPostLocalMoveExecution();
+}
+
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
 {
 	UE_LOG(LogTemp, Warning, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
@@ -1162,6 +1167,10 @@ void UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	}
 
 	const int OperationID = BaseData->OperationID;
+	if (OperationID == 0)
+	{
+		return; // Empty/Default Operation, Ignore
+	}
 
 	// Server receiving a client operation
 	// It needs to make sure that it has the client's payload data stored
@@ -1191,7 +1200,7 @@ void UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick);
-		UE_LOG(LogTemp, Warning, TEXT("IsServer: %hhd | ActionTimer: %f | OperationID: %d"), GMCMovementComponent->GetOwner()->HasAuthority(), ActionTimer, Data.OperationID);
+		// UE_LOG(LogTemp, Warning, TEXT("IsServer: %hhd | ActionTimer: %f | OperationID: %d"), GMCMovementComponent->GetOwner()->HasAuthority(), ActionTimer, Data.OperationID);
 	} 
 
 	else if (StructType == FGMASBoundQueueV2EffectApplicationOperation::StaticStruct())

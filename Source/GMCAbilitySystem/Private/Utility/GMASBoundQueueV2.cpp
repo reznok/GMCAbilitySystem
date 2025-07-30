@@ -22,9 +22,11 @@ bool FGMASBoundQueueV2::IsValidClientOperation(const FInstancedStruct& Data) con
 
 void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 {
+	OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
+	
 	MovementComponent->BindInstancedStruct(
 		OperationData,
-		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_PredictionMode::ClientAuth_InputOutput,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
@@ -34,6 +36,7 @@ void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 
 void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 {
+	// UE_LOG(LogTemp, Warning, TEXT("OperationDataType: %s"), *OperationData.GetScriptStruct()->GetName());
 	// Client Logic
 	if (GMCMovementComponent->GetNetMode() == NM_Client ||
 		GMCMovementComponent->GetNetMode() == NM_Standalone ||
@@ -46,11 +49,14 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 			if (OperationPayloads.Contains(OperationIDToProcess))
 			{
 				OperationData = OperationPayloads[OperationIDToProcess];
-				return;
 			}
 		}
 	}
-	OperationData = FInstancedStruct();
+}
+
+void FGMASBoundQueueV2::GenPostLocalMoveExecution()
+{
+	OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
 }
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
