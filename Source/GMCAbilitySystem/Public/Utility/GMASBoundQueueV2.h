@@ -51,6 +51,7 @@ struct  FGMASBoundQueueV2
 	// Operation Data used to actually process the operation
 	// These are only ever sent via RPC from the server to the client then cached
 	// GMC moves will access the caches instead of storing it all in moves
+	int BI_OperationData;
 	FInstancedStruct OperationData;
 	//// End GMC Bound
 
@@ -79,8 +80,11 @@ struct  FGMASBoundQueueV2
 	// Treat these as unsafe client-supplied data
 	TArray<UScriptStruct*> ValidClientInputOperationTypes = {
 		FGMASBoundQueueV2AbilityActivationOperation::StaticStruct(),
+		FGMASBoundQueueV2AcknowledgeOperation::StaticStruct()
 	};
 
+	bool IsValidGMASOperation(const FInstancedStruct& Data) const;
+	
 	bool IsValidClientOperation(const FInstancedStruct& Data) const;
 
 	// Queue a Client operation
@@ -94,6 +98,7 @@ struct  FGMASBoundQueueV2
 		return OperationData.GetScriptStruct() == T;
 	}
 
+	// Process a server operation that the client has sent an ack for
 	void ServerAcknowledgeOperation(int ID);
 	
 	// Operations (referenced by ID to OperationPayloads) that the Client has queued

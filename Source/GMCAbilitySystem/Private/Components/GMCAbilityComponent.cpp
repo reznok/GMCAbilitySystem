@@ -134,7 +134,13 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	OnAncillaryTick.Broadcast(DeltaTime);
 
 	// Handle an operation, either client generated or server generated
-	if (BoundQueueV2.OperationData.IsValid())
+	if (HasAuthority())
+	{
+		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
+		FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+		ServerProcessOperation(ClientPayloadOperationData, false);
+	}
+	else
 	{
 		ProcessOperation(BoundQueueV2.OperationData, false);
 	}
@@ -296,16 +302,40 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 	return MatchedTags;
 }
 
-void UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
+bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
 {
-	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GetGrantedAbilitiesByTag(InputTag))
+
+	auto GrantedAbilities = GetGrantedAbilitiesByTag(InputTag);
+	if (GrantedAbilities.Num() == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("No Abilities Granted for InputTag: %s"), *InputTag.ToString());
+		return false;
+	}
+	bool bFirstAbilityActivatesDuringMovementTick = GrantedAbilities[0]->GetDefaultObject<UGMCAbility>()->bActivateOnMovementTick;
+	
+	if (bFirstAbilityActivatesDuringMovementTick != bFromMovementTick)
+	{
+		// If the first ability doesn't match the bFromMovementTick state, we can't activate any abilities
+		return false;
+	}
+	
+	// If any abilities don't match the first ability's state, we can't activate them (no mixing movement and ancillary abilities)
+	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GrantedAbilities)
 	{
 		const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
-		if(AbilityCDO && bFromMovementTick == AbilityCDO->bActivateOnMovementTick){
-			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Trying to Activate Ability: %s from %s"), *GetNameSafe(ActivatedAbility), bFromMovementTick ? TEXT("Movement") : TEXT("Ancillary"));
-			TryActivateAbility(ActivatedAbility, InputAction, InputTag);
+		if (AbilityCDO && AbilityCDO->bActivateOnMovementTick != bFirstAbilityActivatesDuringMovementTick)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to Activate Ability: %s from %s, but it doesn't match bFromMovementTick state of other abilities"), *GetNameSafe(ActivatedAbility), bFromMovementTick ? TEXT("Movement") : TEXT("Ancillary"));
+			return false;
 		}
 	}
+	
+	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GrantedAbilities)
+	{
+		TryActivateAbility(ActivatedAbility, InputAction, InputTag);
+	}
+
+	return true;
 }
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag)
@@ -533,11 +563,19 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
-	
-	if (BoundQueueV2.OperationData.IsValid())
+
+	// Server processes client output payloads
+	if (HasAuthority())
+	{
+		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
+		FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+		ServerProcessOperation(ClientPayloadOperationData, true);
+	}
+	else
 	{
 		ProcessOperation(BoundQueueV2.OperationData, true);
 	}
+	
 	
 	ApplyStartingEffects();
 
@@ -599,7 +637,7 @@ void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const
 {
 	UE_LOG(LogTemp, Warning, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
 	BoundQueueV2.OperationPayloads.Add(OperationID, Operation); 
-	// BoundQueueV2.ClientQueuedOperations.Add(OperationID);
+	BoundQueueV2.ClientQueuedOperations.Add(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffect> Effect)
@@ -616,7 +654,7 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 void UGMC_AbilitySystemComponent::OnServerOperationForced(FInstancedStruct OperationData)
 {
 	UE_LOG(LogTemp, Warning, TEXT("Forcing Operation On Server"));
-	ProcessOperation(OperationData);
+	ProcessOperation(OperationData, false, true);
 }
 
 void UGMC_AbilitySystemComponent::BeginPlay()
@@ -817,7 +855,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
 		
 		ActiveEffects.Remove(EffectID);
-		ActiveEffectsData.RemoveAll([EffectID](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == EffectID;});
+		ActiveEffectIDs.Remove(EffectID);
 	}
 
 	// Clean effect handles
@@ -840,7 +878,6 @@ void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
 	{
 		if (Attribute->IsDirty() && Attribute->bIsGMCBound == bInGenPredictionTick)
 		{
-
 			Attribute->CalculateValue();
 			// Broadcast dirty change if unbound
 			if (!Attribute->bIsGMCBound)
@@ -880,26 +917,6 @@ void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
 	}
 }
 
-void UGMC_AbilitySystemComponent::OnRep_ActiveEffectsData()
-{
-	for (FGMCAbilityEffectData ActiveEffectData : ActiveEffectsData)
-	{
-		if (ActiveEffectData.EffectID == 0) continue;
-		
-		if (!ProcessedEffectIDs.Contains(ActiveEffectData.EffectID) || ProcessedEffectIDs[ActiveEffectData.EffectID] == EGMCEffectAnswerState::Timeout)
-		{
-			// The client never predicted this effect, so we process it as a new effect.
-			UGMCAbilityEffect* EffectCDO = DuplicateObject(UGMCAbilityEffect::StaticClass()->GetDefaultObject<UGMCAbilityEffect>(), this);
-
-			ApplyAbilityEffect(EffectCDO, ActiveEffectData);
-			ProcessedEffectIDs.Add(ActiveEffectData.EffectID, EGMCEffectAnswerState::Validated);
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[Client] Effect [%d] %s has been force apply by the server"), ActiveEffectData.EffectID, *ActiveEffectData.EffectTag.ToString());
-		}
-		
-		ProcessedEffectIDs[ActiveEffectData.EffectID] = EGMCEffectAnswerState::Validated;
-	}
-}
-
 void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 {
 	for (TPair<int, UGMCAbilityEffect*> Effect : ActiveEffects)
@@ -911,10 +928,10 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 		// it means the server removed it
 		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending){return;}
 		
-		if (!ActiveEffectsData.ContainsByPredicate([Effect](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == Effect.Key;}))
-		{
-			RemoveActiveAbilityEffect(Effect.Value);
-		}
+		// if (!ActiveEffectsData.ContainsByPredicate([Effect](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == Effect.Key;}))
+		// {
+		// 	RemoveActiveAbilityEffect(Effect.Value);
+		// }
 	}
 }
 
@@ -1154,41 +1171,23 @@ void UGMC_AbilitySystemComponent::ExecuteSyncedEvent(FGMASSyncedEventContainer E
 	// ClientQueueOperation(Operation);
 }
 
-void UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick)
+bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick, bool bForce)
 {
-	// Check if the operation is a valid type
-	if (!OperationData.IsValid()) return;
+	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return false;
 
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
-	if (!BaseData)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationData is not a valid type"));
-		return;
-	}
-
 	const int OperationID = BaseData->OperationID;
+
 	if (OperationID == 0)
 	{
-		return; // Empty/Default Operation, Ignore
+		return false; // Empty/Default Operation, Ignore
 	}
-
-	// Server receiving a client operation
-	// It needs to make sure that it has the client's payload data stored
-	if (HasAuthority() && OperationID < 0 && !BoundQueueV2.OperationPayloads.Contains(OperationID))
-	{
-		// Security check
-		if (BoundQueueV2.IsValidClientOperation(OperationData))
-		{
-			BoundQueueV2.OperationPayloads.Add(OperationID, OperationData);
-		}
-		else {return;}
-	}
-
+	
 	// All other cases, the data should be there (server built operations)
 	if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
-		return;
+		return false;
 	}
 
 	const FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
@@ -1199,57 +1198,108 @@ void UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	if (StructType == FGMASBoundQueueV2AbilityActivationOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
-		TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick);
-		// UE_LOG(LogTemp, Warning, TEXT("IsServer: %hhd | ActionTimer: %f | OperationID: %d"), GMCMovementComponent->GetOwner()->HasAuthority(), ActionTimer, Data.OperationID);
-	} 
+		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick);
+	}
 
-	else if (StructType == FGMASBoundQueueV2EffectApplicationOperation::StaticStruct())
+	// Everything below happens only during the Prediction tick
+	if (!bFromMovementTick && !bForce) return false;
+
+	if (StructType == FGMASBoundQueueV2EffectApplicationOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2EffectApplicationOperation Data = PayloadData.Get<FGMASBoundQueueV2EffectApplicationOperation>();
 		if (Data.EffectClass)
 		{
-			UGMCAbilityEffect* EffectCDO = DuplicateObject(Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+			UGMCAbilityEffect* Effect;
+			bool OutSuccess;
+			int OutEffectHandle;
+			int OutEffectId;
+			
 			if (Data.EffectData != FGMCAbilityEffectData{})
 			{
-				ApplyAbilityEffect(EffectCDO, Data.EffectData); 
+				ApplyAbilityEffectSafe(Data.EffectClass, Data.EffectData, EGMCAbilityEffectQueueType::Predicted, OutSuccess, OutEffectHandle, OutEffectId, Effect); 
 			}
 			else
 			{
 				// Otherwise, we can apply the default effect data
-				ApplyAbilityEffect(EffectCDO, EffectCDO->EffectData); 
+				const UGMCAbilityEffect* EffectCDO = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>();
+				ApplyAbilityEffectSafe(Data.EffectClass, EffectCDO->EffectData, EGMCAbilityEffectQueueType::Predicted, OutSuccess, OutEffectHandle, OutEffectId, Effect); 
 			}
-			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
+
+			// Auto validate the effect since this was added via a server operation
+			if (!HasAuthority() && Effect != nullptr)
+			{
+				ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
+				UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
+			}
 		}
-		else
+
+		if (!HasAuthority())
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Class is null in OperationData"));
+			// Make an operation to confirm the effect application
+			BoundQueueV2.OperationData  = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
-	} 
-	// else if (StructType == FGMASBoundQueueV2SyncedEventOperation::StaticStruct())
-	// {
-	// 	const FGMASBoundQueueV2SyncedEventOperation Data = PayloadData.Get<FGMASBoundQueueV2SyncedEventOperation>();
-	// 	if (Data.EventData.IsValid())
-	// 	{
-	// 		if (Data.EventData.EventType == EGMASSyncedEventType::BlueprintImplemented)
-	// 		{
-	// 			AddSyncedEvent(Data.EventData);
-	// 		}
-	// 		else
-	// 		{
-	// 			AddImpulseEvent(Data.EventData);
-	// 		}
-	// 		
-	// 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Synced Event: %s"), *GetNameSafe(Data.EventData.EventTag));
-	// 		
-	// 	}
-	// 	
-	// }
-	else
-	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Operation Type: %s"), *StructType->GetName());
-		return;
+		return true;
 	}
 
+	BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(FGMASBoundQueueV2OperationBaseData{});
+	return false;
+	// else
+	// {
+	// 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Operation Type: %s"), *StructType->GetName());
+	// 	return false;
+	// }
+
+}
+
+void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick)
+{
+	if (!HasAuthority()) return;
+	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return;
+
+	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+	const int OperationID = BaseData->OperationID;
+
+	// Empty Operation, Ignore
+	if (OperationID == 0) return;
+
+	// Security check
+	// These are operations the client has requested, ie Activate Ability
+	if (BoundQueueV2.IsValidClientOperation(OperationData))
+	{
+		// A server-auth operation is ack'd, should have everything needed to go process it
+		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2AcknowledgeOperation::StaticStruct())
+		{
+			ServerProcessAcknowledgedOperations(BaseData->OperationID, bFromMovementTick);
+			return;
+		}
+		
+		if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
+		{
+			BoundQueueV2.OperationPayloads.Add(OperationID, OperationData);
+		}
+		ProcessOperation(OperationData, bFromMovementTick);
+		return;
+	}
+}
+
+void UGMC_AbilitySystemComponent::ServerProcessAcknowledgedOperations(int OperationID, bool bFromMovementTick)
+{
+	// Everything else should be server built operations that the client has confirmed
+	// Ie, applied server-auth effects or server-auth events
+
+	if (!BoundQueueV2.OperationPayloads.Contains(OperationID) || !BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID))
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads, Client Sending Bad Data?"), OperationID);
+		return;
+	}
+	
+
+	FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
+	
+	if (ProcessOperation(PayloadData, bFromMovementTick))
+	{
+		BoundQueueV2.ServerAcknowledgeOperation(OperationID);
+	}
 }
 
 
@@ -1397,9 +1447,6 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbility
                                                          UGMCAbilityEffect*& OutEffect, UGMCAbility* HandlingAbility)
 {
 	OutSuccess = ApplyAbilityEffect(EffectClass, InitializationData, QueueType, OutEffectHandle, OutEffectId, OutEffect);
-
-
-	
 	
 	if (OutSuccess && HandlingAbility)
 	{
@@ -1437,17 +1484,25 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to apply Effect, but effect is null!"));
 		return false;
 	}
-
-	FGMASBoundQueueV2EffectApplicationOperation Operation;
-	Operation.EffectClass = EffectClass;
-	Operation.EffectData = InitializationData;
+	
+	FGMCAbilityEffectData EffectData;
+	if (InitializationData == FGMCAbilityEffectData{})
+	{
+		// If no data is provided, use the default data from the effect class
+		EffectData = EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
+	}
+	else
+	{
+		EffectData = InitializationData;
+	}
 	
 	switch(QueueType)
 	{
 	case EGMCAbilityEffectQueueType::Predicted:
 		{
 			// Apply effect immediately.
-			OutEffect = ApplyAbilityEffectViaOperation(Operation);
+			UGMCAbilityEffect* Effect = DuplicateObject(EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+			OutEffect = ApplyAbilityEffect(Effect, EffectData);
 			OutEffectId = OutEffect->EffectData.EffectID;
 			// OutEffectHandle = HandleData.Handle;
 			return true;
@@ -1558,7 +1613,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	// This is Replicated, so only server needs to manage it
 	if (HasAuthority())
 	{
-		ActiveEffectsData.Push(Effect->EffectData);
+		ActiveEffectIDs.Push(Effect->EffectData.EffectID);
 	}
 	else
 	{
@@ -1918,11 +1973,12 @@ FString UGMC_AbilitySystemComponent::GetAllAttributesString() const{
 }
 
 FString UGMC_AbilitySystemComponent::GetActiveEffectsDataString() const{
-	FString FinalString = FString::Printf(TEXT("%d total\n"), ActiveEffectsData.Num());
-	for(const FGMCAbilityEffectData& ActiveEffectData : ActiveEffectsData){
-		FinalString += ActiveEffectData.ToString() + TEXT("\n");
-	}
-	return FinalString;
+	// FString FinalString = FString::Printf(TEXT("%d total\n"), ActiveEffectsData.Num());
+	// for(const FGMCAbilityEffectData& ActiveEffectData : ActiveEffectsData){
+	// 	FinalString += ActiveEffectData.ToString() + TEXT("\n");
+	// }
+	// return FinalString;
+	return "UNDER CONSTRUCTION";
 }
 
 FString UGMC_AbilitySystemComponent::GetActiveEffectsString() const{
@@ -2087,11 +2143,25 @@ void UGMC_AbilitySystemComponent::MC_SpawnSound_Implementation(USoundBase* Sound
 	SpawnSound(Sound, Location, VolumeMultiplier, PitchMultiplier, bIsClientPredicted);
 }
 
+//ActiveEffectIds OnRep
+void UGMC_AbilitySystemComponent::OnRep_ActiveEffectIDs()
+{
+	// This is called when the ActiveEffectIDs array is replicated to the client
+	// We need to update the ActiveEffects map based on the replicated IDs
+	for (int EffectId : ActiveEffectIDs)
+	{
+		if (ProcessedEffectIDs.Contains(EffectId))
+		{
+			ProcessedEffectIDs[EffectId] = EGMCEffectAnswerState::Validated;
+		}
+	}
+}
+
 // ReplicatedProps
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME_CONDITION(UGMC_AbilitySystemComponent, ActiveEffectsData, COND_OwnerOnly);
 	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
+	DOREPLIFETIME(UGMC_AbilitySystemComponent, ActiveEffectIDs);
 }
 

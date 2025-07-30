@@ -10,6 +10,7 @@ struct FGMASBoundQueueV2OperationBaseData
 	GENERATED_BODY()
 
 	FGMASBoundQueueV2OperationBaseData(){}
+	FGMASBoundQueueV2OperationBaseData(const int ID){OperationID = ID;}
 
 	// The ID of the operation
 	// If this is a server operation, this will be a positive number
@@ -18,6 +19,12 @@ struct FGMASBoundQueueV2OperationBaseData
 	// If a move contains a negative ID, it means the client is providing operation data (ie: Ability Activation)
 	UPROPERTY()
 	int32 OperationID { 0 };
+};
+
+USTRUCT()
+struct FGMASBoundQueueV2AcknowledgeOperation: public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
 };
 
 USTRUCT()

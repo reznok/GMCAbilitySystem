@@ -6,6 +6,21 @@
 #include "GMCMovementUtilityComponent.h"
 
 
+bool FGMASBoundQueueV2::IsValidGMASOperation(const FInstancedStruct& Data) const
+{
+	// Check if the operation is a valid type
+	if (!OperationData.IsValid()) return false;
+
+	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+	if (!BaseData)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationData is not a valid type"));
+		return false;
+	}
+
+	return true;
+}
+
 bool FGMASBoundQueueV2::IsValidClientOperation(const FInstancedStruct& Data) const
 {
 	if (Data.IsValid()) 
@@ -24,9 +39,9 @@ void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 {
 	OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
 	
-	MovementComponent->BindInstancedStruct(
+	BI_OperationData = MovementComponent->BindInstancedStruct(
 		OperationData,
-		EGMC_PredictionMode::ClientAuth_InputOutput,
+		EGMC_PredictionMode::ClientAuth_Output,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
@@ -61,25 +76,24 @@ void FGMASBoundQueueV2::GenPostLocalMoveExecution()
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
-
 	///
 	/// Server receiving the confirmation that a client processed a server-auth operation
 	///
-	if (GMCMovementComponent->GetNetMode() < NM_Client)
-	{
-		if (OperationData.IsValid())
-		{
-			// Ensure that the operationdata is a struct that inherits from basedata
-			// Using pointer as this is untrusted client data
-			const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
-
-			// Check if the operation is valid and it's an operation that originated from the server (ID != -1)
-			if (BaseData && BaseData->OperationID != 0)
-			{
-				ServerAcknowledgeOperation(BaseData->OperationID);
-			}
-		}
-	}
+	// if (GMCMovementComponent->GetNetMode() < NM_Client)
+	// {
+	// 	if (OperationData.IsValid())
+	// 	{
+	// 		// Ensure that the operationdata is a struct that inherits from basedata
+	// 		// Using pointer as this is untrusted client data
+	// 		const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+	//
+	// 		// Check if the operation is valid and it's an operation that originated from the server (ID != -1)
+	// 		if (BaseData && BaseData->OperationID > 0)
+	// 		{
+	// 			ServerAcknowledgeOperation(BaseData->OperationID);
+	// 		}
+	// 	}
+	// }
 
 	
 	// Tick all Server Queued Operations

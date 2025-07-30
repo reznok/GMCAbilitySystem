@@ -212,7 +212,7 @@ public:
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
+	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
@@ -662,7 +662,10 @@ private:
 	
 	FGMASBoundQueueV2 BoundQueueV2 = {};
 	// Events	
-	virtual void ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true);
+	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
+
+	virtual void ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick = true);
+	virtual void ServerProcessAcknowledgedOperations(int OperationID, bool bFromMovementTick = true);
 
 	// Event Implementations
 
@@ -718,14 +721,14 @@ private:
 	// Can be just normally replicated since if the client doesn't have them already
 	// then prediction is already out the window
 
-	UPROPERTY(ReplicatedUsing = OnRep_ActiveEffectsData)
-	TArray<FGMCAbilityEffectData> ActiveEffectsData;
+	UPROPERTY(ReplicatedUsing=OnRep_ActiveEffectIDs)
+	TArray<int> ActiveEffectIDs;
+
+	UFUNCTION()
+	void OnRep_ActiveEffectIDs();
 
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
 	float ClientEffectApplicationTimeout = 1.f;
-
-	UFUNCTION()
-	void OnRep_ActiveEffectsData();
 
 	// Check if any effects have been removed by the server and remove them locally
 	void CheckRemovedEffects();
@@ -805,6 +808,7 @@ public:
 	// Spawn a Sound at the given location
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
 	void SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
+
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
