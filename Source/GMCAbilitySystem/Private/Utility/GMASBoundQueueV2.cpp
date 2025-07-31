@@ -76,26 +76,6 @@ void FGMASBoundQueueV2::GenPostLocalMoveExecution()
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
-	///
-	/// Server receiving the confirmation that a client processed a server-auth operation
-	///
-	// if (GMCMovementComponent->GetNetMode() < NM_Client)
-	// {
-	// 	if (OperationData.IsValid())
-	// 	{
-	// 		// Ensure that the operationdata is a struct that inherits from basedata
-	// 		// Using pointer as this is untrusted client data
-	// 		const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
-	//
-	// 		// Check if the operation is valid and it's an operation that originated from the server (ID != -1)
-	// 		if (BaseData && BaseData->OperationID > 0)
-	// 		{
-	// 			ServerAcknowledgeOperation(BaseData->OperationID);
-	// 		}
-	// 	}
-	// }
-
-	
 	// Tick all Server Queued Operations
 	for (auto It = ServerQueuedBoundOperationsGracePeriods.CreateIterator(); It; ++It)
 	{

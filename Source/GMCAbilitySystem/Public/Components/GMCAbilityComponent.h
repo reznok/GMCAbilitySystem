@@ -346,7 +346,7 @@ public:
 	 */
 	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
-	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2EffectApplicationOperation& Operatio);
+	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operatio);
 	
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
@@ -663,9 +663,10 @@ private:
 	FGMASBoundQueueV2 BoundQueueV2 = {};
 	// Events	
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
+	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
 
 	virtual void ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick = true);
-	virtual void ServerProcessAcknowledgedOperations(int OperationID, bool bFromMovementTick = true);
+	virtual void ServerProcessAcknowledgedOperation(int OperationID, bool bFromMovementTick = true);
 
 	// Event Implementations
 
@@ -675,7 +676,6 @@ private:
 	
 	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "Impulse")
 	void AddImpulse(FVector Impulse, bool bVelChange = false);
-	void AddImpulseEvent(const FGMASSyncedEventContainer& EventData) const;
 	
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
@@ -735,6 +735,9 @@ private:
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
+	
+	// IDs that have been claimed by server-auth effect applications
+	TArray<int> ReservedEffectIDs;
 
 	UPROPERTY()
 	TMap<int, FGMASQueueOperationHandle> EffectHandles;
