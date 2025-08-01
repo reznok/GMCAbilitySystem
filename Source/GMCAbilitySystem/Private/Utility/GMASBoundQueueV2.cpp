@@ -35,13 +35,33 @@ bool FGMASBoundQueueV2::IsValidClientOperation(const FInstancedStruct& Data) con
 	return false;
 }
 
+void FGMASBoundQueueV2::ClearStaleOperationData()
+{
+	const int MaximumFreshMoveIndex = GMCMoveCounter - GMCMovementComponent->MoveHistoryMaxSize;
+	for (auto It = OperationDataCacheExpiration.CreateIterator(); It; ++It)
+	{
+		if (It->ModeAddedAt < MaximumFreshMoveIndex)
+		{
+			const int OperationID = It->OperationID;
+			if (!OperationPayloads.Contains(OperationID))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("OperationID %d not found in OperationPayloads, but still in cache expiration map"), OperationID);
+				continue;
+			}
+			// Remove stale operation data
+			OperationPayloads.Remove(OperationID);
+			It.RemoveCurrent();
+		}
+	}
+}
+
 void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 {
 	OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
 	
 	BI_OperationData = MovementComponent->BindInstancedStruct(
 		OperationData,
-		EGMC_PredictionMode::ClientAuth_Output,
+		EGMC_PredictionMode::ClientAuth_InputOutput,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::None,
 		EGMC_InterpolationFunction::TargetValue);
@@ -76,6 +96,13 @@ void FGMASBoundQueueV2::GenPostLocalMoveExecution()
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
+
+	if (GMCMovementComponent->GetNetMode() >= NM_Client)
+	{
+		GMCMoveCounter++;
+		ClearStaleOperationData();
+	}
+	
 	// Tick all Server Queued Operations
 	for (auto It = ServerQueuedBoundOperationsGracePeriods.CreateIterator(); It; ++It)
 	{

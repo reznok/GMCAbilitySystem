@@ -134,7 +134,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	OnAncillaryTick.Broadcast(DeltaTime);
 
 	// Handle an operation, either client generated or server generated
-	if (HasAuthority())
+	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn())
 	{
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
 		FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
@@ -565,10 +565,10 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
 	// Server processes client output payloads
-	if (HasAuthority())
+	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn())
 	{
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
-		FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+		const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
 		ServerProcessOperation(ClientPayloadOperationData, true);
 	}
 	else
@@ -596,7 +596,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ProcessAttributes(true);
 
 	// Abilities
-	CleanupStaleAbilities();		
+	CleanupStaleAbilities();
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -636,7 +636,7 @@ void UGMC_AbilitySystemComponent::PostLocalMoveExecution()
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
 {
 	UE_LOG(LogTemp, Warning, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
-	BoundQueueV2.OperationPayloads.Add(OperationID, Operation); 
+	BoundQueueV2.CacheOperationPayload(OperationID, Operation);
 	BoundQueueV2.ClientQueuedOperations.Add(OperationID);
 }
 
@@ -646,6 +646,7 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 	{
 		FGMASBoundQueueV2ApplyEffectOperation EffectActivationData;
 		EffectActivationData.EffectClass = Effect;
+		EffectActivationData.EffectID = GetNextAvailableEffectID();
 		int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 		BoundQueueV2.QueueServerOperation(OperationID);
 	}
@@ -1191,6 +1192,12 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	}
 
 	const FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
+
+	// Server only every processes operations once so it doesn't need them cached
+	if (HasAuthority())
+	{
+		BoundQueueV2.OperationPayloads.Remove(OperationID);
+	}
 	
 	const UScriptStruct* StructType = OperationData.GetScriptStruct();
 
@@ -1208,7 +1215,8 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	}
 
 	///////////// Server-Auth Events
-
+	// Todo: Every event is setting the same AcknowledgedOperation. Could probably pull that out of each event and just set it once at the end.
+	//
 	// Apply Effect
 	if (StructType == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct())
 	{
@@ -1245,6 +1253,19 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		if (!HasAuthority())
 		{
 			// Make an operation to confirm the impulse application
+			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
+		}
+		return true;
+	}
+
+	// Set Actor Location
+	if (StructType == FGMASBoundQueueV2SetActorLocationOperation::StaticStruct())
+	{
+		const FGMASBoundQueueV2SetActorLocationOperation LocationData = PayloadData.Get<FGMASBoundQueueV2SetActorLocationOperation>();
+		GetOwner()->SetActorLocation(LocationData.Location);
+		if (!HasAuthority())
+		{
+			// Make an operation to confirm the location change
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
 		return true;
@@ -1308,8 +1329,9 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		
 		if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
 		{
-			BoundQueueV2.OperationPayloads.Add(OperationID, OperationData);
+			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
 		}
+		
 		ProcessOperation(OperationData, bFromMovementTick);
 	}
 }
@@ -1338,7 +1360,7 @@ void UGMC_AbilitySystemComponent::AddImpulse(FVector Impulse, bool bVelChange)
 {
 	if (!HasAuthority())
 	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to apply server-auth knock back effect"));
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to apply server-auth event"));
 		return;
 	}
 	//
@@ -1346,6 +1368,20 @@ void UGMC_AbilitySystemComponent::AddImpulse(FVector Impulse, bool bVelChange)
 	ImpulseOperation.Impulse = Impulse;
 	ImpulseOperation.bVelocityChange = bVelChange;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AddImpulseOperation>(ImpulseOperation);
+	BoundQueueV2.QueueServerOperation(OperationID);
+}
+
+void UGMC_AbilitySystemComponent::SetActorLocation(FVector Location)
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to apply server-auth event"));
+		return;
+	}
+	
+	FGMASBoundQueueV2SetActorLocationOperation ImpulseOperation;
+	ImpulseOperation.Location = Location;
+	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2SetActorLocationOperation>(ImpulseOperation);
 	BoundQueueV2.QueueServerOperation(OperationID);
 }
 

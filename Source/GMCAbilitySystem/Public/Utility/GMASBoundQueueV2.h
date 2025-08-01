@@ -11,6 +11,19 @@ class UGMCMovementComponent;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnServerOperationAdded, int, OperationID, FInstancedStruct, OperationData);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnServerOperationForced, FInstancedStruct, OperationData);
 
+
+USTRUCT()
+struct FOperationDataCacheExpiration
+{
+	GENERATED_BODY()
+	
+	// Operation ID
+	int OperationID = -1;
+
+	// The GMC move # (GMCMoveCounter) when this operation was added
+	uint64 ModeAddedAt = -1;
+};
+
 USTRUCT()
 struct  FGMASBoundQueueV2
 {
@@ -22,6 +35,13 @@ struct  FGMASBoundQueueV2
 	UPROPERTY()
 	UGMC_MovementUtilityCmp* GMCMovementComponent = nullptr;
 
+	// Every time a GMC move is processed, this counter is incremented
+	// Used to expire stale operation data
+	uint64 GMCMoveCounter = 0;
+	TArray<FOperationDataCacheExpiration> OperationDataCacheExpiration;
+
+	void ClearStaleOperationData();
+	
 	int NextOperationID = 0;
 	
 	// Get the next operation ID
@@ -55,7 +75,11 @@ struct  FGMASBoundQueueV2
 	FInstancedStruct OperationData;
 	//// End GMC Bound
 
-
+	void CacheOperationPayload(const int OperationID, const FInstancedStruct& Payload)
+	{
+		OperationPayloads.Add(OperationID, Payload);
+		OperationDataCacheExpiration.Add({OperationID, GMCMoveCounter});
+	}
 	
 	// Wrappers for building instanced structs for each data type
 	// Adds the Operation ID to the data and stores the payload in OperationPayloads
@@ -71,7 +95,7 @@ struct  FGMASBoundQueueV2
 		OutStruct.InitializeAs<T>(BuiltData);
 
 		// Add to payload Map to reference it later
-		OperationPayloads.Add(BuiltData.OperationID, OutStruct);
+		CacheOperationPayload(BuiltData.OperationID, OutStruct);
 		
 		return BuiltData.OperationID;
 	}

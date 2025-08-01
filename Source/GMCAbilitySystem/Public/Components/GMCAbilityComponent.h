@@ -674,8 +674,11 @@ private:
 	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
 	
-	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "Impulse")
+	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
 	void AddImpulse(FVector Impulse, bool bVelChange = false);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
+	void SetActorLocation(FVector Location);
 	
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;

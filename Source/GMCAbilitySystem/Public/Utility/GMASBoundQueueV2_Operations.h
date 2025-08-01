@@ -99,6 +99,17 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueV2AddImpulseOperation : public FGMASB
 	bool bVelocityChange {false};
 };
 
+// Set Actor Location (Teleport)
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2SetActorLocationOperation : public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector Location {FVector::Zero()};
+
+};
+
 // Custom Events (Replaces Synced-Events)
 // Use a Tag and whatever payload you want to send
 USTRUCT(BlueprintType)

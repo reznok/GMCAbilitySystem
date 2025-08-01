@@ -34,6 +34,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 			DataPack.NBActiveEffectData = AbilityComponent->ActiveEffectIDs.Num();
 			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
 			DataPack.NBActiveAbilities = AbilityComponent->GetActiveAbilities().Num();
+			DataPack.NBCachedOperationPayloads = AbilityComponent->BoundQueueV2.OperationPayloads.Num();
 			
 			AbilityComponent->GMCMovementComponent->SV_SwapServerState();
 		}
@@ -55,7 +56,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		// Abilities
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Granted Abilities (%d): {white}%s%s"), DataPack.NBGrantedAbilities, *DataPack.GrantedAbilities.Left(MaxCharDisplayAbilities), DataPack.GrantedAbilities.Len() > MaxCharDisplayAbilities ? TEXT("...") : TEXT(""));
 		// Show client-side data
-		if (AbilityComponent)
+		if (AbilityComponent) // Todo: Stop having every dang thing check for AbilityComponent being null
 		{
 			if (DataPack.NBGrantedAbilities != AbilityComponent->GetGrantedAbilities().Num())
 			{
@@ -113,9 +114,9 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		if (AbilityComponent)
 		{
 			if (DataPack.NBActiveEffects != AbilityComponent->GetActiveEffects().Num())
-				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {red} [INCOHERENCY] {white}%s"), *AbilityComponent->GetActiveEffectsString());
+				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {red} [INCOHERENCY] {white}%s\n"), *AbilityComponent->GetActiveEffectsString());
 			else
-				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {white}%s"), *AbilityComponent->GetActiveEffectsString());
+				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {white}%s\n"), *AbilityComponent->GetActiveEffectsString());
 		}
 
 		// Active Effects Data
@@ -124,9 +125,20 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		if (AbilityComponent)
 		{
 			if (DataPack.NBActiveEffectData != AbilityComponent->ActiveEffectIDs.Num())
-				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {red} [INCOHERENCY] {white}%s"), *AbilityComponent->GetActiveEffectsDataString());
+				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {red} [INCOHERENCY] {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
 			else
-			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {white}%s"), *AbilityComponent->GetActiveEffectsDataString());
+			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
+		}
+
+		// Cached Operations Data
+		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Cached Operations: {white}%d"), DataPack.NBCachedOperationPayloads);
+		// Show client-side data
+		if (AbilityComponent)
+		{
+			if (DataPack.NBActiveEffectData != AbilityComponent->ActiveEffectIDs.Num())
+				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {red} [INCOHERENCY] {white}%d\n"), AbilityComponent->BoundQueueV2.OperationPayloads.Num());
+			else
+				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {white}%d\n"), AbilityComponent->BoundQueueV2.OperationPayloads.Num());
 		}
 		
 	}
@@ -152,6 +164,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::FRepData::Serialize(FArchive& A
 	Ar << NBActiveEffects;
 	Ar << NBActiveEffectData;
 	Ar << NBActiveAbilities;
+	Ar << NBCachedOperationPayloads;
 }
 
 #endif
