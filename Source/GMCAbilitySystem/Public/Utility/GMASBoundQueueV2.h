@@ -63,7 +63,6 @@ struct  FGMASBoundQueueV2
 	// GMC
 	void BindToGMC(UGMC_MovementUtilityCmp* MovementComponent);
 	void GenPreLocalMoveExecution();
-	void GenPostLocalMoveExecution();
 	void GenAncillaryTick(float DeltaTime);
 	
 	//// GMC Bound

@@ -76,7 +76,8 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 	// Client Logic
 	if (GMCMovementComponent->GetNetMode() == NM_Client ||
 		GMCMovementComponent->GetNetMode() == NM_Standalone ||
-		GMCMovementComponent->IsLocallyControlledListenServerPawn())
+		GMCMovementComponent->IsLocallyControlledListenServerPawn() ||
+		GMCMovementComponent->IsLocallyControlledDedicatedServerPawn())
 	{
 		// Get a pending operation
 		if (ClientQueuedOperations.Num() > 0)
@@ -89,12 +90,11 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 				OperationData = OperationPayload;
 			}
 		}
+		else
+		{
+			OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
+		}
 	}
-}
-
-void FGMASBoundQueueV2::GenPostLocalMoveExecution()
-{
-	OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
 }
 
 void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)

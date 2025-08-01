@@ -135,12 +135,18 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	
 	OnAncillaryTick.Broadcast(DeltaTime);
 
-	// Handle an operation, either client generated or server generated
-	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn())
+	if (HasAuthority())
 	{
-		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
-		FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
-		ServerProcessOperation(ClientPayloadOperationData, false);
+		// Server processes client output payloads
+		if (GMCMovementComponent->IsPlayerControlledPawn())
+		{
+			const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
+			const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+			ServerProcessOperation(ClientPayloadOperationData, false);
+		}
+		// Server owned pawns
+		BoundQueueV2.GenPreLocalMoveExecution();
+		ProcessOperation(BoundQueueV2.OperationData, false);
 	}
 	else
 	{
@@ -568,9 +574,10 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
-	// Server processes client output payloads
+	
 	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn())
 	{
+		// Server processes client output payloads
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
 		const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
 		ServerProcessOperation(ClientPayloadOperationData, true);
@@ -630,11 +637,6 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 		TaskData = QueuedTaskData.Pop();
 	}
 	BoundQueueV2.GenPreLocalMoveExecution();
-}
-
-void UGMC_AbilitySystemComponent::PostLocalMoveExecution()
-{
-	BoundQueueV2.GenPostLocalMoveExecution();
 }
 
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
@@ -1188,10 +1190,11 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		return false; // Empty/Default Operation, Ignore
 	}
 	
-	// All other cases, the data should be there (server built operations)
+	// Payload data should be in the cache
+	// Possible if it isn't with abilities being double processed anc/movement tick until that's checked later
 	if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
+		// UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
 		return false;
 	}
 
