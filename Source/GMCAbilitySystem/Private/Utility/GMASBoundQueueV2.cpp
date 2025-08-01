@@ -40,7 +40,8 @@ void FGMASBoundQueueV2::ClearStaleOperationData()
 	const int MaximumFreshMoveIndex = GMCMoveCounter - GMCMovementComponent->MoveHistoryMaxSize;
 	for (auto It = OperationDataCacheExpiration.CreateIterator(); It; ++It)
 	{
-		if (It->ModeAddedAt < MaximumFreshMoveIndex)
+		const int64 MoveAddedAt = It->ModeAddedAt;
+		if (MoveAddedAt < MaximumFreshMoveIndex)
 		{
 			const int OperationID = It->OperationID;
 			if (!OperationPayloads.Contains(OperationID))
@@ -83,7 +84,9 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 			const int OperationIDToProcess = ClientQueuedOperations.Pop();
 			if (OperationPayloads.Contains(OperationIDToProcess))
 			{
-				OperationData = OperationPayloads[OperationIDToProcess];
+				FInstancedStruct OperationPayload;
+				OperationPayload.InitializeAs<FGMASBoundQueueV2OperationBaseData>(OperationIDToProcess);
+				OperationData = OperationPayload;
 			}
 		}
 	}
@@ -118,6 +121,12 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 			It.RemoveCurrent();
 		}
 	}
+}
+
+void FGMASBoundQueueV2::CacheOperationPayload(const int OperationID, const FInstancedStruct& Payload)
+{
+	OperationPayloads.Add(OperationID, Payload);
+	OperationDataCacheExpiration.Add({OperationID, GMCMoveCounter});
 }
 
 void FGMASBoundQueueV2::QueueClientOperation(const int OperationID)

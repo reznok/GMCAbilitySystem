@@ -21,7 +21,7 @@ struct FOperationDataCacheExpiration
 	int OperationID = -1;
 
 	// The GMC move # (GMCMoveCounter) when this operation was added
-	uint64 ModeAddedAt = -1;
+	int64 ModeAddedAt = -1;
 };
 
 USTRUCT()
@@ -37,7 +37,7 @@ struct  FGMASBoundQueueV2
 
 	// Every time a GMC move is processed, this counter is incremented
 	// Used to expire stale operation data
-	uint64 GMCMoveCounter = 0;
+	int64 GMCMoveCounter = 0;
 	TArray<FOperationDataCacheExpiration> OperationDataCacheExpiration;
 
 	void ClearStaleOperationData();
@@ -75,11 +75,7 @@ struct  FGMASBoundQueueV2
 	FInstancedStruct OperationData;
 	//// End GMC Bound
 
-	void CacheOperationPayload(const int OperationID, const FInstancedStruct& Payload)
-	{
-		OperationPayloads.Add(OperationID, Payload);
-		OperationDataCacheExpiration.Add({OperationID, GMCMoveCounter});
-	}
+	void CacheOperationPayload(const int OperationID, const FInstancedStruct& Payload);
 	
 	// Wrappers for building instanced structs for each data type
 	// Adds the Operation ID to the data and stores the payload in OperationPayloads
@@ -94,7 +90,7 @@ struct  FGMASBoundQueueV2
 		FInstancedStruct OutStruct;
 		OutStruct.InitializeAs<T>(BuiltData);
 
-		// Add to payload Map to reference it later
+		// Add to payload cache to reference it later
 		CacheOperationPayload(BuiltData.OperationID, OutStruct);
 		
 		return BuiltData.OperationID;

@@ -128,6 +128,8 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenAncillaryTick)
+	
 	// Caution if you override Ancillarytick, this value should wrap up the override.
 	bInAncillaryTick = true;
 	
@@ -391,7 +393,7 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	FGMASBoundQueueV2AbilityActivationOperation ActivationData;
 	ActivationData.InputTag = InputTag;
 	ActivationData.InputAction = InputAction;
-	int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AbilityActivationOperation>(ActivationData);
+	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AbilityActivationOperation>(ActivationData);
 	BoundQueueV2.QueueClientOperation(OperationID);
 	
 }
@@ -561,6 +563,8 @@ bool UGMC_AbilitySystemComponent::IsServerOnly() const
 
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenPredictionTick)
+	
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
@@ -601,7 +605,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 {
-
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenSimulationTick)
 	if (!GMCMovementComponent->IsSmoothedListenServerPawn())
 	{
 		CheckActiveTagsChanged();
@@ -1191,6 +1195,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		return false;
 	}
 
+	// Pull actual payload from operation cache
 	const FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
 
 	// Server only every processes operations once so it doesn't need them cached
@@ -1199,12 +1204,13 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		BoundQueueV2.OperationPayloads.Remove(OperationID);
 	}
 	
-	const UScriptStruct* StructType = OperationData.GetScriptStruct();
+	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
 
 	// Activate Ability
 	if (StructType == FGMASBoundQueueV2AbilityActivationOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
+		BoundQueueV2.OperationData  = PayloadData;
 		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick);
 	}
 
