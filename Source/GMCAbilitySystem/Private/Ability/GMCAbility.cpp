@@ -467,3 +467,14 @@ void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTag
 	BlockOtherAbilitiesQuery = NewQuery;
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("BlockOtherAbilityByDefinitionQuery modified: %s"), *NewQuery.GetDescription());
 }
+
+void UGMCAbility::ModifyAbilityDefinition(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove)
+{
+	for (auto Tag : TagToAdd) {
+		AbilityDefinition.AddTag(Tag);
+	}
+
+	for (auto Tag : TagToRemove) {
+		AbilityDefinition.RemoveTag(Tag);
+	}
+}

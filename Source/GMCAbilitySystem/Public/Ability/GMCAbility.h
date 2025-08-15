@@ -308,5 +308,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Queries")
 	void ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery);
 
+	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities")
+	void ModifyAbilityDefinition(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove);
+
 };
 

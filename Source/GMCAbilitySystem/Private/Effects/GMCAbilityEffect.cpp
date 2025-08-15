@@ -471,3 +471,14 @@ void UGMCAbilityEffect::ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& Ne
 	EffectData.EndAbilityOnEndQuery = NewQuery;
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("EndAbilityOnEndViaDefinitionQuery modified: %s"), *NewQuery.GetDescription());
 }
+
+void UGMCAbilityEffect::ModifyEffectDefinition(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove)
+{
+	for (auto Tag : TagToAdd) {
+		EffectData.EffectDefinition.AddTag(Tag);
+	}
+
+	for (auto Tag : TagToRemove) {
+		EffectData.EffectDefinition.RemoveTag(Tag);
+	}
+}

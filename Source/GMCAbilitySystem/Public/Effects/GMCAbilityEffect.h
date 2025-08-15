@@ -322,5 +322,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
 	void ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& NewQuery);
+	
+	UFUNCTION(BlueprintCallable, Category = "GMAS|Effects")
+	void ModifyEffectDefinition(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove);
+
 };
 
