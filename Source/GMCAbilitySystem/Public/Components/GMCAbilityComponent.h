@@ -480,10 +480,12 @@ public:
 	TMap<int, UGMCAbility*> GetActiveAbilities() const { return ActiveAbilities; }
 
 	// Get Attribute value (RawValue + Temporal Modifiers) by Tag
+	// This value is replicated on simulated proxy !
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
 	// Get Attribute Value without Temporal Modifiers
+	// This value isn't replicated on Simulated proxy
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeRawValue(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 

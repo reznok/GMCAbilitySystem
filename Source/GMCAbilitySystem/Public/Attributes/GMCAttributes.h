@@ -70,6 +70,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	FAttributeChanged OnAttributeChanged;
 
 	// Temporal Modifier + Accumulated Value
+	// This is the ONLY replicated value on Simulated proxy 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	mutable float Value{0};
 
