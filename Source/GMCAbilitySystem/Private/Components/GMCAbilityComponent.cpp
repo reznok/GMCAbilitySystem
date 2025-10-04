@@ -84,11 +84,17 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// We sort our attributes alphabetically by tag so that it's deterministic.
 	for (auto& AttributeForBind : BoundAttributes.Attributes)
 	{
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
+		AttributeForBind.BoundIndex = GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
 			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
 			EGMC_InterpolationFunction::TargetValue);
+
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.RawValue,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::Periodic_Output,
+		EGMC_InterpolationFunction::TargetValue);
 	}
 	
 	// Granted Abilities
@@ -168,7 +174,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetActiveEffectByHandle(int Effe
 	return ActiveEffects.Contains(EffectID) ? ActiveEffects[EffectID] : nullptr;
 }
 
-TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(FGameplayTag GameplayTag, bool bMatchExact) const
+TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(const FGameplayTag& GameplayTag, bool bMatchExact) const
 {
 	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
 
@@ -182,7 +188,7 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(FG
 }
 
 
-UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const
+UGMCAbilityEffect* UGMC_AbilitySystemComponent::GetFirstActiveEffectByTag(const FGameplayTag& GameplayTag) const
 {
 	for (auto& EffectFound : ActiveEffects) {
 		if (EffectFound.Value && EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
@@ -550,6 +556,15 @@ bool UGMC_AbilitySystemComponent::IsServerOnly() const
 	return true;
 }
 
+void UGMC_AbilitySystemComponent::DrawDebugAttribute(const FGameplayTag& AttributeTag) const
+{
+	const FAttribute* Attribute = GetAttributeByTag(AttributeTag);
+	if (!Attribute) return;
+
+	const FString Context = GMCMovementComponent->IsAutonomousProxy() ? TEXT("[AP]") : GMCMovementComponent->IsSimulatedPawn() ? TEXT("[SP]") : TEXT("[SRV]");
+	UE_LOG(LogTemp, Warning, TEXT("%s Attribute: %s"), *Context, *Attribute->ToString());
+}
+
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	bJustTeleported = false;
@@ -590,7 +605,6 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	}
 
 	ServerHandlePredictedPendingEffect(DeltaTime);
-	
 	
 }
 
@@ -2287,7 +2301,7 @@ float UGMC_AbilitySystemComponent::GetAttributeInitialValueByTag(FGameplayTag At
 FString UGMC_AbilitySystemComponent::GetAllAttributesString() const{
 	FString FinalString = TEXT("\n");
 	for (const FAttribute* Attribute : GetAllAttributes()){
-		FinalString += Attribute->ToString() + TEXT("\n");
+		FinalString += "[" + FString::FromInt(Attribute->BoundIndex) + "] " + Attribute->ToString() + TEXT("\n");
 	}
 	return FinalString;
 }

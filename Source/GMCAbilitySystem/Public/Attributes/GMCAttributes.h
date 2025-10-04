@@ -69,8 +69,10 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY(BlueprintAssignable)
 	FAttributeChanged OnAttributeChanged;
 
+	int32 BoundIndex = INDEX_NONE;
+
 	// Temporal Modifier + Accumulated Value
-	// This is the ONLY replicated value on Simulated proxy 
+	// This is replicated on Simulated proxy 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	mutable float Value{0};
 
@@ -102,6 +104,7 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	bool operator< (const FAttribute& Other) const;
 
 	// This is the sum of permanent modification applied to this attribute.
+	// Replicated to Simulated Proxy
 	UPROPERTY()
 	mutable float RawValue = 0.f;
 

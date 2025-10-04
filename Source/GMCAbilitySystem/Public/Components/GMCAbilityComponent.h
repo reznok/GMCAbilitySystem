@@ -128,6 +128,9 @@ public:
 
 	// Is this a server-only pawn (not player-controlled)?
 	bool IsServerOnly() const;
+
+	// Draw to log the attribute
+	void DrawDebugAttribute(const FGameplayTag& AttributeTag) const;
 	
 	// Ability tags that the controller has 
 	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
@@ -144,11 +147,11 @@ public:
 	// Return active Effect with tag
 	// Match exact doesn't look for depth in the tag, it will only match the exact tag
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
-	TArray<UGMCAbilityEffect*> GetActiveEffectsByTag(FGameplayTag GameplayTag, bool bMatchExact = true) const;
+	TArray<UGMCAbilityEffect*> GetActiveEffectsByTag(const FGameplayTag& GameplayTag, bool bMatchExact = true) const;
 
 	// Get the first active effect with the Effecttag
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Abilities")
-	UGMCAbilityEffect* GetFirstActiveEffectByTag(FGameplayTag GameplayTag) const;
+	UGMCAbilityEffect* GetFirstActiveEffectByTag(const FGameplayTag& GameplayTag) const;
 
 	// Return ability map that contains mapping of ability input tags to ability classes
 	TMap<FGameplayTag, FAbilityMapData> GetAbilityMap() { return AbilityMap; }
@@ -485,7 +488,7 @@ public:
 	float GetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
 	// Get Attribute Value without Temporal Modifiers
-	// This value isn't replicated on Simulated proxy
+	// his value is replicated on simulated proxy !
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	float GetAttributeRawValue(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 
