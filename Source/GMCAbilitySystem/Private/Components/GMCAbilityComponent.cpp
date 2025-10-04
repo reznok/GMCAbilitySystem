@@ -84,7 +84,7 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// We sort our attributes alphabetically by tag so that it's deterministic.
 	for (auto& AttributeForBind : BoundAttributes.Attributes)
 	{
-		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.RawValue,
+		GMCMovementComponent->BindSinglePrecisionFloat(AttributeForBind.Value,
 			EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
 			EGMC_CombineMode::CombineIfUnchanged,
 			EGMC_SimulationMode::Periodic_Output,
@@ -2203,20 +2203,24 @@ TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 
 const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const
 {
-	if (AttributeTag == FGameplayTag::EmptyTag) return nullptr;
+	if (!AttributeTag.IsValid()) return nullptr;
 	
-	if(!AttributeTag.IsValid()){
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Tried to get an attribute with an invalid tag!"))
-		return nullptr;
+	for (const FAttribute& Attribute : UnBoundAttributes.Items)
+	{
+		if (Attribute.Tag.MatchesTagExact(AttributeTag))
+		{
+			return &Attribute;
+		}
 	}
-	TArray<const FAttribute*> AllAttributes = GetAllAttributes();
-	const FAttribute** FoundAttribute = AllAttributes.FindByPredicate([AttributeTag](const FAttribute* Attribute){
-		return Attribute->Tag.MatchesTagExact(AttributeTag);
-	});
-	
-	if(FoundAttribute && *FoundAttribute){
-		return *FoundAttribute;
+
+	for (const FAttribute& Attribute : BoundAttributes.Attributes)
+	{
+		if (Attribute.Tag.MatchesTagExact(AttributeTag))
+		{
+			return &Attribute;
+		}
 	}
+
 	return nullptr;
 }
 
