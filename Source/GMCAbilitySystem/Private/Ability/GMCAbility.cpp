@@ -45,7 +45,8 @@ void UGMCAbility::Tick(float DeltaTime)
 	{
 		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Ability Not Confirmed By Server: %d, Removing..."), AbilityID);
+			
+			UE_LOGFMT(LogGMCAbilitySystem, Error, "[Client] Ability Not Confirmed By Server: {0}, Removing... (Was Replaying : {1})", AbilityID, GetOwnerMovementComponent()->CL_IsReplaying() ? "True" : "False");
 			EndAbility();
 			return;
 		}
