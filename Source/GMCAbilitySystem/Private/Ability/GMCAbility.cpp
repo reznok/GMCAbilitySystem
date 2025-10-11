@@ -297,10 +297,6 @@ void UGMCAbility::FinishEndAbility() {
 				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Handle %d already ended for ability %s"), EfData.Key, *AbilityTag.ToString());
 			}
 		}
-		else
-		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Handle %d not found for ability %s"), EfData.Key, *AbilityTag.ToString());
-		}
 	}
 
 	AbilityState = EAbilityState::Ended;
