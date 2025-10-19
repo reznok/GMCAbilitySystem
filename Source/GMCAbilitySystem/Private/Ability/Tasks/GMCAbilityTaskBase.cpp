@@ -9,7 +9,7 @@ void UGMCAbilityTaskBase::Activate()
 {
 	Super::Activate();
 	RegisterTask(this);
-	LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer;
+	LastHeartbeatReceivedTime = AbilitySystemComponent->ActionTimer + HeartbeatMaxInterval;
 }
 
 void UGMCAbilityTaskBase::EndTaskGMAS()
@@ -49,7 +49,9 @@ void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
 	}
 	else if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < AbilitySystemComponent->ActionTimer)
 	{
-		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout, Cancelling Ability: %s"), *Ability->GetName());
+		const float TimeSinceLastHeartbeat = AbilitySystemComponent->ActionTimer - LastHeartbeatReceivedTime;
+		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout after %.2fs (max: %.2f), Cancelling Ability: %s"),
+		  TimeSinceLastHeartbeat, HeartbeatMaxInterval, *Ability->GetName());
 		AbilitySystemComponent->OnTaskTimeout.Broadcast(Ability->AbilityTag);
 		Ability->EndAbility();
 		EndTask();
