@@ -1062,6 +1062,10 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	{
 		ActiveAbilities[AbilityID]->HandleTaskHeartbeat(TaskID);
 	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[RPC] Server Heartbeat for non-existent Ability: %d"), AbilityID);
+	}
 }
 
 void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int AbilityID)
