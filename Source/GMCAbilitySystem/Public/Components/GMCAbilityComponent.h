@@ -179,13 +179,46 @@ public:
 	UFUNCTION(BlueprintPure, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	bool HasGrantedAbilityTag(const FGameplayTag GameplayTag) const;
 
-	// Add an ability to the GrantedAbilities array
+	
+	/**
+	 * Add an active tag to the array
+	 * @param AbilityTag Tag
+	 * @warning Do not call this directly unless you exactly know what you are doing, that will cause desynchronization.
+	* * @warning Do not call this directly unless you exactly know what you are doing, that will cause desynchronization.
+	 * Prefer AddActiveSynchronizedTag
+	 */
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void AddActiveTag(const FGameplayTag AbilityTag);
 
-	// Remove an ability from the GrantedAbilities array
+	/**
+	 * Remove an active tag to the array
+	 * @param AbilityTag Tag
+	 * @warning Do not call this directly unless you exactly know what you are doing, that will cause desynchronization.
+	 * Prefer RemoveActiveSynchronizedTag
+	 */
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveActiveTag(const FGameplayTag AbilityTag);
+
+	
+	/**
+	 * Will add a tag to the ActiveTag array on the server, and will replicate it nicely to the client
+	 * @param Tag Tag to add
+	 * @param AllowMultipleInstance if true, each application is reminded, and require same number of call of RemoveSynchronizedTag
+	 * Authority Only, effect is used under the hood, however, DO NOT use this to add an effect, DO NOT use it with a tag already
+	 * applied by an effect
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "GMCAbilitySystem")
+	void AddSynchronizedTag(const FGameplayTag& Tag, bool AllowMultipleInstance = true);
+
+	/**
+	 * Will remove a tag to the ActiveTag array on the server, and will replicate it nicely to the client
+	 * @param Tag Tag to remove
+	 * @param RemoveEveryInstance if true, it will remove the tag without taking in consideration the number of application
+	 * @warning Authority Only, effect is used under the hood, however, DO NOT use this to remove an effect, DO NOT use it with a tag already
+	 * applied by an effect.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "GMCAbilitySystem")
+	void RemoveSynchronizedTag(const FGameplayTag& Tag, bool RemoveEveryInstance = false);
 
 	// Checks whether any active tag matches this tag or any of its children.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")

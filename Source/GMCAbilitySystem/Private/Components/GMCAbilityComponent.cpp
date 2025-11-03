@@ -266,6 +266,45 @@ void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 	}
 }
 
+void UGMC_AbilitySystemComponent::AddSynchronizedTag(const FGameplayTag& Tag, bool AllowMultipleInstance)
+{
+	ensureAlwaysMsgf(HasAuthority(), TEXT("Only the server can add a synchronized tag"));
+
+	if (!Tag.IsValid())
+	{
+		UE_LOGFMT(LogGMCAbilitySystem, Error, "{0} AbilityTag is invalid", __FUNCTION__);
+		return;
+	}
+
+	if (!AllowMultipleInstance && HasActiveTag(Tag)) return;
+	
+	FGMCAbilityEffectData EffectData;
+	EffectData.EffectTag = Tag;
+	EffectData.GrantedTags = FGameplayTagContainer(Tag);
+	EffectData.bServerAuth = true;
+	EffectData.EffectType = EGMASEffectType::Persistent;
+
+	bool OutSuccess;
+	int OutEffectHandle;
+	int OutEffectId;
+	UGMCAbilityEffect* OutEffect;
+	ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), EffectData, EGMCAbilityEffectQueueType::ServerAuth, OutSuccess, OutEffectHandle,
+	                       OutEffectId, OutEffect); 
+}
+
+void UGMC_AbilitySystemComponent::RemoveSynchronizedTag(const FGameplayTag& Tag, bool RemoveEveryInstance)
+{
+	ensureAlwaysMsgf(HasAuthority(), TEXT("Only the server can remove a synchronized tag"));
+
+	if (!Tag.IsValid())
+	{
+		UE_LOGFMT(LogGMCAbilitySystem, Error, "{0} AbilityTag is invalid", __FUNCTION__);
+		return;
+	}
+	
+	RemoveActiveAbilityEffectByTag(Tag, EGMCAbilityEffectQueueType::ServerAuth, RemoveEveryInstance);
+}
+
 bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag GameplayTag) const
 {
 	return ActiveTags.HasTag(GameplayTag);
