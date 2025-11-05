@@ -1960,13 +1960,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
-	if (Effect == nullptr)
-	{
-		return;
-	}
-	
-	if (!ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
-	
+	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
 	Effect->EndEffect();
 }
 
@@ -2000,11 +1994,13 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectSafe(UGMCAbilityEffec
 }
 
 
-void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByTag(FGameplayTag Tag, EGMCAbilityEffectQueueType QueueType, bool bAllInstance) {
+void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByTag(const FGameplayTag& Tag, EGMCAbilityEffectQueueType QueueType, bool bAllInstance) {
+
+	if (!Tag.IsValid()) return;
 
 	for (auto& [EffectId, Effect] : ActiveEffects)
 	{
-		if (IsValid(Effect) && Tag.MatchesTag(Effect->EffectData.EffectTag))
+		if (IsValid(Effect) && Effect->EffectData.EffectTag.MatchesTag(Tag))
 		{
 			RemoveEffectByIdSafe({ EffectId }, QueueType);
 			if (!bAllInstance) {
@@ -2097,16 +2093,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 	if (!Ids.Num()) {
 		return true;
 	}
-
-	// check all IDs exists
-	for (int Id : Ids) {
-		if (!ActiveEffects.Contains(Id)) {
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove effect with ID %d, but it doesn't exist!"),
-				*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), Id);
-			return false;
-		}
-	}
-
+	
 	switch(QueueType) {
 		case EGMCAbilityEffectQueueType::Predicted:
 			{
@@ -2120,16 +2107,8 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 					return false;
 				}
 
-				TArray<UGMCAbilityEffect*> EffectsToRemove;
-				for (int Id : Ids) {
-					if (ActiveEffects.Contains(Id)) {
-						EffectsToRemove.Add(ActiveEffects[Id]);
-					}
-				}
 				
-				for (auto Effect : EffectsToRemove) {
-					RemoveActiveAbilityEffect(Effect);
-				}
+				for (const int Id : Ids) RemoveActiveAbilityEffect(ActiveEffects[Id]);
 
 				return true;
 			}
@@ -2138,17 +2117,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				// If in move, silenttly remove the effect as predicted
 				if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
 				{
-					TArray<UGMCAbilityEffect*> EffectsToRemove;
-					for (int Id : Ids) {
-						if (ActiveEffects.Contains(Id)) {
-							EffectsToRemove.Add(ActiveEffects[Id]);
-						}
-					}
-				
-					for (auto Effect : EffectsToRemove) {
-						RemoveActiveAbilityEffect(Effect);
-					}
-					
+					for (const int Id : Ids) RemoveActiveAbilityEffect(ActiveEffects[Id]);
 				}
 				else {
 					TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData> Operation;
