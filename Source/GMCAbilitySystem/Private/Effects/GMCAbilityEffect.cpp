@@ -326,6 +326,7 @@ float UGMCAbilityEffect::ProcessCustomModifier(const TSubclassOf<UGMCAttributeMo
 	return (*MCI)->Calculate(this, Attribute);
 }
 
+
 void UGMCAbilityEffect::GetOwnerActor(AActor*& OutOwnerActor) const
 {
 	if (OwnerAbilityComponent)
