@@ -669,6 +669,7 @@ public:
 	// Empty the AbilityMap and remove all granted abilities from existing maps
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void ClearAbilityMap();
+	
 
 	virtual void SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 

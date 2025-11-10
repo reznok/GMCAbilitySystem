@@ -100,6 +100,7 @@ void UGMCAbilityEffect::StartEffect()
 			FGMCAttributeModifier ModCpy = EffectData.Modifiers[i];
 			ModCpy.InitModifier(this, OwnerAbilityComponent->ActionTimer, i, IsEffectModifiersRegisterInHistory(), 1.f);
 			OwnerAbilityComponent->ApplyAbilityAttributeModifier(ModCpy);
+			OnAttributeModifierApplication(ModCpy);
 		}
 
 		if (EffectData.EffectType == EGMASEffectType::Instant)
@@ -113,6 +114,14 @@ void UGMCAbilityEffect::StartEffect()
 	UpdateState(EGMASEffectState::Started, true);
 }
 
+
+void UGMCAbilityEffect::OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier)
+{
+	if (bCallOnAttributeModifierApplication)
+	{
+		K2_OnAttributeModifierApplication(Modifier);
+	}
+}
 
 void UGMCAbilityEffect::EndEffect()
 {
@@ -181,12 +190,8 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
-	// Aherys : I'm not sure if this is correct. Sometime this is GC. We need to catch why, and when.
-	if (bCompleted || IsUnreachable()) {
-		if (IsUnreachable()) {
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect is unreachable : %s"), *EffectData.EffectTag.ToString());
-			ensureMsgf(false, TEXT("Effect is being ticked after being completed or GC : %s"), *EffectData.EffectTag.ToString());
-		}
+	
+	if (bCompleted) {
 		return;
 	}
 	
@@ -216,13 +221,13 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 				FGMCAttributeModifier Modifier = EffectData.Modifiers[i];
 				Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, i, IsEffectModifiersRegisterInHistory(), DeltaTime);
 				OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
+				OnAttributeModifierApplication(Modifier);
 			} // End for each modifier
 
 			
 		} // End Ticking
 		else if (EffectData.EffectType == EGMASEffectType::Periodic)
 		{
-			
 			
 			const float CurrentElapsedTime = OwnerAbilityComponent->ActionTimer -  EffectData.StartTime;
 			float PreviousElapsedTime = CurrentElapsedTime - OwnerAbilityComponent->GMCMovementComponent->GetMoveDeltaTime();
@@ -239,6 +244,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 						FGMCAttributeModifier Modifier = EffectData.Modifiers[y];
 						Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, y, IsEffectModifiersRegisterInHistory(), 1.f);
 						OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
+						OnAttributeModifierApplication(Modifier);
 					}
 				}
 
@@ -337,6 +343,11 @@ void UGMCAbilityEffect::GetOwnerActor(AActor*& OutOwnerActor) const
 	{
 		OutOwnerActor = nullptr;
 	}
+}
+
+AActor* UGMCAbilityEffect::GetOwnerActor() const
+{
+	return OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr;
 }
 
 void UGMCAbilityEffect::AddTagsToOwner()

@@ -207,8 +207,27 @@ public:
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
 
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	bool bCallOnAttributeModifierApplication = false;
+
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void InitializeEffect(FGMCAbilityEffectData InitializationData);
+
+
+	/**
+	 * Called when an attribute modifier is applied.
+	 *
+	 * ⚠️ Note:
+	 * Attribute changes are applied with a one-frame delay by design.
+	 * This means that if you add (for example) health and check the current health immediately,
+	 * the modifier’s effect will not yet be visible during the same frame.
+	 *
+	 * @param Modifier The attribute modifier that was applied.
+	 */
+	UFUNCTION(BlueprintImplementableEvent)
+	void K2_OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
+
+	virtual void OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void EndEffect();
@@ -264,6 +283,8 @@ public:
 	
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	void GetOwnerActor(AActor*& OwnerActor) const;
+
+	AActor* GetOwnerActor() const;
 
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* GetOwnerAbilityComponent() const { return OwnerAbilityComponent; }
