@@ -57,7 +57,41 @@ struct  FGMASBoundQueueV2
 	}
 
 	// OperationID, OperationPayload
+protected:
 	TMap<int, FInstancedStruct> OperationPayloads;
+
+public:
+	// Accessors for OperationPayloads
+	
+	void RemovePayloadByID(const int OperationID)
+	{
+		if (OperationPayloads.Contains(OperationID))
+		{
+			OperationPayloads.Remove(OperationID);
+		}
+	}
+
+	// Make a GetOperationByID
+	FInstancedStruct GetPayloadByID(const int OperationID)
+	{
+		if (OperationPayloads.Contains(OperationID))
+		{
+			return OperationPayloads[OperationID];
+		}
+		return FInstancedStruct();
+	}
+
+	bool HasPayloadByID(const int OperationID) const
+	{
+		return OperationPayloads.Contains(OperationID);
+	}
+
+	int GetPayloadCount() const
+	{
+		return OperationPayloads.Num();
+	}
+
+	
 	TArray<int> OperationQueue;
 	
 	// GMC
@@ -128,6 +162,9 @@ struct  FGMASBoundQueueV2
 	// If the client doesn't acknowledge the operation in time, the server will force it
 	// Map: OperationId -> GracePeriod
 	TMap<int, float> ServerQueuedBoundOperationsGracePeriods;
+
+	// Runs checks on the current state of the queue and logs any issues found
+	void CheckValidState() const;
 };
 
 // Operations

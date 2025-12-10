@@ -212,7 +212,7 @@ public:
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
+	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);

@@ -310,7 +310,8 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 	return MatchedTags;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction, bool bFromMovementTick)
+bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction,
+	const bool bFromMovementTick, const bool bForce)
 {
 
 	auto GrantedAbilities = GetGrantedAbilitiesByTag(InputTag);
@@ -321,7 +322,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	}
 	bool bFirstAbilityActivatesDuringMovementTick = GrantedAbilities[0]->GetDefaultObject<UGMCAbility>()->bActivateOnMovementTick;
 	
-	if (bFirstAbilityActivatesDuringMovementTick != bFromMovementTick)
+	if (!bForce && bFirstAbilityActivatesDuringMovementTick != bFromMovementTick)
 	{
 		// If the first ability doesn't match the bFromMovementTick state, we can't activate any abilities
 		return false;
@@ -400,7 +401,15 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	ActivationData.InputTag = InputTag;
 	ActivationData.InputAction = InputAction;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AbilityActivationOperation>(ActivationData);
-	BoundQueueV2.QueueClientOperation(OperationID);
+
+	if (!HasAuthority())
+	{
+		BoundQueueV2.QueueClientOperation(OperationID);
+	}
+	else
+	{
+		BoundQueueV2.QueueServerOperation(OperationID);
+	}
 	
 }
 
@@ -1192,19 +1201,19 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	
 	// Payload data should be in the cache
 	// Possible if it isn't with abilities being double processed anc/movement tick until that's checked later
-	if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
+	if (!BoundQueueV2.HasPayloadByID(OperationID))
 	{
 		// UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
 		return false;
 	}
 
 	// Pull actual payload from operation cache
-	const FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
+	FInstancedStruct PayloadData = BoundQueueV2.GetPayloadByID(OperationID);
 
-	// Server only every processes operations once so it doesn't need them cached
+	// Server only ever processes operations once so it doesn't need them cached
 	if (HasAuthority())
 	{
-		BoundQueueV2.OperationPayloads.Remove(OperationID);
+		BoundQueueV2.RemovePayloadByID(OperationID);
 	}
 	
 	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
@@ -1214,7 +1223,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		BoundQueueV2.OperationData  = PayloadData;
-		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick);
+		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce);
 	}
 
 	// Everything below happens only during the Prediction tick
@@ -1336,7 +1345,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			return;
 		}
 		
-		if (!BoundQueueV2.OperationPayloads.Contains(OperationID))
+		if (!BoundQueueV2.HasPayloadByID(OperationID))
 		{
 			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
 		}
@@ -1350,13 +1359,13 @@ void UGMC_AbilitySystemComponent::ServerProcessAcknowledgedOperation(int Operati
 	// Everything else should be server built operations that the client has confirmed
 	// Ie, applied server-auth effects or server-auth events
 
-	if (!BoundQueueV2.OperationPayloads.Contains(OperationID) || !BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID))
+	if (!BoundQueueV2.HasPayloadByID(OperationID) || !BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID))
 	{
 		return;
 	}
 	
 
-	FInstancedStruct PayloadData = BoundQueueV2.OperationPayloads[OperationID];
+	FInstancedStruct PayloadData = BoundQueueV2.GetPayloadByID(OperationID);
 	
 	if (ProcessOperation(PayloadData, bFromMovementTick))
 	{
