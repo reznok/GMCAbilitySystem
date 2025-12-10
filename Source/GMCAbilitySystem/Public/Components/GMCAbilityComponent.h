@@ -10,8 +10,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
-#include "Containers/Deque.h"
-#include "Utility/GMASBoundQueue.h"
+#include "Utility/GMASBoundQueueV2.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
 
@@ -213,7 +212,7 @@ public:
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Do not call directly on client, go through QueueAbility
-	void TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, bool bFromMovementTick=true);
+	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
@@ -305,22 +304,9 @@ public:
 
 	int GetNextAvailableEffectID() const;
 	bool CheckIfEffectIDQueued(int EffectID) const;
-	int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
-	int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
+	// int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
+	// int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
 	
-	
-	/**
-	 * Applies an effect to the Ability Component. If bOuterActivation is false, the effect will be immediately
-	 * applied; if either is true, the operation will be queued but no valid effect will be returned. If
-	 * Outer Activation is true, the effect *must* be applied on the server.
-	 *
-	 * @param	Effect		        Effect to apply
-	 * @param   InitializationData  Effect initialization data.
-	 * @param   bOuterActivation    Whether this effect should be replicated outside of GMC, via normal Unreal RPC
-	 */
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Apply Ability Effect (Legacy)", meta=(DeprecatedFunction, DeprecationMessage="Please use the more modern ApplyAbilityEffect which takes a queue type."))
-	UGMCAbilityEffect* ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> Effect, FGMCAbilityEffectData InitializationData, bool bOuterActivation = false);
-
 	// BP-specific version of 
 	
 	/**
@@ -360,6 +346,8 @@ public:
 	 */
 	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
+	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operatio);
+	
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 	
@@ -563,9 +551,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
-
-	UFUNCTION(BlueprintCallable, Category="GMAS")
-	virtual void PreRemoteMoveExecution();
+	
 	
 #pragma endregion GMC
 
@@ -585,8 +571,20 @@ public:
 #pragma endregion ToStringHelpers
 	
 protected:
-	virtual void BeginPlay() override;
 
+	//TODO: Move these functions
+
+	UFUNCTION(Client, Reliable)
+	void RPCOnServerOperationAdded(int OperationID, const FInstancedStruct Operation);
+
+	UFUNCTION(BlueprintCallable)
+	void BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffect> Effect);
+
+	UFUNCTION()
+	void OnServerOperationForced(FInstancedStruct OperationData);
+	
+	virtual void BeginPlay() override;
+	
 	// Abilities that are granted to the player (bound)
 	FGameplayTagContainer GrantedAbilityTags;
 
@@ -658,56 +656,27 @@ private:
 	void InitializeStartingAbilities();
 	
 	TArray<FInstancedStruct> QueuedTaskData;
-
-	// Queued ability operations (activate, cancel, etc.)
-	TGMASBoundQueue<UGMCAbility, FGMCAbilityData> QueuedAbilityOperations;
-	bool ProcessAbilityOperation(const TGMASBoundQueueOperation<UGMCAbility, FGMCAbilityData>& Operation, bool bFromMovementTick);
-
-	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData, false> QueuedEffectOperations;
-	TGMASBoundQueue<UGMCAbilityEffect, FGMCAbilityEffectData> QueuedEffectOperations_ClientAuth;
-
-	TGMASBoundQueue<UGMASSyncedEvent, FGMASSyncedEventContainer, false> QueuedEventOperations;
-
 	
-	template<typename C, typename T>
-	bool IsOperationValid(const TGMASBoundQueueOperation<C, T>& Operation) const;
-
-	template <typename C, typename T>
-	bool ShouldProcessOperation(const TGMASBoundQueueOperation<C, T>& Operation, TGMASBoundQueue<C, T, false>& QueuedOperations, bool bIsServer = true) const;
-	
+	FGMASBoundQueueV2 BoundQueueV2 = {};
 	// Events	
-	virtual void ProcessOperation(const TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& Operation);
+	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
+	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
+
+	virtual void ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick = true);
+	virtual void ServerProcessAcknowledgedOperation(int OperationID, bool bFromMovementTick = true);
 
 	// Event Implementations
 
 	// Execute an event that is created by the server where execution is synced between server and client
 	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
-
-
 	
-	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "Impulse")
+	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
 	void AddImpulse(FVector Impulse, bool bVelChange = false);
-	void AddImpulseEvent(const FGMASSyncedEventContainer& EventData) const;
-	
-	// Effects	
-	virtual UGMCAbilityEffect* ProcessOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
 
+	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
+	void SetActorLocation(FVector Location);
 	
-	void ClientQueueOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& Operation);
-	void ClientQueueOperation(const TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& Operation);
-	
-	UFUNCTION(Client, Reliable)
-	void RPCClientQueueEffectOperation(const FGMASBoundQueueRPCHeader& Header);
-	
-	UFUNCTION(Client, Reliable)
-	void RPCClientQueueEventOperation(const FGMASBoundQueueRPCHeader& Header);
-
-	// Predictions of Effect state changes
-	FEffectStatePrediction EffectStatePrediction{};
-
-	TArray<FEffectStatePrediction> QueuedEffectStates;
-
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 	
@@ -752,20 +721,23 @@ private:
 	// Can be just normally replicated since if the client doesn't have them already
 	// then prediction is already out the window
 
-	UPROPERTY(ReplicatedUsing = OnRep_ActiveEffectsData)
-	TArray<FGMCAbilityEffectData> ActiveEffectsData;
+	UPROPERTY(ReplicatedUsing=OnRep_ActiveEffectIDs)
+	TArray<int> ActiveEffectIDs;
+
+	UFUNCTION()
+	void OnRep_ActiveEffectIDs();
 
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
 	float ClientEffectApplicationTimeout = 1.f;
-
-	UFUNCTION()
-	void OnRep_ActiveEffectsData();
 
 	// Check if any effects have been removed by the server and remove them locally
 	void CheckRemovedEffects();
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
+	
+	// IDs that have been claimed by server-auth effect applications
+	TArray<int> ReservedEffectIDs;
 
 	UPROPERTY()
 	TMap<int, FGMASQueueOperationHandle> EffectHandles;
@@ -782,14 +754,7 @@ private:
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInAncillaryTick = false;
-
-	void ServerHandlePendingEffect(float DeltaTime);
-	void ServerHandlePredictedPendingEffect(float DeltaTime);
-
-	template<typename C, typename T>
-	void ClientHandlePendingOperation(TGMASBoundQueue<C, T, false>& QueuedOperations);
 	
-	void ClientHandlePredictedPendingEffect();
 
 	int LateApplicationIDCounter = 0;
 
@@ -846,6 +811,7 @@ public:
 	// Spawn a Sound at the given location
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
 	void SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
+
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);

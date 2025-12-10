@@ -36,6 +36,8 @@ protected:
 		int NBActiveEffectData;
 		FString ActiveAbilities;
 		int NBActiveAbilities;
+
+		int NBCachedOperationPayloads;
         
 		void Serialize(FArchive& Ar);
 	};
