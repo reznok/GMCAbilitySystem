@@ -7,7 +7,6 @@
 #include "UObject/Object.h"
 #include "GMCAbilitySystem.h"
 #include "GMCAttributeModifier.h"
-#include "Attributes/GMCAttributeModifierCustom_Base.h"
 #include "GMCAbilityEffect.generated.h"
 
 class UGMC_AbilitySystemComponent;

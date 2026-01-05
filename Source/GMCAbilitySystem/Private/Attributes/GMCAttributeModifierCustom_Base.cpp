@@ -2,6 +2,7 @@
 
 
 #include "GMCAttributeModifierCustom_Base.h"
+#include "GMCAbilitySystem.h"
 #include "GMCAbilitySystem/Public/Attributes/GMCAttributes.h"
 
 float UGMCAttributeModifierCustom_Base::Calculate(UGMCAbilityEffect* SourceEffect, const FAttribute* Attribute)

@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "GMCAbilitySystem.h"
 #include "UObject/Object.h"
 #include "GMCAttributeModifierCustom_Base.generated.h"
 
