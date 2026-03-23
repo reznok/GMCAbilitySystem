@@ -137,8 +137,12 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 	if (HasAuthority())
 	{
-		// Server processes client output payloads
-		if (GMCMovementComponent->IsPlayerControlledPawn())
+		// Server processes client output payloads — only for REMOTE client pawns.
+		// The listen server's own locally-controlled pawn does not submit "client
+		// data" to itself, so SV_GetLastClientData().OutputState.InstancedStructs
+		// is empty on the first frame, causing an out-of-bounds crash when
+		// GetBoundInstancedStruct tries to access index BI_OperationData.
+		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledListenServerPawn())
 		{
 			const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
 			const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
@@ -384,7 +388,20 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
 	Ability->AbilityData = AbilityData;
 	Ability->AbilityData.InputTag = ActivationTag;
-	
+
+	// Propagate class-identity and activation properties from the CDO to the instance.
+	// NewObject does not reliably copy UPROPERTY values when called without a full
+	// world context (e.g. headless automation, transient outers).  Explicit assignment
+	// ensures the instance always matches its class defaults for every property that
+	// is read on the instance rather than on the CDO.
+	Ability->AbilityTag             = AbilityCDO->AbilityTag;
+	Ability->CooldownTime           = AbilityCDO->CooldownTime;
+	Ability->AbilityCost            = AbilityCDO->AbilityCost;
+	Ability->BlockedByOtherAbility  = AbilityCDO->BlockedByOtherAbility;
+	Ability->BlockOtherAbility      = AbilityCDO->BlockOtherAbility;
+	Ability->CancelAbilitiesWithTag = AbilityCDO->CancelAbilitiesWithTag;
+	Ability->AbilityDefinition      = AbilityCDO->AbilityDefinition;
+
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
 	
@@ -584,7 +601,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
 	
-	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn())
+	// Same listen-server guard as GenAncillaryTick: skip client payload processing
+	// for the locally-controlled host pawn (no client data submitted to itself).
+	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledListenServerPawn())
 	{
 		// Server processes client output payloads
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;

@@ -636,14 +636,23 @@ public:
 	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
 	void OnInitializeAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
+	// Will calculate and process stack of attributes.
+	// Pass bInGenPredictionTick=true to process GMC-bound attributes (prediction path),
+	// false for the ancillary path.  Called internally by Gen*Tick; also exposed here
+	// so tests can drive recalculation with a manually controlled ActionTimer.
+	void ProcessAttributes(bool bInGenPredictionTick);
+
+	// Tick predicted and active effects (CheckState + duration expiry + periodic ticks).
+	// Called internally by Gen*Tick; also exposed here so tests can advance effect state
+	// with a manually controlled ActionTimer without going through GenPredictionTick
+	// (which overwrites ActionTimer from GMCMovementComponent->GetMoveTimestamp()).
+	void TickActiveEffects(float DeltaTime);
+
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
 
 	FGameplayAttributeChangedNative NativeAttributeChangeDelegate;
-
-	// Will calculate and process stack of attributes
-	void ProcessAttributes(bool bInGenPredictionTick);
 	
 	TArray<FModifierHistoryEntry> ModifierHistory;
 	
@@ -703,10 +712,6 @@ private:
 	
 	// Clear out abilities in the Ended state from the ActivateAbilities map
 	void CleanupStaleAbilities();
-
-	// Tick Predicted and Active Effects
-	void TickActiveEffects(float DeltaTime);
-
 
 	// Tick active abilities, primarily the Tasks inside them
 	void TickActiveAbilities(float DeltaTime);

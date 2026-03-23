@@ -254,7 +254,11 @@ public:
 	virtual void OnGameplayTaskInitialized(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskActivated(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
-	
+
+	// Returns true if the server has confirmed this ability activation.
+	// Used by tests to verify synchronous authority confirmation.
+	bool IsServerConfirmed() const { return bServerConfirmed; }
+
 private:
 
 	void FinishEndAbility();
