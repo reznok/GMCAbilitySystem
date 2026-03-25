@@ -888,9 +888,10 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	{
 		// Notify client. Redundant.
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
-		
+
 		ActiveEffects.Remove(EffectID);
 		ActiveEffectIDs.Remove(EffectID);
+		ProcessedEffectIDs.Remove(EffectID);
 	}
 
 	// Clean effect handles
@@ -954,19 +955,31 @@ void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
 
 void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 {
-	for (TPair<int, UGMCAbilityEffect*> Effect : ActiveEffects)
+	TArray<int> EffectsToRemove;
+
+	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
 		// Ensure this effect has been processed locally
-		if (!ProcessedEffectIDs.Contains(Effect.Key)){return;}
+		if (!ProcessedEffectIDs.Contains(Effect.Key)) { continue; }
 
 		// Ensure this effect has already been confirmed by the server so that if it's now missing,
 		// it means the server removed it
-		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending){return;}
-		
-		// if (!ActiveEffectsData.ContainsByPredicate([Effect](const FGMCAbilityEffectData& EffectData) {return EffectData.EffectID == Effect.Key;}))
-		// {
-		// 	RemoveActiveAbilityEffect(Effect.Value);
-		// }
+		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending) { continue; }
+
+		// If the server's replicated effect list no longer contains this effect, remove it locally
+		if (!ActiveEffectIDs.Contains(Effect.Key))
+		{
+			if (Effect.Value) { Effect.Value->EndEffect(); }
+			EffectsToRemove.Add(Effect.Key);
+		}
+	}
+
+	for (const int EffectID : EffectsToRemove)
+	{
+		if (HasAuthority()) { RPCClientEndEffect(EffectID); }
+		ActiveEffects.Remove(EffectID);
+		ActiveEffectIDs.Remove(EffectID);
+		ProcessedEffectIDs.Remove(EffectID);
 	}
 }
 
@@ -1503,7 +1516,7 @@ bool UGMC_AbilitySystemComponent::GetEffectFromHandle(int EffectHandle, int32& O
 	if (!GetEffectHandle(EffectHandle, HandleData)) return false;
 
 	OutEffectNetworkId = HandleData.NetworkId;
-	if (HandleData.NetworkId > 0)
+	if (HandleData.NetworkId > 0 && ActiveEffects.Contains(HandleData.NetworkId))
 	{
 		OutEffect = ActiveEffects[HandleData.NetworkId];
 	}

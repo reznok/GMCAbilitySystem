@@ -155,6 +155,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void AddAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 
+	// C++ overload: register a single entry directly without a data-asset wrapper.
+	// Useful for test code and runtime ability grants.
+	void AddAbilityMapData(const FAbilityMapData& AbilityMapData);
+
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void RemoveAbilityMapData(UGMCAbilityMapData* AbilityMapData);
 
@@ -658,7 +662,6 @@ private:
 	
 	// Get the map from the data asset and apply that to the component's map
 	void InitializeAbilityMap();
-	void AddAbilityMapData(const FAbilityMapData& AbilityMapData);
 	void RemoveAbilityMapData(const FAbilityMapData& AbilityMapData);
 
 	// Add the starting ability tags to GrantedAbilities at start
@@ -787,6 +790,20 @@ private:
 	void RPCClientEndEffect(int EffectID);
 
 	friend UGMCAbilityAnimInstance;
+
+#if WITH_AUTOMATION_WORKER
+public:
+	// Test-only accessors — compiled away in non-editor/non-test builds.
+	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
+	TArray<int>&                           GetActiveEffectIDsForTest()     { return ActiveEffectIDs; }
+	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
+	void CheckRemovedEffectsForTest()                                       { CheckRemovedEffects(); }
+	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
+	{
+		return GetEffectFromHandle(Handle, OutNetId, OutEffect);
+	}
+private:
+#endif
 
 public:
 	// Networked FX

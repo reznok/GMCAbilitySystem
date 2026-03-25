@@ -70,20 +70,16 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 
 void UGMCAbility::TickTasks(float DeltaTime)
 {
-	for (int i = 0; i < RunningTasks.Num(); i++)
+	for (auto& [Id, Task] : RunningTasks)
 	{
-		UGMCAbilityTaskBase* Task = RunningTasks[i];
-		if (Task == nullptr) { continue; }
-		Task->Tick(DeltaTime);
+		if (Task) Task->Tick(DeltaTime);
 	}
 }
 
 void UGMCAbility::AncillaryTickTasks(float DeltaTime) {
-	for (int i = 0; i < RunningTasks.Num(); i++)
+	for (auto& [Id, Task] : RunningTasks)
 	{
-		UGMCAbilityTaskBase* Task = RunningTasks[i];
-		if (Task == nullptr) { continue; }
-		Task->AncillaryTick(DeltaTime);
+		if (Task) Task->AncillaryTick(DeltaTime);
 	}
 }
 
@@ -104,16 +100,13 @@ bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
 	UGMCAbilityEffect* AbilityEffect = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
 	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
 	{
-		for (const FAttribute* Attribute : OwnerAbilityComponent->GetAllAttributes())
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(AttributeModifier.AttributeTag);
+		if (Attribute == nullptr) continue;
+
+		AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
+		if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
 		{
-			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
-			{
-				AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
-				if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
-				{
-					return false;
-				}
-			}
+			return false;
 		}
 	}
 

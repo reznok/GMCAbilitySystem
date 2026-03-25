@@ -202,7 +202,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 	
 
 public:
-	EGMASEffectState CurrentState;
+	EGMASEffectState CurrentState = EGMASEffectState::Initialized;
 
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;

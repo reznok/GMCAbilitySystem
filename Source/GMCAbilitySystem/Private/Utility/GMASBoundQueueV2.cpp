@@ -85,9 +85,11 @@ void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 			const int OperationIDToProcess = ClientQueuedOperations.Pop();
 			if (OperationPayloads.Contains(OperationIDToProcess))
 			{
-				FInstancedStruct OperationPayload;
-				OperationPayload.InitializeAs<FGMASBoundQueueV2OperationBaseData>(OperationIDToProcess);
-				OperationData = OperationPayload;
+				// Replicate the full derived payload (e.g. FGMASBoundQueueV2AbilityActivationOperation
+				// with InputTag) so that ServerProcessOperation->IsValidClientOperation passes
+				// on the receiving end. Sending only the base struct (just OperationID) causes
+				// IsValidClientOperation to return false and the ability is never run server-side.
+				OperationData = OperationPayloads[OperationIDToProcess];
 			}
 		}
 		else

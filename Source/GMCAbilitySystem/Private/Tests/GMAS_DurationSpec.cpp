@@ -107,6 +107,7 @@ UGMCAbilityEffect* FGMASDurationSpec::ApplyAndTick(EGMASEffectType Type, float D
 	Data.EffectType        = Type;
 	Data.bNegateEffectAtEnd = (Type == EGMASEffectType::Persistent);
 	Data.Duration          = Duration;
+	Data.bServerAuth       = true;  // skip client prediction timeout — duration tests need large timer jumps
 	Data.Modifiers.Add(MakeHealthMod(ModAmount));
 
 	AbilityComp->ApplyAbilityEffect(Effect, Data);
@@ -134,8 +135,8 @@ void FGMASDurationSpec::Define()
 	{
 		It("effect is active before EndTime is reached", [this]()
 		{
-			// Duration=5 → EndTime=5.  Check at t=3: still active.
-			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 5.f, 30.f, 0.0, 3.0);
+			// Duration=5, StartT=1 → EndTime=6.  Check at t=4: still active.
+			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 5.f, 30.f, 1.0, 4.0);
 			TestEqual("Value buffed while active", AbilityComp->GetAttributeValueByTag(HealthTag), 130.f);
 			TestFalse("Effect still in ActiveEffects", AbilityComp->GetActiveEffects().IsEmpty());
 			Effect->RemoveFromRoot();
@@ -143,8 +144,8 @@ void FGMASDurationSpec::Define()
 
 		It("effect is removed and value reverts at exactly EndTime", [this]()
 		{
-			// Duration=5 → EndTime=5.  At t=5 the check is >=, so it expires.
-			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 5.f, 30.f, 0.0, 5.0);
+			// Duration=5, StartT=1 → EndTime=6.  At t=6 the check is >=, so it expires.
+			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 5.f, 30.f, 1.0, 6.0);
 			TestEqual("Value reverted to 100 at EndTime", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
 			TestTrue("Effect removed from ActiveEffects", AbilityComp->GetActiveEffects().IsEmpty());
 			Effect->RemoveFromRoot();
@@ -152,8 +153,8 @@ void FGMASDurationSpec::Define()
 
 		It("effect is removed after EndTime is exceeded", [this]()
 		{
-			// Duration=2 → EndTime=2.  Check at t=10: long expired.
-			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 2.f, 50.f, 0.0, 10.0);
+			// Duration=2, StartT=1 → EndTime=3.  Check at t=11: long expired.
+			UGMCAbilityEffect* Effect = ApplyAndTick(EGMASEffectType::Persistent, 2.f, 50.f, 1.0, 11.0);
 			TestEqual("Value back to 100 after expiry", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
 			TestTrue("Effect removed", AbilityComp->GetActiveEffects().IsEmpty());
 			Effect->RemoveFromRoot();
@@ -161,19 +162,20 @@ void FGMASDurationSpec::Define()
 
 		It("two effects with different durations expire independently", [this]()
 		{
-			// Effect A: Duration=3, +20.  Effect B: Duration=7, +15.
-			// At t=4: A expired (EndTime=3), B still active (EndTime=7).
+			// Effect A: Duration=3, +20.  Effect B: Duration=7, +15.  StartT=1.
+			// EndTime A=4, EndTime B=8.  Check at t=5: A expired (5>=4), B active (5<8).
 			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffA->AddToRoot(); EffB->AddToRoot();
 
-			AbilityComp->ActionTimer = 0.0;
+			AbilityComp->ActionTimer = 1.0;
 
 			auto MakeData = [&](float Dur, float Mod) {
 				FGMCAbilityEffectData D;
 				D.EffectType        = EGMASEffectType::Persistent;
 				D.bNegateEffectAtEnd = true;
 				D.Duration          = Dur;
+				D.bServerAuth       = true;
 				D.Modifiers.Add(MakeHealthMod(Mod));
 				return D;
 			};
@@ -181,11 +183,11 @@ void FGMASDurationSpec::Define()
 			AbilityComp->ApplyAbilityEffect(EffA, MakeData(3.f, 20.f));
 			AbilityComp->ApplyAbilityEffect(EffB, MakeData(7.f, 15.f));
 
-			AbilityComp->ActionTimer = 4.0;
+			AbilityComp->ActionTimer = 5.0;
 			AbilityComp->TickActiveEffects(4.f);
 			AbilityComp->ProcessAttributes(true);
 
-			// A expired (EndTime=3 <= t=4), B still live (EndTime=7 > t=4).
+			// A expired (EndTime=4 <= t=5), B still live (EndTime=8 > t=5).
 			TestEqual("100 + 15 = 115 (only B active)", AbilityComp->GetAttributeValueByTag(HealthTag), 115.f);
 
 			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
@@ -199,23 +201,34 @@ void FGMASDurationSpec::Define()
 	{
 		It("fires exactly once per interval over a given timespan", [this]()
 		{
-			// Interval=1s, +10 per tick.  Run from t=0 to t=3.5 → 3 complete periods.
+			// Interval=1s, +10 per tick.  Start at t=1.
+			// Simulate 7 half-second steps (t=1.5 … t=4.5).
+			// Periodic fires when TruncToInt(elapsed/1) crosses an integer boundary:
+			//   t=2.0 (elapsed=1.0): period 0→1 → 1 tick
+			//   t=3.0 (elapsed=2.0): period 1→2 → 1 tick
+			//   t=4.0 (elapsed=3.0): period 2→3 → 1 tick  → total 3 ticks
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 0.0;
+			AbilityComp->ActionTimer = 1.0;
 
 			FGMCAbilityEffectData Data;
-			Data.EffectType       = EGMASEffectType::Periodic;
-			Data.Duration         = 0.f;  // infinite
-			Data.PeriodicInterval = 1.f;
+			Data.EffectType          = EGMASEffectType::Periodic;
+			Data.Duration            = 0.f;  // infinite
+			Data.PeriodicInterval    = 1.f;
+			Data.bPeriodicFirstTick  = false;
+			Data.bServerAuth         = true;
 			Data.Modifiers.Add(MakeHealthMod(10.f));
 
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			// Advance to t=3.5 — three intervals have completed (t=1, t=2, t=3).
-			AbilityComp->ActionTimer = 3.5;
-			AbilityComp->TickActiveEffects(3.5f);
+			// Simulate 7 frames of 0.5 s each (t=1.5 … t=4.5).
+			constexpr float Step = 0.5f;
+			for (int i = 1; i <= 7; i++)
+			{
+				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->TickActiveEffects(Step);
+			}
 			AbilityComp->ProcessAttributes(true);
 
 			// 3 ticks × 10 = +30 permanently on RawValue.
@@ -227,27 +240,34 @@ void FGMASDurationSpec::Define()
 
 		It("fires the first tick immediately when bPeriodicFirstTick is true", [this]()
 		{
-			// bPeriodicFirstTick=true → fires at t=0 (on StartEffect) plus t=1.
-			// Run from t=0 to t=1.5 → 2 ticks total.
+			// bPeriodicFirstTick=true → first tick fires on apply at t=1 (+10).
+			// Then simulate 3 half-second steps (t=1.5 … t=2.5).
+			// Periodic fires again at t=2.0 (elapsed 0→1): total 2 ticks → +20.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 0.0;
+			AbilityComp->ActionTimer = 1.0;
 
 			FGMCAbilityEffectData Data;
 			Data.EffectType          = EGMASEffectType::Periodic;
 			Data.Duration            = 0.f;
 			Data.PeriodicInterval    = 1.f;
 			Data.bPeriodicFirstTick  = true;
+			Data.bServerAuth         = true;
 			Data.Modifiers.Add(MakeHealthMod(10.f));
 
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
+			AbilityComp->ApplyAbilityEffect(Effect, Data); // first tick fires here
 
-			AbilityComp->ActionTimer = 1.5;
-			AbilityComp->TickActiveEffects(1.5f);
+			// Simulate 3 frames of 0.5 s each (t=1.5 … t=2.5).
+			constexpr float Step = 0.5f;
+			for (int i = 1; i <= 3; i++)
+			{
+				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->TickActiveEffects(Step);
+			}
 			AbilityComp->ProcessAttributes(true);
 
-			// First-tick at t=0 + second at t=1 = 2 ticks × 10 = +20.
+			// First-tick at apply + one interval tick at t=2 = 2 ticks × 10 = +20.
 			TestNearlyEqual("RawValue = 120 (first-tick + one interval)",
 				AbilityComp->GetAttributeRawValue(HealthTag), 120.f, KINDA_SMALL_NUMBER);
 
@@ -256,26 +276,35 @@ void FGMASDurationSpec::Define()
 
 		It("periodic effect with finite duration stops firing after expiry", [this]()
 		{
-			// Interval=1s, Duration=2.5s → fires at t=1, t=2; expires at t=2.5.
-			// Check at t=10: only 2 ticks should have fired.
+			// StartT=1, Interval=1s, Duration=2.5s → EndTime=3.5.
+			// Simulate 5 half-second steps (t=1.5 … t=3.5).
+			// Periodic fires at t=2 (period 0→1) and t=3 (period 1→2) → 2 ticks.
+			// At t=3.5 ActionTimer >= EndTime → effect expires with 0 new ticks.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 0.0;
+			AbilityComp->ActionTimer = 1.0;
 
 			FGMCAbilityEffectData Data;
-			Data.EffectType       = EGMASEffectType::Periodic;
-			Data.Duration         = 2.5f;
-			Data.PeriodicInterval = 1.f;
+			Data.EffectType          = EGMASEffectType::Periodic;
+			Data.Duration            = 2.5f;
+			Data.PeriodicInterval    = 1.f;
+			Data.bPeriodicFirstTick  = false;
+			Data.bServerAuth         = true;
 			Data.Modifiers.Add(MakeHealthMod(10.f));
 
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			AbilityComp->ActionTimer = 10.0;
-			AbilityComp->TickActiveEffects(10.f);
+			// Simulate 5 frames of 0.5 s each (t=1.5 … t=3.5).
+			constexpr float Step = 0.5f;
+			for (int i = 1; i <= 5; i++)
+			{
+				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->TickActiveEffects(Step);
+			}
 			AbilityComp->ProcessAttributes(true);
 
-			// 2 ticks × 10 = +20 permanently; effect expired and removed.
+			// 2 ticks × 10 = +20 permanently; effect expired at EndTime=3.5 and removed.
 			TestNearlyEqual("RawValue = 120 (2 ticks before expiry)",
 				AbilityComp->GetAttributeRawValue(HealthTag), 120.f, KINDA_SMALL_NUMBER);
 			TestTrue("Effect removed after duration expiry",
