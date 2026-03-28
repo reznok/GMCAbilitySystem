@@ -79,7 +79,7 @@ protected:
 
 private:
 	// How often client sends heartbeats to server
-	float HeartbeatInterval = .2f;
+	float HeartbeatInterval = 1.f;
 
 	// Max time between heartbeats before server cancels task
 	// Aherys: previous value was 0.3f it's maybe a bit too low for harsh network conditions
