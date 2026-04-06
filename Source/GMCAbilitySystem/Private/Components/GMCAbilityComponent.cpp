@@ -138,7 +138,10 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	
 	// Caution if you override Ancillarytick, this value should wrap up the override.
 	bInAncillaryTick = true;
-	
+
+	// Drain any PredictedQueued operations buffered since the last tick.
+	DrainPendingPredictedOperations();
+
 	OnAncillaryTick.Broadcast(DeltaTime);
 
 	if (HasAuthority())
@@ -654,7 +657,9 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
-	
+	// Drain any PredictedQueued operations buffered since the last tick.
+	DrainPendingPredictedOperations();
+
 	// Same listen-server guard as GenAncillaryTick: skip client payload processing
 	// for the locally-controlled host pawn (no client data submitted to itself).
 	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledListenServerPawn())
@@ -709,6 +714,39 @@ void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
 		GetOwner()->SetActorLocation(TargetLocation);
 		bJustTeleported = false;
+	}
+}
+
+void UGMC_AbilitySystemComponent::DrainPendingPredictedOperations()
+{
+	if (PendingPredictedOperations.IsEmpty()) return;
+
+	// MoveTemp to avoid re-entrancy issues if processing triggers another PredictedQueued call
+	// (which would take the immediate path since we're now inside a tick).
+	TArray<FInstancedStruct> Ops = MoveTemp(PendingPredictedOperations);
+	PendingPredictedOperations.Reset();
+
+	for (const FInstancedStruct& OpData : Ops)
+	{
+		if (!OpData.IsValid()) continue;
+
+		if (OpData.GetScriptStruct() == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2ApplyEffectOperation& ApplyOp = OpData.Get<FGMASBoundQueueV2ApplyEffectOperation>();
+			UGMCAbilityEffect* Effect = DuplicateObject(ApplyOp.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+			ApplyAbilityEffect(Effect, ApplyOp.EffectData);
+		}
+		else if (OpData.GetScriptStruct() == FGMASBoundQueueV2RemoveEffectOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2RemoveEffectOperation& RemoveOp = OpData.Get<FGMASBoundQueueV2RemoveEffectOperation>();
+			for (const int Id : RemoveOp.EffectIDs)
+			{
+				if (ActiveEffects.Contains(Id))
+				{
+					RemoveActiveAbilityEffect(ActiveEffects[Id]);
+				}
+			}
+		}
 	}
 }
 
@@ -1661,7 +1699,27 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			return true;
 		}
 	case EGMCAbilityEffectQueueType::PredictedQueued:
-		return false;
+		{
+			if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
+			{
+				// Inside a movement tick — apply immediately (same as Predicted).
+				UGMCAbilityEffect* Effect = DuplicateObject(EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+				OutEffect = ApplyAbilityEffect(Effect, InitializationData);
+				if (OutEffect)
+				{
+					OutEffectId = OutEffect->EffectData.EffectID;
+				}
+			}
+			else
+			{
+				// Outside movement tick — buffer for processing at the next tick.
+				FGMASBoundQueueV2ApplyEffectOperation ApplyOp;
+				ApplyOp.EffectClass = EffectClass;
+				ApplyOp.EffectData = InitializationData;
+				PendingPredictedOperations.Add(FInstancedStruct::Make(ApplyOp));
+			}
+			return true;
+		}
 	case EGMCAbilityEffectQueueType::ServerAuthMove:
 	case EGMCAbilityEffectQueueType::ServerAuth:
 		{
@@ -1944,7 +2002,32 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				return true;
 			}
 		case EGMCAbilityEffectQueueType::PredictedQueued:
-			return false; // Stub — will be implemented in next step
+			{
+				if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
+				{
+					// Inside a movement tick — remove immediately.
+					TArray<UGMCAbilityEffect*> EffectsToRemove;
+					for (const int Id : Ids)
+					{
+						if (ActiveEffects.Contains(Id))
+						{
+							EffectsToRemove.Add(ActiveEffects[Id]);
+						}
+					}
+					for (UGMCAbilityEffect* Effect : EffectsToRemove)
+					{
+						RemoveActiveAbilityEffect(Effect);
+					}
+				}
+				else
+				{
+					// Outside movement tick — buffer for processing at the next tick.
+					FGMASBoundQueueV2RemoveEffectOperation RemoveOp;
+					RemoveOp.EffectIDs = Ids;
+					PendingPredictedOperations.Add(FInstancedStruct::Make(RemoveOp));
+				}
+				return true;
+			}
 		case EGMCAbilityEffectQueueType::ClientAuth:
 			return false;
 

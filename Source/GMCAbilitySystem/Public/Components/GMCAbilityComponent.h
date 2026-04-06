@@ -709,7 +709,16 @@ private:
 	TArray<FInstancedStruct> QueuedTaskData;
 	
 	FGMASBoundQueueV2 BoundQueueV2 = {};
-	// Events	
+
+	// Local buffer for PredictedQueued operations called outside of a movement tick.
+	// Both client and server maintain this independently — no replication needed.
+	TArray<FInstancedStruct> PendingPredictedOperations;
+
+	// Drains all buffered PredictedQueued operations. Called at the start of
+	// GenPredictionTick and GenAncillaryTick.
+	void DrainPendingPredictedOperations();
+
+	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
 	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
 

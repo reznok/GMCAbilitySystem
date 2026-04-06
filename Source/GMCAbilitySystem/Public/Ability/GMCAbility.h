@@ -237,7 +237,7 @@ public:
 	 * Should be set to false for actions that should not be replayed on mispredictions. i.e. firing a weapon
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
-	bool bActivateOnMovementTick = false; 
+	bool bActivateOnMovementTick = true; 
 
 	UFUNCTION()
 	void ServerConfirm();
