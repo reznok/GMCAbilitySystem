@@ -205,8 +205,8 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		EndEffect();
 	}
 
-	// query to maintain effect
-	if ( !EffectData.MustMaintainQuery.IsEmpty() && EffectData.MustMaintainQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
+	// query to maintain effect — end the effect when the query is no longer satisfied
+	if ( !EffectData.MustMaintainQuery.IsEmpty() && !EffectData.MustMaintainQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
 	{
 		EndEffect();
 	}
@@ -230,7 +230,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		{
 			
 			const float CurrentElapsedTime = OwnerAbilityComponent->ActionTimer -  EffectData.StartTime;
-			float PreviousElapsedTime = CurrentElapsedTime - OwnerAbilityComponent->GMCMovementComponent->GetMoveDeltaTime();
+			float PreviousElapsedTime = CurrentElapsedTime - DeltaTime;
 			PreviousElapsedTime = FMath::Max(PreviousElapsedTime, 0.f); // Ensure we don't go negative
 
 			int32 PreviousPeriod = FMath::TruncToInt(PreviousElapsedTime / EffectData.PeriodicInterval);

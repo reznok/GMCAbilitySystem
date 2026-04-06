@@ -255,12 +255,15 @@ public:
 	virtual void OnGameplayTaskActivated(UGameplayTask& Task) override;
 	virtual void OnGameplayTaskDeactivated(UGameplayTask& Task) override;
 
+	// Returns true if the server has confirmed this ability activation.
+	bool IsServerConfirmed() const { return bServerConfirmed; }
+
 protected:
 
 	// How long to wait for server to confirm ability before cancelling on client
 	UPROPERTY(AdvancedDisplay, EditDefaultsOnly, Category="GMCAbilitySystem")
 	float ServerConfirmTimeout = 2.f;
-	
+
 private:
 
 	void FinishEndAbility();

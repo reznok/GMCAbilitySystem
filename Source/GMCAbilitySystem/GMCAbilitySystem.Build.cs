@@ -54,5 +54,8 @@ public class GMCAbilitySystem : ModuleRules
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Attributes"));
 		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
+		// Expose test helper headers (e.g. UGMAS_TestDelayAbility) so Layer-3
+		// functional tests compiled into the game module can include them.
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Private/Tests"));
 	}
 }
