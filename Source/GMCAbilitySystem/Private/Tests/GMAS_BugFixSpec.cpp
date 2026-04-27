@@ -300,6 +300,11 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->GetActiveEffectIDsForTest().Empty();
 			AbilityComp->GetActiveEffectIDsForTest().Add(IdA); // server still owns A
 
+			// Advance ActionTimer past ClientGraceTime (Bug #4 grace) so EffB qualifies
+			// for the wipe path. Without this, the grace window protects EffB from being
+			// removed on the same tick it was applied.
+			AbilityComp->ActionTimer = 5.0;
+
 			AbilityComp->CheckRemovedEffectsForTest();
 
 			// EffA: Pending → skipped (continue), must still be in ActiveEffects.
@@ -768,8 +773,7 @@ void FGMASBugFixSpec::Define()
 
 		It("Effect with default ClientGraceTime (1.0) survives a same-tick CheckRemovedEffects", [this]()
 		{
-			AbilityComp->ActionTimer = 0.0;
-
+			// Harness default ActionTimer = 1.0 from BeforeEach. Apply at that timestamp.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -778,12 +782,11 @@ void FGMASBugFixSpec::Define()
 			Data.Duration        = 0.f;
 			Data.ClientGraceTime = 1.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
+			// ClientEffectApplicationTime = 1.0 ; ActionTimer = 1.0 → TimeSinceApply = 0 < 1.0 → grace active
 
 			const int EffectID = Effect->EffectData.EffectID;
 			TestTrue("Effect present in ActiveEffects", AbilityComp->GetActiveEffects().Contains(EffectID));
 
-			// Force the conditions that would normally trigger a wipe:
-			// the effect has a "Validated" answer state AND is missing from ActiveEffectIDs.
 			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
 			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
 
@@ -797,8 +800,6 @@ void FGMASBugFixSpec::Define()
 
 		It("Effect is wiped once ActionTimer advances past ClientGraceTime", [this]()
 		{
-			AbilityComp->ActionTimer = 0.0;
-
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -812,7 +813,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
 			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
 
-			// Push past the grace window.
+			// Push past the grace window (apply was at t=1.0, grace=1.0, so t=2.5 is past).
 			AbilityComp->ActionTimer = 2.5;
 			AbilityComp->CheckRemovedEffectsForTest();
 
@@ -824,8 +825,6 @@ void FGMASBugFixSpec::Define()
 
 		It("Effect with ClientGraceTime=0 is wiped immediately on missing ActiveEffectID", [this]()
 		{
-			AbilityComp->ActionTimer = 0.0;
-
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -849,8 +848,6 @@ void FGMASBugFixSpec::Define()
 
 		It("Effect with Pending state is skipped before the grace check (V1 invariant preserved)", [this]()
 		{
-			AbilityComp->ActionTimer = 0.0;
-
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
