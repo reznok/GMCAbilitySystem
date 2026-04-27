@@ -31,14 +31,18 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		InputBindingHandle = Binding.GetHandle();
 		
 		// Check that the value isn't currently false.
-		if (bShouldCheckForReleaseDuringActivation)
+		// Only the locally-controlled client (or listen server host) can read the real key state.
+		// On a dedicated server / remote pawn, PC->GetLocalPlayer() is null, the magnitude check
+		// silently sees 0, and we'd queue a Progress payload server-side that ends the task before
+		// the client's release ever arrives — the task would never be "confirmed" by the server.
+		if (bShouldCheckForReleaseDuringActivation && IsClientOrRemoteListenServerPawn())
 		{
 			FInputActionValue ActionValue = FInputActionValue();
 			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
 			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer())) {
 				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
 			}
-			
+
 			if (ActionValue.GetMagnitude() == 0)
 			{
 				UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_WaitForInputKeyRelease::Activate: EndOnStart!"));
