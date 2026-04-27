@@ -105,6 +105,11 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 				const float RawValue = SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeRawValue(Attribute.Tag);
 				return TargetValue * RawValue * DeltaTime;
 			}
+		case EModifierType::Set:
+		case EModifierType::SetReplace:
+			// Absolute value, no DeltaTime scaling. The two Set variants share the same payload (a target value);
+			// they differ only in how FAttribute::CalculateValue treats the surrounding Add modifiers.
+			return TargetValue;
 	}
 
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Modifier Type in FAttribute::AddModifier for Attribute %s, operator %d"), *Attribute.Tag.ToString(), static_cast<int32>(Op));

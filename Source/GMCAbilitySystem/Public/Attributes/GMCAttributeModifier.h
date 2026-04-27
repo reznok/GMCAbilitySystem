@@ -30,6 +30,13 @@ enum class EModifierType : uint8
 	AddPercentageMissing UMETA(DisplayName = "% [Add Percentage Of Missing Value]"),
 	// Add to Attribute the Percentage of an Attribute Raw Value (Raw Value is the attribute value without any temporal modifiers)
 	AddPercentageOfAttributeRawValue UMETA(DisplayName = "% [Add Percentage Of Attribute Raw Value"),
+	// Set the attribute to an absolute value. Layered: any active Add modifiers (past or future) keep stacking
+	// on top of the Set base. The most recent Set wins (tie-broken by ApplicationIndex). Replay-safe via the
+	// existing PurgeTemporalModifier path: Set entries are time-tagged and purged on rollback like any other.
+	Set UMETA(DisplayName = "= [Set] (base value, prior Adds keep stacking)"),
+	// Set the attribute to an absolute value AND ignore any Add modifiers placed before this Set's ActionTimer.
+	// Adds placed AFTER the Set still stack on top. Use for "reset state" semantics (revive, mode override).
+	SetReplace UMETA(DisplayName = "= [Set Replace] (clears prior Add modifiers)"),
 };
 
 UENUM(BlueprintType)

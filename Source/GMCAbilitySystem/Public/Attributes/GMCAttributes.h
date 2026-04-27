@@ -21,6 +21,20 @@ struct FModifierHistoryEntry
 	float Value = 0.f;
 };
 
+// How a temporal modifier participates in CalculateValue. Stored alongside the entry so the value pipeline
+// can layer Sets and Adds in the right order without re-querying the source modifier's Op every frame.
+UENUM()
+enum class EAttributeModifierKind : uint8
+{
+	// Standard cumulative delta. Stacks with all other Adds. Compatible with the original BaseValue + Σdeltas model.
+	Add,
+	// Absolute value override. Wins over RawValue as the base layer. Active Add modifiers (any timestamp) stack on top.
+	Set,
+	// Absolute value override. Wins over RawValue as the base layer. Active Adds placed BEFORE this entry's
+	// ActionTimer are filtered out — only Adds placed afterwards stack on top. Used for "reset state" semantics.
+	SetReplace,
+};
+
 USTRUCT(Blueprintable)
 struct FAttributeTemporaryModifier
 {
@@ -31,7 +45,7 @@ struct FAttributeTemporaryModifier
 	int ApplicationIndex = 0;
 
 	UPROPERTY()
-	// The value that we would like to apply
+	// The value that we would like to apply (delta for Add, absolute target for Set / SetReplace)
 	float Value = 0.f;
 
 	UPROPERTY()
@@ -40,6 +54,9 @@ struct FAttributeTemporaryModifier
 	// The effect that applied this modifier
 	UPROPERTY()
 	TWeakObjectPtr<UGMCAbilityEffect> InstigatorEffect = nullptr;
+
+	UPROPERTY()
+	EAttributeModifierKind Kind = EAttributeModifierKind::Add;
 };
 
 USTRUCT(BlueprintType)

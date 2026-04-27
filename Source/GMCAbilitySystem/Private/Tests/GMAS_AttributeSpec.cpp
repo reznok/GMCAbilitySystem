@@ -339,6 +339,225 @@ void FGMASAttributeSpec::Define()
 			TestEqual("Permanent modifier survives purge", Attr.Value, 150.f);
 		});
 	});
+
+	Describe("Set / SetReplace modifier (temporal layer)", [this]()
+	{
+		// Inline helper: build a temporal modifier with arbitrary op and value.
+		auto MakeSetMod = [](UGMCAbilityEffect* Effect, EModifierType Op, float TargetValue, int AppIdx, double InActionTimer)
+		{
+			FGMCAttributeModifier Mod;
+			Mod.Op = Op;
+			Mod.ValueType = EGMCAttributeModifierType::AMT_Value;
+			Mod.ModifierValue = TargetValue;
+			Mod.DeltaTime = 1.f;
+			Mod.bRegisterInHistory = true;
+			Mod.SourceAbilityEffect = Effect;
+			Mod.ApplicationIndex = AppIdx;
+			Mod.ActionTimer = InActionTimer;
+			return Mod;
+		};
+
+		It("Set alone overrides RawValue and ignores InitialValue", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 1, 1.0));
+			Attr.CalculateValue();
+
+			TestEqual("Set wins over base of 100", Attr.Value, 50.f);
+			TestEqual("RawValue stays untouched at 100", Attr.RawValue, 100.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Set Layered: Add placed BEFORE the Set still stacks on top", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));         // Add +10 at t=1
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 2.0));  // Set =50 at t=2
+			Attr.CalculateValue();
+
+			TestEqual("Set base 50 + Add 10 = 60 (Layered)", Attr.Value, 60.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Set Layered: Add placed AFTER the Set also stacks", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 1, 1.0));  // Set =50 at t=1
+			Attr.AddModifier(MakeTemporalMod(Effect, 5.f, 2, 2.0));                  // Add +5 at t=2
+			Attr.CalculateValue();
+
+			TestEqual("Set base 50 + later Add 5 = 55", Attr.Value, 55.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("SetReplace: Add placed BEFORE the SetReplace is filtered out", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));                       // Add +10 at t=1
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::SetReplace, 50.f, 2, 2.0)); // SetReplace =50 at t=2
+			Attr.CalculateValue();
+
+			TestEqual("SetReplace 50 ignores prior Add 10", Attr.Value, 50.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("SetReplace: Add placed AFTER the SetReplace stacks normally", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::SetReplace, 50.f, 1, 1.0)); // SetReplace =50 at t=1
+			Attr.AddModifier(MakeTemporalMod(Effect, 7.f, 2, 2.0));                        // Add +7 at t=2
+			Attr.CalculateValue();
+
+			TestEqual("SetReplace 50 + later Add 7 = 57", Attr.Value, 57.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Two Sets: most recent ActionTimer wins", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 30.f, 1, 1.0));  // Set =30 at t=1
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 80.f, 2, 2.0));  // Set =80 at t=2
+			Attr.CalculateValue();
+
+			TestEqual("Most recent Set (80) wins", Attr.Value, 80.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Two Sets at same ActionTimer: highest ApplicationIndex wins (deterministic tie-break)", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 30.f, 1, 5.0));
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 80.f, 2, 5.0));
+			Attr.CalculateValue();
+
+			TestEqual("Same ActionTimer, ApplicationIndex 2 > 1, so 80 wins", Attr.Value, 80.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Set respects the static clamp", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(50.f);
+			Attr.Clamp.Min = 0.f;
+			Attr.Clamp.Max = 100.f;
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 999.f, 1, 1.0));
+			Attr.CalculateValue();
+
+			TestEqual("Set 999 clamped to Max=100", Attr.Value, 100.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("RemoveTemporalModifier on the Set restores the RawValue base", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 2.0));
+			Attr.CalculateValue();
+			TestEqual("With Set: 50 + 10 = 60", Attr.Value, 60.f);
+
+			Attr.RemoveTemporalModifier(2, Effect);  // remove the Set
+			Attr.CalculateValue();
+			TestEqual("Without Set: RawValue 100 + 10 = 110", Attr.Value, 110.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("PurgeTemporalModifier on a future Set rebuilds correctly (replay safety)", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+			Attr.bIsGMCBound = true;
+			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));               // Add +10 at t=1
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 5.0)); // Set =50 at t=5
+			Attr.CalculateValue();
+			TestEqual("Pre-rollback: 50 + 10 = 60", Attr.Value, 60.f);
+
+			// GMC rollback to t=2 — the future Set@t=5 must be purged.
+			Attr.PurgeTemporalModifier(2.0);
+			Attr.CalculateValue();
+			TestEqual("After rollback: only Add +10 active, base = RawValue 100, Value = 110", Attr.Value, 110.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Permanent Set (bRegisterInHistory=false) overwrites RawValue absolutely", [this]()
+		{
+			FAttribute Attr = MakeAttr(100.f);
+
+			FGMCAttributeModifier Mod;
+			Mod.Op = EModifierType::Set;
+			Mod.ValueType = EGMCAttributeModifierType::AMT_Value;
+			Mod.ModifierValue = 250.f;
+			Mod.DeltaTime = 1.f;
+			Mod.bRegisterInHistory = false;
+			Attr.AddModifier(Mod);
+			Attr.CalculateValue();
+
+			TestEqual("Permanent Set overrides RawValue to 250", Attr.RawValue, 250.f);
+			TestEqual("Value reflects new RawValue", Attr.Value, 250.f);
+		});
+
+		It("Set + ApplyAbilityAttributeModifier-style sequence rebuilds correctly across CalculateValue calls", [this, MakeSetMod]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute Attr = MakeAttr(100.f);
+
+			// Phase 1: just an Add
+			Attr.AddModifier(MakeTemporalMod(Effect, 20.f, 1, 1.0));
+			Attr.CalculateValue();
+			TestEqual("Phase 1: 100 + 20 = 120", Attr.Value, 120.f);
+
+			// Phase 2: add a Set
+			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 60.f, 2, 2.0));
+			Attr.CalculateValue();
+			TestEqual("Phase 2 (Layered): 60 + 20 = 80", Attr.Value, 80.f);
+
+			// Phase 3: add another Add later in time
+			Attr.AddModifier(MakeTemporalMod(Effect, 5.f, 3, 3.0));
+			Attr.CalculateValue();
+			TestEqual("Phase 3: 60 + 20 + 5 = 85", Attr.Value, 85.f);
+
+			Effect->RemoveFromRoot();
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER

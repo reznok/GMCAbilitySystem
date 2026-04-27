@@ -4,16 +4,34 @@
 
 void FAttribute::AddModifier(const FGMCAttributeModifier& PendingModifier) const
 {
-	
 	const float ModifierValue = PendingModifier.CalculateModifierValue(*this);
-	
+
+	// Map the modifier op to the temporal-entry kind. Set and SetReplace are absolute overrides; everything else
+	// is treated as an additive contribution at the temporal layer.
+	const bool bIsSet        = PendingModifier.Op == EModifierType::Set;
+	const bool bIsSetReplace = PendingModifier.Op == EModifierType::SetReplace;
+	const EAttributeModifierKind Kind = bIsSet        ? EAttributeModifierKind::Set
+	                                  : bIsSetReplace ? EAttributeModifierKind::SetReplace
+	                                                  : EAttributeModifierKind::Add;
+
 	if (PendingModifier.bRegisterInHistory)
 	{
-		ValueTemporalModifiers.Add(FAttributeTemporaryModifier(PendingModifier.ApplicationIndex, ModifierValue, PendingModifier.ActionTimer, PendingModifier.SourceAbilityEffect));
+		FAttributeTemporaryModifier Entry(PendingModifier.ApplicationIndex, ModifierValue, PendingModifier.ActionTimer, PendingModifier.SourceAbilityEffect);
+		Entry.Kind = Kind;
+		ValueTemporalModifiers.Add(Entry);
 	}
 	else
 	{
-		RawValue = Clamp.ClampValue(RawValue + ModifierValue);
+		// Permanent path: Set/SetReplace overwrite RawValue absolutely; Add accumulates.
+		// Permanent Sets are NOT replay-safe by construction (same caveat as permanent Adds today).
+		if (bIsSet || bIsSetReplace)
+		{
+			RawValue = Clamp.ClampValue(ModifierValue);
+		}
+		else
+		{
+			RawValue = Clamp.ClampValue(RawValue + ModifierValue);
+		}
 	}
 
 	bIsDirty = true;
@@ -21,21 +39,47 @@ void FAttribute::AddModifier(const FGMCAttributeModifier& PendingModifier) const
 
 void FAttribute::CalculateValue() const
 {
-
-	Value = Clamp.ClampValue(RawValue);
-	
-	for (auto& Mod : ValueTemporalModifiers)
+	// Pass 1: find the winning Set/SetReplace entry (most recent ActionTimer; tie-break by ApplicationIndex).
+	// Walking the entire array once instead of two separate loops keeps the cost at O(n) vs. O(2n).
+	const FAttributeTemporaryModifier* WinningSet = nullptr;
+	for (const FAttributeTemporaryModifier& Mod : ValueTemporalModifiers)
 	{
-		if (Mod.InstigatorEffect.IsValid())
+		if (Mod.Kind == EAttributeModifierKind::Add) continue;
+		if (!Mod.InstigatorEffect.IsValid())
 		{
-			Value += Mod.Value;
-			Value = Clamp.ClampValue(Value);
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphelin Set Modifier found in FAttribute::CalculateValue"));
+			checkNoEntry();
+			continue;
 		}
-		else
+		if (!WinningSet
+			|| Mod.ActionTimer > WinningSet->ActionTimer
+			|| (Mod.ActionTimer == WinningSet->ActionTimer && Mod.ApplicationIndex > WinningSet->ApplicationIndex))
+		{
+			WinningSet = &Mod;
+		}
+	}
+
+	// Pass 2: base layer. A winning Set hides RawValue entirely; otherwise we start from RawValue.
+	Value = WinningSet ? Clamp.ClampValue(WinningSet->Value)
+	                   : Clamp.ClampValue(RawValue);
+
+	// Pass 3: stack the active Add modifiers. SetReplace mode filters out Adds older than the Set's ActionTimer
+	// — the rationale being "the Set wiped the slate clean, only modifiers placed after the Set survive".
+	const bool   bReplaceMode = WinningSet && WinningSet->Kind == EAttributeModifierKind::SetReplace;
+	const double SetTime      = WinningSet ? WinningSet->ActionTimer : -DBL_MAX;
+
+	for (const FAttributeTemporaryModifier& Mod : ValueTemporalModifiers)
+	{
+		if (Mod.Kind != EAttributeModifierKind::Add) continue;
+		if (!Mod.InstigatorEffect.IsValid())
 		{
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphelin Attribute Modifier found in FAttribute::CalculateValue"));
 			checkNoEntry();
+			continue;
 		}
+		if (bReplaceMode && Mod.ActionTimer < SetTime) continue;
+		Value += Mod.Value;
+		Value = Clamp.ClampValue(Value);
 	}
 
 	bIsDirty = false;

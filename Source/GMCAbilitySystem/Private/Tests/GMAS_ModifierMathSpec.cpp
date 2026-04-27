@@ -264,6 +264,42 @@ void FGMASModifierMathSpec::Define()
 			TestEqual("100% of Min=0 is 0", Mod.CalculateModifierValue(Attr), 0.f);
 		});
 	});
+
+	Describe("Set / SetReplace", [this]()
+	{
+		It("Set returns the absolute target value verbatim, ignoring DeltaTime", [this]()
+		{
+			const FAttribute Attr = MakeAttr(100.f);
+			const FGMCAttributeModifier Mod = MakeMod(EModifierType::Set, 42.f, 1.f / 60.f);
+			TestEqual("Set is absolute, DeltaTime irrelevant", Mod.CalculateModifierValue(Attr), 42.f);
+		});
+
+		It("Set is unaffected by Attribute's current Value or InitialValue", [this]()
+		{
+			FAttribute Attr = MakeAttr(100.f);
+			FGMCAttributeModifier Drain = MakeMod(EModifierType::Add, -75.f);
+			Drain.bRegisterInHistory = false;
+			Attr.AddModifier(Drain);
+			Attr.CalculateValue(); // Value is now 25, RawValue is 25
+
+			const FGMCAttributeModifier SetMod = MakeMod(EModifierType::Set, 80.f);
+			TestEqual("Set returns 80 regardless of attribute state", SetMod.CalculateModifierValue(Attr), 80.f);
+		});
+
+		It("SetReplace returns the absolute target value (same payload as Set)", [this]()
+		{
+			const FAttribute Attr = MakeAttr(100.f);
+			const FGMCAttributeModifier Mod = MakeMod(EModifierType::SetReplace, 17.f);
+			TestEqual("SetReplace returns 17", Mod.CalculateModifierValue(Attr), 17.f);
+		});
+
+		It("Set with negative target value works (no scaling, no abs)", [this]()
+		{
+			const FAttribute Attr = MakeAttr(100.f);
+			const FGMCAttributeModifier Mod = MakeMod(EModifierType::Set, -50.f);
+			TestEqual("Set -50 returns -50", Mod.CalculateModifierValue(Attr), -50.f);
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER
