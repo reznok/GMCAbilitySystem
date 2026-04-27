@@ -1100,7 +1100,10 @@ void UGMC_AbilitySystemComponent::RPCClientEndEffect_Implementation(int EffectID
 {
 	if (ActiveEffects.Contains(EffectID))
 	{
-		ActiveEffects[EffectID]->EndEffect();
+		// Route through RemoveActiveAbilityEffect so the bilateral defer (Bug #3) applies here too.
+		// Server's local RemoveActiveAbilityEffect armed its own defer; client must arm a matching one
+		// to keep per-tick application counts symmetric on Ticking / Periodic effects.
+		RemoveActiveAbilityEffect(ActiveEffects[EffectID]);
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Effect: %d"), EffectID);
 	}
 }

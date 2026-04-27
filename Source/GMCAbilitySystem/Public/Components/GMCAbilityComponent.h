@@ -619,7 +619,7 @@ protected:
 	UFUNCTION(Client, Reliable)
 	void RPCOnServerOperationAdded(int OperationID, const FInstancedStruct Operation);
 
-	UFUNCTION(BlueprintCallable)
+	UFUNCTION(BlueprintCallable, Category="GMAS")
 	void BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffect> Effect);
 
 	UFUNCTION()
