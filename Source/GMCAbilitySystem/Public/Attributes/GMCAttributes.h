@@ -127,7 +127,14 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 protected:
 
-		UPROPERTY()
+		// Local cache of temporal contributions to Value. Deliberately NOT replicated:
+		//  - For bound attributes (GMC-driven), each side rebuilds the list from its own Effect ticks during
+		//    PredictionTick / replay, and PurgeTemporalModifier(ActionTimer) cleans up rolled-back entries.
+		//  - For unbound attributes, the client never mutates this list (no prediction → bIsDirty stays false),
+		//    so its content on the client side is always empty. The server's Value is the only thing the client
+		//    consumes, and that arrives via the replicated UPROPERTY Value field on FAttribute itself.
+		// Replicating this array used to send up to 25 bytes per active modifier per delta update on every
+		// FAttribute change in UnBoundAttributes — pure waste for state nobody on the client reads.
 		mutable TArray<FAttributeTemporaryModifier> ValueTemporalModifiers;
 
 		mutable bool bIsDirty = false;
