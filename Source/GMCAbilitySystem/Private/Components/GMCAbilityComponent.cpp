@@ -1847,6 +1847,22 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
 	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
+
+	// Anti-drift defer: for Ticking effects on bound attributes (e.g. Stamina via SprintCost), the side that ends
+	// the effect later accumulates extra drain ticks. We defer EndEffect() on both client and server for the same
+	// logical move tick window (ClientGraceTime), so the per-tick drain count stays identical on both sides.
+	const bool bIsNetworked    = GetNetMode() != NM_Standalone;
+	const bool bIsTicking      = Effect->EffectData.EffectType == EGMASEffectType::Ticking;
+	const bool bHasGracePeriod = Effect->EffectData.ClientGraceTime > 0.f;
+
+	if (bIsNetworked && bIsTicking && bHasGracePeriod
+		&& !Effect->bPendingPredictedEnd && !Effect->bCompleted)
+	{
+		Effect->bPendingPredictedEnd     = true;
+		Effect->PendingPredictedEndTimer = Effect->EffectData.ClientGraceTime;
+		return;
+	}
+
 	Effect->EndEffect();
 }
 

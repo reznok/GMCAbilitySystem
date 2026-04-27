@@ -190,7 +190,19 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
-	
+	// Consume the bilateral predicted-end defer. Both client and server run this on the same logical move tick,
+	// so they reach EndEffect() simultaneously after ClientGraceTime — no Apply/Remove drain asymmetry.
+	if (bPendingPredictedEnd)
+	{
+		PendingPredictedEndTimer -= DeltaTime;
+		if (PendingPredictedEndTimer <= 0.f)
+		{
+			bPendingPredictedEnd = false;
+			EndEffect();
+			return;
+		}
+	}
+
 	if (bCompleted) {
 		return;
 	}

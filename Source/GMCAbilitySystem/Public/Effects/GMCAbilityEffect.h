@@ -277,6 +277,11 @@ public:
 
 	bool bCompleted;
 
+	// Anti-drift on Predicted Remove for Ticking effects: defers EndEffect() bilaterally so client and server
+	// run the same number of drain ticks before the effect actually ends. See RemoveActiveAbilityEffect.
+	bool bPendingPredictedEnd { false };
+	float PendingPredictedEndTimer { 0.f };
+
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.
 	float ClientEffectApplicationTime;
