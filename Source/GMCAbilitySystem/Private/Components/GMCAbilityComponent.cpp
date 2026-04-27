@@ -1058,6 +1058,17 @@ void UGMC_AbilitySystemComponent::CheckRemovedEffects()
 		// it means the server removed it
 		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending) { continue; }
 
+		// Replication grace: server-initiated effects (RPC-pushed via RPCOnServerOperationAdded) auto-validate
+		// the moment they arrive on the client, but ActiveEffectIDs is DOREPLIFETIME-driven and lags ~1 RTT
+		// behind. Without this guard we'd wipe the freshly applied effect on the same tick, before the replicated
+		// list catches up — see "Recovery wipes itself" symptom (continuous chain replay on bound attributes).
+		if (Effect.Value)
+		{
+			const float TimeSinceApply         = ActionTimer - Effect.Value->ClientEffectApplicationTime;
+			const float ReplicationGracePeriod = Effect.Value->EffectData.ClientGraceTime;
+			if (TimeSinceApply < ReplicationGracePeriod) { continue; }
+		}
+
 		// If the server's replicated effect list no longer contains this effect, remove it locally
 		if (!ActiveEffectIDs.Contains(Effect.Key))
 		{
