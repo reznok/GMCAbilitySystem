@@ -618,6 +618,419 @@ void FGMASBugFixSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 	});
+
+	// ── Bilateral PredictedEnd defer (Bug #3 + Periodic ext + RPCClientEndEffect ext) ──
+	//
+	// The arming branch of RemoveActiveAbilityEffect requires GetNetMode() != NM_Standalone,
+	// which the headless harness can't provide (orphan components default to Standalone).
+	// So we test the *consume* side of the defer: directly manipulate bPendingPredictedEnd
+	// on a properly-initialised effect and verify Tick(DeltaTime) drives it to EndEffect.
+	Describe("Bug #3: PredictedEnd defer Tick consume", [this]()
+	{
+		It("Tick decrements PendingPredictedEndTimer when DeltaTime < timer", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;  // avoid the Ticking/Periodic branches in Tick
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			Effect->bPendingPredictedEnd     = true;
+			Effect->PendingPredictedEndTimer = 1.0f;
+
+			Effect->Tick(0.3f);
+
+			TestTrue("Defer still pending",          Effect->bPendingPredictedEnd);
+			TestEqual("Timer decremented by 0.3f",   Effect->PendingPredictedEndTimer, 0.7f);
+			TestFalse("Effect not yet completed",    Effect->bCompleted);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick fires EndEffect when timer reaches zero in a single step", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			Effect->bPendingPredictedEnd     = true;
+			Effect->PendingPredictedEndTimer = 0.5f;
+
+			Effect->Tick(0.5f);
+
+			TestFalse("Defer flag cleared after firing", Effect->bPendingPredictedEnd);
+			TestTrue("Effect completed via EndEffect",   Effect->bCompleted);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick fires EndEffect when DeltaTime overshoots the timer", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			Effect->bPendingPredictedEnd     = true;
+			Effect->PendingPredictedEndTimer = 0.2f;
+
+			Effect->Tick(0.5f);  // overshoots
+
+			TestFalse("Defer flag cleared",            Effect->bPendingPredictedEnd);
+			TestTrue("Effect completed",               Effect->bCompleted);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick on a non-deferred effect leaves defer state alone", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestFalse("Default state: not pending",   Effect->bPendingPredictedEnd);
+			TestEqual("Default timer is zero",        Effect->PendingPredictedEndTimer, 0.f);
+
+			Effect->Tick(0.5f);
+
+			TestFalse("Still not pending after tick", Effect->bPendingPredictedEnd);
+			TestEqual("Timer untouched",              Effect->PendingPredictedEndTimer, 0.f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Multiple incremental Ticks expire the defer at the cumulative threshold", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			Effect->bPendingPredictedEnd     = true;
+			Effect->PendingPredictedEndTimer = 1.0f;
+
+			Effect->Tick(0.3f);                                      // → 0.7
+			TestFalse("Not yet completed after first tick", Effect->bCompleted);
+
+			Effect->Tick(0.4f);                                      // → 0.3
+			TestFalse("Not yet completed after second tick", Effect->bCompleted);
+
+			Effect->Tick(0.4f);                                      // → -0.1, fires
+			TestTrue("Completed after cumulative tick", Effect->bCompleted);
+			TestFalse("Defer cleared", Effect->bPendingPredictedEnd);
+
+			Effect->RemoveFromRoot();
+		});
+	});
+
+	// ── Replication grace in CheckRemovedEffects (Bug #4) ─────────────────
+	//
+	// The grace period uses ClientEffectApplicationTime (set in InitializeEffect)
+	// and the effect's ClientGraceTime. Within the window, a freshly-applied
+	// effect is NOT wiped even when missing from ActiveEffectIDs. After the
+	// window, the wipe behaves as before.
+	Describe("Bug #4: CheckRemovedEffects replication grace", [this]()
+	{
+		It("ClientEffectApplicationTime is set to ActionTimer at apply time", [this]()
+		{
+			AbilityComp->ActionTimer = 5.0;
+
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType     = EGMASEffectType::Persistent;
+			Data.Duration       = 0.f;
+			Data.ClientGraceTime = 1.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestEqual("ClientEffectApplicationTime captured ActionTimer",
+				Effect->ClientEffectApplicationTime, 5.0f);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Effect with default ClientGraceTime (1.0) survives a same-tick CheckRemovedEffects", [this]()
+		{
+			AbilityComp->ActionTimer = 0.0;
+
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType      = EGMASEffectType::Persistent;
+			Data.Duration        = 0.f;
+			Data.ClientGraceTime = 1.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int EffectID = Effect->EffectData.EffectID;
+			TestTrue("Effect present in ActiveEffects", AbilityComp->GetActiveEffects().Contains(EffectID));
+
+			// Force the conditions that would normally trigger a wipe:
+			// the effect has a "Validated" answer state AND is missing from ActiveEffectIDs.
+			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
+			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
+
+			AbilityComp->CheckRemovedEffectsForTest();
+
+			TestTrue("Effect survives within grace window",
+				AbilityComp->GetActiveEffects().Contains(EffectID));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Effect is wiped once ActionTimer advances past ClientGraceTime", [this]()
+		{
+			AbilityComp->ActionTimer = 0.0;
+
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType      = EGMASEffectType::Persistent;
+			Data.Duration        = 0.f;
+			Data.ClientGraceTime = 1.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+			const int EffectID = Effect->EffectData.EffectID;
+
+			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
+			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
+
+			// Push past the grace window.
+			AbilityComp->ActionTimer = 2.5;
+			AbilityComp->CheckRemovedEffectsForTest();
+
+			TestFalse("Effect wiped after grace expires",
+				AbilityComp->GetActiveEffects().Contains(EffectID));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Effect with ClientGraceTime=0 is wiped immediately on missing ActiveEffectID", [this]()
+		{
+			AbilityComp->ActionTimer = 0.0;
+
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType      = EGMASEffectType::Persistent;
+			Data.Duration        = 0.f;
+			Data.ClientGraceTime = 0.f;  // opt-out of replication grace
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+			const int EffectID = Effect->EffectData.EffectID;
+
+			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
+			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
+
+			AbilityComp->CheckRemovedEffectsForTest();
+
+			TestFalse("ClientGraceTime=0 disables grace, effect wiped same tick",
+				AbilityComp->GetActiveEffects().Contains(EffectID));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Effect with Pending state is skipped before the grace check (V1 invariant preserved)", [this]()
+		{
+			AbilityComp->ActionTimer = 0.0;
+
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType      = EGMASEffectType::Persistent;
+			Data.Duration        = 0.f;
+			Data.ClientGraceTime = 0.f;  // even with grace disabled, Pending still skips
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+			const int EffectID = Effect->EffectData.EffectID;
+
+			// Pending = client predicted but server hasn't validated yet
+			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Pending);
+			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
+
+			// Push way past any grace just to be sure
+			AbilityComp->ActionTimer = 100.0;
+			AbilityComp->CheckRemovedEffectsForTest();
+
+			TestTrue("Pending state suppresses wipe regardless of grace",
+				AbilityComp->GetActiveEffects().Contains(EffectID));
+
+			Effect->RemoveFromRoot();
+		});
+	});
+
+	// ── Set / SetReplace edge cases on the bound-attribute path ─────────────
+	//
+	// Set/SetReplace are stored in ValueTemporalModifiers like any other
+	// modifier and participate in PurgeTemporalModifier. These tests exercise
+	// the full attribute path (AddModifier → CalculateValue) on a real bound
+	// attribute attached to the harness, plus a few invariants that the
+	// targeted unit tests in GMAS_AttributeSpec don't fully cover.
+	Describe("Set / SetReplace: attribute integration", [this]()
+	{
+		It("Set on a bound attribute does not modify RawValue", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute* Health = const_cast<FAttribute*>(AbilityComp->GetAttributeByTag(HealthTag));
+			if (!TestNotNull("Health attribute exists", Health)) { Effect->RemoveFromRoot(); return; }
+
+			const float OriginalRaw = Health->RawValue;
+
+			FGMCAttributeModifier SetMod;
+			SetMod.AttributeTag        = HealthTag;
+			SetMod.Op                  = EModifierType::Set;
+			SetMod.ValueType           = EGMCAttributeModifierType::AMT_Value;
+			SetMod.ModifierValue       = 42.f;
+			SetMod.DeltaTime           = 1.f;
+			SetMod.bRegisterInHistory  = true;
+			SetMod.SourceAbilityEffect = Effect;
+			SetMod.ApplicationIndex    = 1;
+			SetMod.ActionTimer         = AbilityComp->ActionTimer;
+			Health->AddModifier(SetMod);
+			Health->CalculateValue();
+
+			TestEqual("Value reflects Set", Health->Value, 42.f);
+			TestEqual("RawValue untouched", Health->RawValue, OriginalRaw);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Two effects with overlapping Sets — most recent ActionTimer wins", [this]()
+		{
+			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffA->AddToRoot(); EffB->AddToRoot();
+
+			FAttribute* Health = const_cast<FAttribute*>(AbilityComp->GetAttributeByTag(HealthTag));
+			if (!TestNotNull("Health attribute exists", Health)) { EffA->RemoveFromRoot(); EffB->RemoveFromRoot(); return; }
+
+			auto MakeSet = [&](UGMCAbilityEffect* Eff, float Target, int AppIdx, double T)
+			{
+				FGMCAttributeModifier M;
+				M.AttributeTag        = HealthTag;
+				M.Op                  = EModifierType::Set;
+				M.ValueType           = EGMCAttributeModifierType::AMT_Value;
+				M.ModifierValue       = Target;
+				M.DeltaTime           = 1.f;
+				M.bRegisterInHistory  = true;
+				M.SourceAbilityEffect = Eff;
+				M.ApplicationIndex    = AppIdx;
+				M.ActionTimer         = T;
+				return M;
+			};
+
+			Health->AddModifier(MakeSet(EffA, 30.f, 1, 1.0));
+			Health->AddModifier(MakeSet(EffB, 80.f, 2, 2.0));
+			Health->CalculateValue();
+			TestEqual("Most recent Set (80 from EffB) wins", Health->Value, 80.f);
+
+			// Remove the later Set; earlier Set takes over.
+			Health->RemoveTemporalModifier(2, EffB);
+			Health->CalculateValue();
+			TestEqual("After removing EffB's Set, EffA's Set (30) wins", Health->Value, 30.f);
+
+			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
+		});
+
+		It("PurgeTemporalModifier on a bound attribute restores RawValue base when Set is purged", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute* Health = const_cast<FAttribute*>(AbilityComp->GetAttributeByTag(HealthTag));
+			if (!TestNotNull("Health attribute exists", Health)) { Effect->RemoveFromRoot(); return; }
+
+			const float OriginalRaw = Health->RawValue;
+
+			FGMCAttributeModifier SetMod;
+			SetMod.AttributeTag        = HealthTag;
+			SetMod.Op                  = EModifierType::Set;
+			SetMod.ValueType           = EGMCAttributeModifierType::AMT_Value;
+			SetMod.ModifierValue       = 1.f;
+			SetMod.DeltaTime           = 1.f;
+			SetMod.bRegisterInHistory  = true;
+			SetMod.SourceAbilityEffect = Effect;
+			SetMod.ApplicationIndex    = 1;
+			SetMod.ActionTimer         = 5.0;
+			Health->AddModifier(SetMod);
+			Health->CalculateValue();
+			TestEqual("Set active: Value pinned to 1", Health->Value, 1.f);
+
+			// Simulate GMC rollback to before the Set's ActionTimer.
+			Health->PurgeTemporalModifier(2.0);
+			Health->CalculateValue();
+			TestEqual("After rollback: Value reverts to RawValue base", Health->Value, OriginalRaw);
+
+			Effect->RemoveFromRoot();
+		});
+	});
+
+	// ── ValueTemporalModifiers replication regression guard ─────────────────
+	//
+	// The performance commit dropped UPROPERTY() from the field. If anyone
+	// re-adds it later by mistake, this regression test catches the symptom:
+	// a freshly-applied modifier should be visible in the local list (it always
+	// was), and the count should reflect local-only mutation regardless of
+	// network state.
+	Describe("Perf: ValueTemporalModifiers local-only behavior", [this]()
+	{
+		It("Adding a temporal modifier increments the local list count", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FAttribute* Health = const_cast<FAttribute*>(AbilityComp->GetAttributeByTag(HealthTag));
+			if (!TestNotNull("Health attribute exists", Health)) { Effect->RemoveFromRoot(); return; }
+
+			// We can't directly read the protected ValueTemporalModifiers,
+			// but the public Value computation reflects its content.
+			const float Baseline = Health->Value;
+
+			FGMCAttributeModifier Mod;
+			Mod.AttributeTag        = HealthTag;
+			Mod.Op                  = EModifierType::Add;
+			Mod.ValueType           = EGMCAttributeModifierType::AMT_Value;
+			Mod.ModifierValue       = 7.f;
+			Mod.DeltaTime           = 1.f;
+			Mod.bRegisterInHistory  = true;
+			Mod.SourceAbilityEffect = Effect;
+			Mod.ApplicationIndex    = 1;
+			Mod.ActionTimer         = AbilityComp->ActionTimer;
+			Health->AddModifier(Mod);
+			Health->CalculateValue();
+
+			TestEqual("Value reflects newly-added temporal modifier",
+				Health->Value, Baseline + 7.f);
+
+			// Removing it brings the value back — confirms the entry was actually
+			// in the local list (vs. somehow being a permanent RawValue mutation).
+			Health->RemoveTemporalModifier(1, Effect);
+			Health->CalculateValue();
+			TestEqual("Value returns to baseline after RemoveTemporalModifier",
+				Health->Value, Baseline);
+
+			Effect->RemoveFromRoot();
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER

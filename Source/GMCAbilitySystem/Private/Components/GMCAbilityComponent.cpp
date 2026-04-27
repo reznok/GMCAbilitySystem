@@ -1873,11 +1873,17 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	                          || Effect->EffectData.EffectType == EGMASEffectType::Periodic;
 	const bool bHasGracePeriod = Effect->EffectData.ClientGraceTime > 0.f;
 
-	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod
-		&& !Effect->bPendingPredictedEnd && !Effect->bCompleted)
+	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{
-		Effect->bPendingPredictedEnd     = true;
-		Effect->PendingPredictedEndTimer = Effect->EffectData.ClientGraceTime;
+		// First call arms the defer; subsequent calls during the defer window are no-ops.
+		// Critical: the early return MUST happen even when defer is already armed, otherwise
+		// a duplicate Remove (e.g. RPCClientEndEffect arriving while local defer is running)
+		// would fall through to the EndEffect() below and defeat the bilateral synchronization.
+		if (!Effect->bPendingPredictedEnd)
+		{
+			Effect->bPendingPredictedEnd     = true;
+			Effect->PendingPredictedEndTimer = Effect->EffectData.ClientGraceTime;
+		}
 		return;
 	}
 
