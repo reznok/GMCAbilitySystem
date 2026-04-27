@@ -1859,14 +1859,18 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 {
 	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
 
-	// Anti-drift defer: for Ticking effects on bound attributes (e.g. Stamina via SprintCost), the side that ends
-	// the effect later accumulates extra drain ticks. We defer EndEffect() on both client and server for the same
-	// logical move tick window (ClientGraceTime), so the per-tick drain count stays identical on both sides.
+	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side that ends the
+	// effect later accumulates extra modifier applications. Affects both EffectTypes that drain over time:
+	//   - Ticking : continuous drain proportional to DeltaTime (e.g. Stamina via SprintCost)
+	//   - Periodic: discrete chunks fired at period boundaries (e.g. Recovery +X Stamina/s)
+	// We defer EndEffect() on both client and server for the same logical move tick window (ClientGraceTime),
+	// so each side fires the same number of Tick / period boundary applications before the effect actually ends.
 	const bool bIsNetworked    = GetNetMode() != NM_Standalone;
-	const bool bIsTicking      = Effect->EffectData.EffectType == EGMASEffectType::Ticking;
+	const bool bIsTimeDriven   = Effect->EffectData.EffectType == EGMASEffectType::Ticking
+	                          || Effect->EffectData.EffectType == EGMASEffectType::Periodic;
 	const bool bHasGracePeriod = Effect->EffectData.ClientGraceTime > 0.f;
 
-	if (bIsNetworked && bIsTicking && bHasGracePeriod
+	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod
 		&& !Effect->bPendingPredictedEnd && !Effect->bCompleted)
 	{
 		Effect->bPendingPredictedEnd     = true;
