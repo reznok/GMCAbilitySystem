@@ -31,7 +31,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 			DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
 			DataPack.NBActiveEffects = AbilityComponent->GetActiveEffects().Num();
 			DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
-			DataPack.NBActiveEffectData = AbilityComponent->ActiveEffectIDs.Num();
+			DataPack.NBActiveEffectData = AbilityComponent->GetActiveEffects().Num();
 			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
 			DataPack.NBActiveAbilities = AbilityComponent->GetActiveAbilities().Num();
 			DataPack.NBCachedOperationPayloads = AbilityComponent->BoundQueueV2.GetPayloadCount();
@@ -124,7 +124,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		// Show client-side data
 		if (AbilityComponent)
 		{
-			if (DataPack.NBActiveEffectData != AbilityComponent->ActiveEffectIDs.Num())
+			if (DataPack.NBActiveEffectData != AbilityComponent->GetActiveEffects().Num())
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {red} [INCOHERENCY] {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
 			else
 			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
@@ -135,7 +135,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 		// Show client-side data
 		if (AbilityComponent)
 		{
-			if (DataPack.NBActiveEffectData != AbilityComponent->ActiveEffectIDs.Num())
+			if (DataPack.NBActiveEffectData != AbilityComponent->GetActiveEffects().Num())
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {red} [INCOHERENCY] {white}%d\n"), AbilityComponent->BoundQueueV2.GetPayloadCount());
 			else
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {white}%d\n"), AbilityComponent->BoundQueueV2.GetPayloadCount());

@@ -3,10 +3,9 @@
 //   Bug #1  GMCAbilityEffect.cpp   MustMaintainQuery logic was inverted —
 //                                   effect ended when query matched instead of
 //                                   when it stopped matching.
-//   Bug #2  GMCAbilityComponent.cpp CheckRemovedEffects used `return` instead
-//                                   of `continue`, bailing out of the loop on
-//                                   the first unconfirmed/unprocessed effect;
-//                                   removal logic was commented out entirely.
+//   Bug #2  Retired — CheckRemovedEffects + ActiveEffectIDs dropped in the
+//                                   single-channel refactor. Effect removal flows
+//                                   exclusively through BoundQueueV2 ops.
 //   Bug #3  GMCAbility.cpp          TickTasks / AncillaryTickTasks iterated a
 //                                   TMap<int,Task*> via RunningTasks[i] —
 //                                   TMap::operator[] keyed by integer crashes
@@ -260,90 +259,12 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// ── Bug #2: CheckRemovedEffects early-return + disabled removal ────────
-	// The loop bailed early on `return` rather than skipping via `continue`,
-	// and the actual removal call was commented out.
-	// After fix: all effects are inspected; unconfirmed ones are skipped
-	// (continue), and confirmed effects absent from ActiveEffectIDs are removed.
-	Describe("Bug #2: CheckRemovedEffects", [this]()
-	{
-		It("continues past an unprocessed effect to process a confirmed stale one", [this]()
-		{
-			// Apply two effects so both get entries in ActiveEffects.
-			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			EffA->AddToRoot(); EffB->AddToRoot();
-
-			AbilityComp->ActionTimer = 1.0;
-
-			FGMCAbilityEffectData DataA;
-			DataA.EffectType = EGMASEffectType::Persistent;
-			DataA.Duration   = 0.f;
-			DataA.Modifiers.Add(MakeHealthMod(10.f));
-			AbilityComp->ApplyAbilityEffect(EffA, DataA);
-
-			FGMCAbilityEffectData DataB;
-			DataB.EffectType = EGMASEffectType::Persistent;
-			DataB.Duration   = 0.f;
-			DataB.Modifiers.Add(MakeHealthMod(20.f));
-			AbilityComp->ApplyAbilityEffect(EffB, DataB);
-
-			const int IdA = EffA->EffectData.EffectID;
-			const int IdB = EffB->EffectData.EffectID;
-
-			// Simulate client-side state: both effects are Pending for EffA
-			// and Validated for EffB.  Only EffB is confirmed; simulate server
-			// removing EffB by not including it in ActiveEffectIDs.
-			AbilityComp->GetProcessedEffectIDsForTest().Add(IdA, EGMCEffectAnswerState::Pending);
-			AbilityComp->GetProcessedEffectIDsForTest().Add(IdB, EGMCEffectAnswerState::Validated);
-			// ActiveEffectIDs does not contain IdB → simulates server removal.
-			AbilityComp->GetActiveEffectIDsForTest().Empty();
-			AbilityComp->GetActiveEffectIDsForTest().Add(IdA); // server still owns A
-
-			// Advance ActionTimer past ClientGraceTime (Bug #4 grace) so EffB qualifies
-			// for the wipe path. Without this, the grace window protects EffB from being
-			// removed on the same tick it was applied.
-			AbilityComp->ActionTimer = 5.0;
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			// EffA: Pending → skipped (continue), must still be in ActiveEffects.
-			TestTrue("EffA (Pending) still in ActiveEffects",
-				AbilityComp->GetActiveEffects().Contains(IdA));
-
-			// EffB: Validated and absent from ActiveEffectIDs → must be removed.
-			TestFalse("EffB (confirmed, server-removed) is gone from ActiveEffects",
-				AbilityComp->GetActiveEffects().Contains(IdB));
-
-			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
-		});
-
-		It("does not remove a confirmed effect that is still in ActiveEffectIDs", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			AbilityComp->ActionTimer = 1.0;
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType = EGMASEffectType::Persistent;
-			Data.Duration   = 0.f;
-			Data.Modifiers.Add(MakeHealthMod(15.f));
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			const int Id = Effect->EffectData.EffectID;
-			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Add(Id); // server still has it
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			// Still present — server hasn't removed it.
-			TestTrue("Confirmed + in ActiveEffectIDs → kept",
-				AbilityComp->GetActiveEffects().Contains(Id));
-
-			Effect->RemoveFromRoot();
-		});
-	});
+	// ── Bug #2 retired ─────────────────────────────────────────────────────
+	// CheckRemovedEffects + ActiveEffectIDs were dropped in the single-channel
+	// refactor. Effect removal now flows exclusively through BoundQueueV2
+	// FGMASBoundQueueV2RemoveEffectOperation; there is no list-comparison wipe
+	// path left to test, and the original Bug #2 ("early `return` instead of
+	// `continue`") is moot because the function no longer exists.
 
 	// ── Bug #3: TMap integer-indexed iteration in TickTasks ───────────────
 	// RunningTasks is TMap<int, UGMCAbilityTaskBase*>.  The old code called
@@ -744,134 +665,16 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// ── Replication grace in CheckRemovedEffects (Bug #4) ─────────────────
-	//
-	// The grace period uses ClientEffectApplicationTime (set in InitializeEffect)
-	// and the effect's ClientGraceTime. Within the window, a freshly-applied
-	// effect is NOT wiped even when missing from ActiveEffectIDs. After the
-	// window, the wipe behaves as before.
-	Describe("Bug #4: CheckRemovedEffects replication grace", [this]()
-	{
-		It("ClientEffectApplicationTime is set to ActionTimer at apply time", [this]()
-		{
-			AbilityComp->ActionTimer = 5.0;
-
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType     = EGMASEffectType::Persistent;
-			Data.Duration       = 0.f;
-			Data.ClientGraceTime = 1.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			TestEqual("ClientEffectApplicationTime captured ActionTimer",
-				Effect->ClientEffectApplicationTime, 5.0f);
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Effect with default ClientGraceTime (1.0) survives a same-tick CheckRemovedEffects", [this]()
-		{
-			// Harness default ActionTimer = 1.0 from BeforeEach. Apply at that timestamp.
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 1.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			// ClientEffectApplicationTime = 1.0 ; ActionTimer = 1.0 → TimeSinceApply = 0 < 1.0 → grace active
-
-			const int EffectID = Effect->EffectData.EffectID;
-			TestTrue("Effect present in ActiveEffects", AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestTrue("Effect survives within grace window",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Effect is wiped once ActionTimer advances past ClientGraceTime", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 1.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
-
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			// Push past the grace window (apply was at t=1.0, grace=1.0, so t=2.5 is past).
-			AbilityComp->ActionTimer = 2.5;
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestFalse("Effect wiped after grace expires",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Effect with ClientGraceTime=0 is wiped immediately on missing ActiveEffectID", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 0.f;  // opt-out of replication grace
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
-
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestFalse("ClientGraceTime=0 disables grace, effect wiped same tick",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Effect with Pending state is skipped before the grace check (V1 invariant preserved)", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 0.f;  // even with grace disabled, Pending still skips
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
-
-			// Pending = client predicted but server hasn't validated yet
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Pending);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			// Push way past any grace just to be sure
-			AbilityComp->ActionTimer = 100.0;
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestTrue("Pending state suppresses wipe regardless of grace",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
-		});
-	});
+	// ── Bug #4 retired ─────────────────────────────────────────────────────
+	// CheckRemovedEffects replication grace was a workaround for the asymmetry
+	// between RPCOnServerOperationAdded (RPC, ~RTT/2) and ActiveEffectIDs
+	// (DOREPLIFETIME, ~RTT). Both ActiveEffectIDs and CheckRemovedEffects were
+	// dropped in the single-channel refactor — Bug #4 is now structurally
+	// impossible. ClientGraceTime is still used by the bilateral PredictedEnd
+	// defer for Ticking/Periodic effects (Bug #3 of migration notes), but that
+	// is covered by the "PredictedEnd defer" test block below.
+	// ClientEffectApplicationTime continues to be set in InitializeEffect for
+	// consumers that read it (debug overlays, future analytics).
 
 	// ── Set / SetReplace edge cases on the bound-attribute path ─────────────
 	//

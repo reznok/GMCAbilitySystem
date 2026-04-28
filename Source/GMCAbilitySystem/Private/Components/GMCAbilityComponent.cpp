@@ -941,8 +941,6 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
-	CheckRemovedEffects();
-	
 	TArray<int> CompletedActiveEffects;
 
 	// Tick Effects
@@ -982,7 +980,6 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
 
 		ActiveEffects.Remove(EffectID);
-		ActiveEffectIDs.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
 	}
 
@@ -1045,47 +1042,6 @@ void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
 	}
 }
 
-void UGMC_AbilitySystemComponent::CheckRemovedEffects()
-{
-	TArray<int> EffectsToRemove;
-
-	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
-	{
-		// Ensure this effect has been processed locally
-		if (!ProcessedEffectIDs.Contains(Effect.Key)) { continue; }
-
-		// Ensure this effect has already been confirmed by the server so that if it's now missing,
-		// it means the server removed it
-		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending) { continue; }
-
-		// Replication grace: server-initiated effects (RPC-pushed via RPCOnServerOperationAdded) auto-validate
-		// the moment they arrive on the client, but ActiveEffectIDs is DOREPLIFETIME-driven and lags ~1 RTT
-		// behind. Without this guard we'd wipe the freshly applied effect on the same tick, before the replicated
-		// list catches up — see "Recovery wipes itself" symptom (continuous chain replay on bound attributes).
-		if (Effect.Value)
-		{
-			const float TimeSinceApply         = ActionTimer - Effect.Value->ClientEffectApplicationTime;
-			const float ReplicationGracePeriod = Effect.Value->EffectData.ClientGraceTime;
-			if (TimeSinceApply < ReplicationGracePeriod) { continue; }
-		}
-
-		// If the server's replicated effect list no longer contains this effect, remove it locally
-		if (!ActiveEffectIDs.Contains(Effect.Key))
-		{
-			if (Effect.Value) { Effect.Value->EndEffect(); }
-			EffectsToRemove.Add(Effect.Key);
-		}
-	}
-
-	for (const int EffectID : EffectsToRemove)
-	{
-		if (HasAuthority()) { RPCClientEndEffect(EffectID); }
-		ActiveEffects.Remove(EffectID);
-		ActiveEffectIDs.Remove(EffectID);
-		ProcessedEffectIDs.Remove(EffectID);
-	}
-}
-
 bool UGMC_AbilitySystemComponent::IsLocallyControlledPawnASC() const
 {
 	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
@@ -1144,11 +1100,10 @@ void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
 	// Defer until the owner pawn is actually controlled. ApplyAbilityEffectShort with
 	// ServerAuth pushes RPCOnServerOperationAdded to the owning client; if we fire it
 	// before PossessedBy completes, no relevant connection exists yet and the RPC is
-	// dropped silently. The replicated ActiveEffectIDs catches up later but the client
-	// never gets the local instance — bound attributes drift and there is no signal to
-	// reapply. Gating on Controller is the smallest safe condition: it is non-null only
-	// after PossessedBy has finished server-side, which is exactly when the owning
-	// connection is established.
+	// dropped silently and the client never gets the local instance — bound attributes
+	// drift and there is no signal to reapply. Gating on Controller is the smallest
+	// safe condition: it is non-null only after PossessedBy has finished server-side,
+	// which is exactly when the owning connection is established.
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	if (!OwnerPawn || !OwnerPawn->GetController())
 	{
@@ -1854,12 +1809,10 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		Effect->EffectData.EffectID = GetNextAvailableEffectID();
 	}
 
-	// This is Replicated, so only server needs to manage it
 	if (HasAuthority())
 	{
 		// If this was a server-auth, the ID is already generated and needs to be cleaned up from reserved
 		ReservedEffectIDs.Remove(Effect->EffectData.EffectID);
-		ActiveEffectIDs.Push(Effect->EffectData.EffectID); 
 	}
 	else
 	{
@@ -2416,25 +2369,10 @@ void UGMC_AbilitySystemComponent::MC_SpawnSound_Implementation(USoundBase* Sound
 	SpawnSound(Sound, Location, VolumeMultiplier, PitchMultiplier, bIsClientPredicted);
 }
 
-//ActiveEffectIds OnRep
-void UGMC_AbilitySystemComponent::OnRep_ActiveEffectIDs()
-{
-	// This is called when the ActiveEffectIDs array is replicated to the client
-	// We need to update the ActiveEffects map based on the replicated IDs
-	for (int EffectId : ActiveEffectIDs)
-	{
-		if (ProcessedEffectIDs.Contains(EffectId))
-		{
-			ProcessedEffectIDs[EffectId] = EGMCEffectAnswerState::Validated;
-		}
-	}
-}
-
 // ReplicatedProps
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
-	DOREPLIFETIME(UGMC_AbilitySystemComponent, ActiveEffectIDs);
 }
 

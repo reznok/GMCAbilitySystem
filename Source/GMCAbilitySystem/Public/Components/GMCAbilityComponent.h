@@ -773,21 +773,8 @@ private:
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);
 
-	// Active Effects with a duration affecting this component
-	// Can be just normally replicated since if the client doesn't have them already
-	// then prediction is already out the window
-
-	UPROPERTY(ReplicatedUsing=OnRep_ActiveEffectIDs)
-	TArray<int> ActiveEffectIDs;
-
-	UFUNCTION()
-	void OnRep_ActiveEffectIDs();
-
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
 	float ClientEffectApplicationTimeout = 1.f;
-
-	// Check if any effects have been removed by the server and remove them locally
-	void CheckRemovedEffects();
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
@@ -843,9 +830,7 @@ private:
 public:
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
-	TArray<int>&                           GetActiveEffectIDsForTest()     { return ActiveEffectIDs; }
 	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
-	void CheckRemovedEffectsForTest()                                       { CheckRemovedEffects(); }
 	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
 	{
 		return GetEffectFromHandle(Handle, OutNetId, OutEffect);
