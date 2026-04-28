@@ -1440,16 +1440,16 @@ void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FG
 		int OutEffectHandle;
 		int OutEffectId;
 			
-		if (Data.EffectData != FGMCAbilityEffectData{})
+		if (Data.EffectData.IsValid())
 		{
-			ApplyAbilityEffect(Data.EffectClass, Data.EffectData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect); 
+			ApplyAbilityEffect(Data.EffectClass, Data.EffectData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
 		}
 		else
 		{
 			// Otherwise, we can apply the default effect data
 			FGMCAbilityEffectData DefaultData = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
 			DefaultData.EffectID = Data.EffectID; // Need to slam the effect ID in there
-			ApplyAbilityEffect(Data.EffectClass,DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect); 
+			ApplyAbilityEffect(Data.EffectClass,DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
 		}
 
 		// Auto validate the effect since this was added via a server operation
