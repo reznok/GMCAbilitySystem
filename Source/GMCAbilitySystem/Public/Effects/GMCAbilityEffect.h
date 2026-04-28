@@ -148,12 +148,6 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
 	
-	inline bool operator==(const FGMCAbilityEffectData& Other) const
-	{
-		//Todo: Fix this
-		return StartTime == Other.StartTime && EndTime == Other.EndTime;
-	};
-
 	bool IsValid() const
 	{
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0

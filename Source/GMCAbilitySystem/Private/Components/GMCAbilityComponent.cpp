@@ -1651,16 +1651,13 @@ void UGMC_AbilitySystemComponent::ApplyAbilityEffectSafe(TSubclassOf<UGMCAbility
                                                          FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, bool& OutSuccess, int& OutEffectHandle, int& OutEffectId,
                                                          UGMCAbilityEffect*& OutEffect, UGMCAbility* HandlingAbility)
 {
-	FGMCAbilityEffectData EffectData;
-	if (InitializationData == FGMCAbilityEffectData{})
-	{
-		// If no data is provided, use the default data from the effect class
-		EffectData = EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
-	}
-	else
-	{
-		EffectData = InitializationData;
-	}
+	// If no data is provided (no Modifiers / Tags / etc.), use the default data from the effect class.
+	// IsValid() inspects the actual content fields; the previously-used operator== compared only StartTime/EndTime
+	// (both default 0), which silently swapped runtime-supplied EffectData for the CDO whenever the caller didn't
+	// set those timestamps — discarding inline Modifiers built at the call site.
+	const FGMCAbilityEffectData EffectData = InitializationData.IsValid()
+		? InitializationData
+		: EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
 	
 	OutSuccess = ApplyAbilityEffect(EffectClass, EffectData, QueueType, OutEffectHandle, OutEffectId, OutEffect);
 	
