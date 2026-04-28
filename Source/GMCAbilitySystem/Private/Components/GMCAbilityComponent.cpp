@@ -1136,19 +1136,35 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 
 
 void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
-	if (HasAuthority() && StartingEffects.Num() > 0 && (bForce || !bStartingEffectsApplied))
+	if (!HasAuthority() || StartingEffects.Num() == 0 || (!bForce && bStartingEffectsApplied))
 	{
-		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
-		{
-			// Dont apply the same effect twice
-			if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
-				return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
-			})) {
-				ApplyAbilityEffectShort(Effect, EGMCAbilityEffectQueueType::ServerAuth);
-			}
-		}
-		bStartingEffectsApplied = true;
+		return;
 	}
+
+	// Defer until the owner pawn is actually controlled. ApplyAbilityEffectShort with
+	// ServerAuth pushes RPCOnServerOperationAdded to the owning client; if we fire it
+	// before PossessedBy completes, no relevant connection exists yet and the RPC is
+	// dropped silently. The replicated ActiveEffectIDs catches up later but the client
+	// never gets the local instance — bound attributes drift and there is no signal to
+	// reapply. Gating on Controller is the smallest safe condition: it is non-null only
+	// after PossessedBy has finished server-side, which is exactly when the owning
+	// connection is established.
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn || !OwnerPawn->GetController())
+	{
+		return;
+	}
+
+	for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
+	{
+		// Dont apply the same effect twice
+		if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
+			return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
+		})) {
+			ApplyAbilityEffectShort(Effect, EGMCAbilityEffectQueueType::ServerAuth);
+		}
+	}
+	bStartingEffectsApplied = true;
 }
 
 
