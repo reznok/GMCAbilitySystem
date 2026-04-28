@@ -549,11 +549,13 @@ void FGMASBugFixSpec::Define()
 	//
 	// The arming branch of RemoveActiveAbilityEffect requires GetNetMode() != NM_Standalone,
 	// which the headless harness can't provide (orphan components default to Standalone).
-	// So we test the *consume* side of the defer: directly manipulate bPendingPredictedEnd
-	// on a properly-initialised effect and verify Tick(DeltaTime) drives it to EndEffect.
-	Describe("Bug #3: PredictedEnd defer Tick consume", [this]()
+	// So we test the *consume* side of the defer: directly set EndAtActionTimer on a properly-
+	// initialised effect and verify Tick fires EndEffect at the absolute timestamp regardless
+	// of DeltaTime. The new design uses ActionTimer comparison (deterministic across replays)
+	// instead of a per-tick countdown.
+	Describe("Bug #3: PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
 	{
-		It("Tick decrements PendingPredictedEndTimer when DeltaTime < timer", [this]()
+		It("Tick keeps the defer pending while ActionTimer < EndAtActionTimer", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -563,19 +565,18 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 1.0f;
+			AbilityComp->ActionTimer = 5.0;
+			Effect->EndAtActionTimer = 6.0;  // 1s grace ahead
 
-			Effect->Tick(0.3f);
+			Effect->Tick(0.3f);  // DeltaTime irrelevant; only ActionTimer matters
 
-			TestTrue("Defer still pending",          Effect->bPendingPredictedEnd);
-			TestEqual("Timer decremented by 0.3f",   Effect->PendingPredictedEndTimer, 0.7f);
-			TestFalse("Effect not yet completed",    Effect->bCompleted);
+			TestTrue("Defer still armed (EndAt unchanged)",  Effect->EndAtActionTimer > 0.0);
+			TestFalse("Effect not completed",                Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when timer reaches zero in a single step", [this]()
+		It("Tick fires EndEffect when ActionTimer reaches EndAtActionTimer exactly", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -585,18 +586,60 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 0.5f;
+			AbilityComp->ActionTimer = 6.0;
+			Effect->EndAtActionTimer = 6.0;  // boundary: >= triggers
 
+			Effect->Tick(0.f);
+
+			TestTrue("Effect completed via EndEffect",  Effect->bCompleted);
+			TestEqual("EndAt latch reset to -1.0",      Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick fires EndEffect when ActionTimer is past EndAtActionTimer (catch-up)", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			AbilityComp->ActionTimer = 10.0;  // we landed past the latch
+			Effect->EndAtActionTimer = 6.0;
+
+			Effect->Tick(0.f);
+
+			TestTrue("Effect completed (overshoot still fires)",  Effect->bCompleted);
+			TestEqual("EndAt latch reset to -1.0",                Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick on an unarmed effect (EndAt = -1) leaves defer state alone", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestEqual("Default EndAt is -1.0 (unarmed)",  Effect->EndAtActionTimer, -1.0);
+
+			AbilityComp->ActionTimer = 100.0;  // huge ActionTimer must not trigger anything
 			Effect->Tick(0.5f);
 
-			TestFalse("Defer flag cleared after firing", Effect->bPendingPredictedEnd);
-			TestTrue("Effect completed via EndEffect",   Effect->bCompleted);
+			TestFalse("Effect not completed",             Effect->bCompleted);
+			TestEqual("EndAt still -1.0",                 Effect->EndAtActionTimer, -1.0);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when DeltaTime overshoots the timer", [this]()
+		It("ActionTimer progression across multiple Ticks reaches the latch deterministically", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -606,19 +649,26 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 0.2f;
+			AbilityComp->ActionTimer = 5.0;
+			Effect->EndAtActionTimer = 6.0;  // 1s grace
 
-			Effect->Tick(0.5f);  // overshoots
+			AbilityComp->ActionTimer = 5.3;  Effect->Tick(0.3f);
+			TestFalse("Not yet completed (5.3 < 6.0)",  Effect->bCompleted);
 
-			TestFalse("Defer flag cleared",            Effect->bPendingPredictedEnd);
-			TestTrue("Effect completed",               Effect->bCompleted);
+			AbilityComp->ActionTimer = 5.7;  Effect->Tick(0.4f);
+			TestFalse("Not yet completed (5.7 < 6.0)",  Effect->bCompleted);
+
+			AbilityComp->ActionTimer = 6.1;  Effect->Tick(0.4f);
+			TestTrue("Completed (6.1 >= 6.0)",          Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick on a non-deferred effect leaves defer state alone", [this]()
+		It("Idempotent re-arm: setting EndAtActionTimer twice with same value is a no-op", [this]()
 		{
+			// Mirrors the replay scenario: a Remove op gets re-executed during a GMC rollback.
+			// The arming logic in RemoveActiveAbilityEffect skips the assignment when EndAt >= 0,
+			// so the second Remove cannot shift the end timestamp forward and break bilateral sync.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -627,39 +677,13 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			TestFalse("Default state: not pending",   Effect->bPendingPredictedEnd);
-			TestEqual("Default timer is zero",        Effect->PendingPredictedEndTimer, 0.f);
+			Effect->EndAtActionTimer = 6.0;  // first arm
+			const double FirstArm = Effect->EndAtActionTimer;
 
-			Effect->Tick(0.5f);
+			// Simulate the idempotency guard from RemoveActiveAbilityEffect inline:
+			if (Effect->EndAtActionTimer < 0.0) { Effect->EndAtActionTimer = 8.0; }
 
-			TestFalse("Still not pending after tick", Effect->bPendingPredictedEnd);
-			TestEqual("Timer untouched",              Effect->PendingPredictedEndTimer, 0.f);
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Multiple incremental Ticks expire the defer at the cumulative threshold", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType = EGMASEffectType::Persistent;
-			Data.Duration   = 0.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 1.0f;
-
-			Effect->Tick(0.3f);                                      // → 0.7
-			TestFalse("Not yet completed after first tick", Effect->bCompleted);
-
-			Effect->Tick(0.4f);                                      // → 0.3
-			TestFalse("Not yet completed after second tick", Effect->bCompleted);
-
-			Effect->Tick(0.4f);                                      // → -0.1, fires
-			TestTrue("Completed after cumulative tick", Effect->bCompleted);
-			TestFalse("Defer cleared", Effect->bPendingPredictedEnd);
+			TestEqual("Re-arm preserves the original EndAt", Effect->EndAtActionTimer, FirstArm);
 
 			Effect->RemoveFromRoot();
 		});

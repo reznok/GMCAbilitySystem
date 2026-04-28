@@ -271,10 +271,14 @@ public:
 
 	bool bCompleted;
 
-	// Anti-drift on Predicted Remove for Ticking effects: defers EndEffect() bilaterally so client and server
-	// run the same number of drain ticks before the effect actually ends. See RemoveActiveAbilityEffect.
-	bool bPendingPredictedEnd { false };
-	float PendingPredictedEndTimer { 0.f };
+	// Anti-drift on Predicted Remove for Ticking/Periodic effects: deterministic bilateral defer using
+	// an absolute ActionTimer timestamp instead of a per-tick countdown. Both client and server arm
+	// EndAtActionTimer = ActionTimer + ClientGraceTime when Remove is processed at the same logical
+	// move tick (GMC replay invariant) — they end on the exact same logical tick by construction,
+	// independent of DeltaTime, framerate, or replay re-execution.
+	//
+	// -1.0 = not armed. >= 0 = armed, end when OwnerAbilityComponent->ActionTimer >= EndAtActionTimer.
+	double EndAtActionTimer { -1.0 };
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.

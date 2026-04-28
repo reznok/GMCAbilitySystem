@@ -1841,14 +1841,15 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 
 	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{
-		// First call arms the defer; subsequent calls during the defer window are no-ops.
-		// Critical: the early return MUST happen even when defer is already armed, otherwise
-		// a duplicate Remove (e.g. RPCClientEndEffect arriving while local defer is running)
-		// would fall through to the EndEffect() below and defeat the bilateral synchronization.
-		if (!Effect->bPendingPredictedEnd)
+		// Idempotent arming on absolute ActionTimer. The first call latches EndAtActionTimer using
+		// the current ActionTimer (which is identical on client and server replay because both
+		// process this Remove at the same logical move tick — GMC bound state invariant). Re-arming
+		// during the defer window must be a NO-OP: a duplicate Remove path (e.g. RPCClientEndEffect
+		// landing on top of a local-replayed Remove) would otherwise reset the latch and shift the
+		// end timestamp, breaking bilateral symmetry.
+		if (Effect->EndAtActionTimer < 0.0)
 		{
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = Effect->EffectData.ClientGraceTime;
+			Effect->EndAtActionTimer = ActionTimer + Effect->EffectData.ClientGraceTime;
 		}
 		return;
 	}
