@@ -813,12 +813,16 @@ private:
 	UPROPERTY()
 	FInstancedStruct ActiveEffectIDsBound;
 
-	// Helpers to mutate the bound state without callers having to wrangle the
-	// FInstancedStruct accessor + struct construction every time.
+public:
+	// Helpers to mutate / query the bound state without callers having to wrangle the
+	// FInstancedStruct accessor + struct construction every time. Public so unit tests
+	// and external systems (debug overlays, scripts) can inspect the state without
+	// going through the bound-state machinery.
 	void BoundActiveEffectIDs_Add(int EffectID);
 	void BoundActiveEffectIDs_Remove(int EffectID);
 	bool BoundActiveEffectIDs_Contains(int EffectID) const;
 
+private:
 	// IDs that have been claimed by server-auth effect applications
 	TArray<int> ReservedEffectIDs;
 
