@@ -154,14 +154,24 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 
 	// Active effect IDs — atomic with the move state via GMC bound state. Single source of
 	// truth for the Pending → Validated transition on Predicted effects (see
-	// FGMASActiveEffectIDsState docstring). Initialise to an empty struct so the
-	// FInstancedStruct has a valid script struct from frame zero.
+	// FGMASActiveEffectIDsState docstring).
+	//
+	// Bind mode: ServerAuth_Output_ServerValidated. Critical choice — the alternative
+	// `ClientValidated` mode triggers a client-side replay every time the client's
+	// computed bound state diverges from the server's incoming value. Under sprint spam
+	// (rapid Apply/Remove churn on this list) the GMC InstancedStruct equality check is
+	// imprecise enough that minor element-order or transient single-frame differences
+	// register as a divergence, producing replay storms (observed: 30+ replays/sec
+	// of 25-50 moves each). With ServerValidated, divergence on the OUTPUT side does
+	// not trigger client replay — server is the truth, the client just receives it.
+	// Validation happens server-side on the client's INPUT (move log), which is what
+	// we actually care about for anti-cheat.
 	if (!ActiveEffectIDsBound.IsValid())
 	{
 		ActiveEffectIDsBound.InitializeAs<FGMASActiveEffectIDsState>();
 	}
 	GMCMovementComponent->BindInstancedStruct(ActiveEffectIDsBound,
-		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_PredictionMode::ServerAuth_Output_ServerValidated,
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
@@ -517,8 +527,18 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
-	
-	if (HasAuthority()) {RPCConfirmAbilityActivation(AbilityID);}
+
+	// Only signal "confirmed" to the client if the server-side Execute did NOT bail out
+	// during PreBeginAbility (cooldown, PreExecuteCheck, blocked-by-ability, blocked-by-tag).
+	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs; without this
+	// gate the client receives RPCConfirmAbilityActivation for an ability the server
+	// just cancelled, sets bServerConfirmed=true, and the Tick-time
+	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
+	// the predicted ability runs indefinitely on the client.
+	if (HasAuthority() && Ability->AbilityState != EAbilityState::Ended)
+	{
+		RPCConfirmAbilityActivation(AbilityID);
+	}
 
 	return true;
 }
@@ -1006,13 +1026,56 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
-	// Pending → Validated reconciliation against the GMC-bound authoritative list.
-	// Each tick, any local Predicted effect whose EffectID now appears in the bound
-	// state (replicated atomically from the server's authoritative side) is promoted
-	// to Validated. This is the polling replacement for the V1 OnRep_ActiveEffectIDs
-	// hook; idempotent and replay-safe because it just compares the current bound
-	// state against ProcessedEffectIDs each tick.
-	if (!HasAuthority())
+	// Replay-safety gate. TickActiveEffects runs from GenPredictionTick, which re-runs
+	// during GMC client replay. During replay:
+	//   - GMC-bound state (ActiveEffectIDsBound) IS rewound to a past snapshot, then
+	//     re-applied move-by-move.
+	//   - Non-bound state (ProcessedEffectIDs, ActiveEffects) is NOT rewound — it
+	//     persists across the replay loop.
+	// If we let the polling/timeout block run during replay, it can transition the
+	// PERSISTENT state (Validated → Pending → Reap) based on a TRANSIENT bound-state
+	// snapshot that's mid-rewind. Worst-case scenario observed: a long-lived effect
+	// like EF_Humanoid_Stamina_Recovery gets reaped during replay (because
+	// ClientEffectApplicationTime is old), the local instance is destroyed, Stamina
+	// stops regenerating on the client → permanent divergence with the server →
+	// chain replays forever.
+	//
+	// The post-replay frame's polling reconciles cleanly against the converged
+	// bound state. Skipping the block during replay does not delay legitimate
+	// promotions/demotions — it just defers them by one tick past replay end.
+	const bool bIsReplaying = GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
+
+	// One-way reconciliation against the GMC-bound list (replicated server
+	// authoritative, ServerAuth_Output_ServerValidated mode):
+	//
+	//   ID present in bound + Pending → promote to Validated
+	//   anything else                 → no change
+	//
+	// The promotion path is monotonic and safe. We deliberately DO NOT demote
+	// Validated → Pending when the ID is absent from bound, even though that
+	// would help auto-reap server-rejected effects after-the-fact. Reasons:
+	//
+	//   1. The server-rejected case (client predict-apply, server never validated)
+	//      is already caught by the timeout branch below: ProcessedEffectIDs is
+	//      stamped Pending in ApplyAbilityEffect line 2040, the server never adds
+	//      the ID to bound, polling never promotes, the 1s ClientEffectApplicationTimeout
+	//      window reaps it. No demotion needed.
+	//
+	//   2. The server-explicitly-removed case (dispel, cleanse, ability cancel) has
+	//      a dedicated channel: RPCClientEndEffect from the server's cleanup loop
+	//      (line 1099). Inferring removal from bound-state absence duplicates that
+	//      signal with worse timing characteristics.
+	//
+	//   3. The bound state has natural replication latency. With Periodic_Output
+	//      simulation mode, the server's snapshot at time T may not yet reflect
+	//      a same-tick AncillaryTick apply (snapshot captured from PredictionTick
+	//      output, AncillaryTick runs AFTER). When the server's "ID-less" snapshot
+	//      reaches the client and overwrites the local Add (ServerValidated mode),
+	//      a demotion path would reap the local instance during a benign 1-2 tick
+	//      lag window. Observed in production: EF_Humanoid_Stamina_Recovery_C
+	//      reaped within ~1s of apply, killing client-side regen, producing chain
+	//      replays as Stamina diverged from the still-regenerating server value.
+	if (!HasAuthority() && !bIsReplaying)
 	{
 		for (auto& ProcessedPair : ProcessedEffectIDs)
 		{
@@ -1042,8 +1105,11 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			CompletedActiveEffects.Push(Effect.Key);
 		}
 
-		// Check for predicted effects that have not been server confirmed
-		if (!HasAuthority() &&
+		// Check for predicted effects that have not been server confirmed.
+		// Skip during replay — same reason as the polling block above: we do NOT want
+		// replay to mutate persistent state (ProcessedEffectIDs / ActiveEffects) based
+		// on transient rewound bound state. Reaps run on fresh post-replay state only.
+		if (!HasAuthority() && !bIsReplaying &&
 			!Effect.Value->EffectData.bServerAuth
 			&& ProcessedEffectIDs.Contains(Effect.Key)
 			&& ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending
@@ -1065,10 +1131,11 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		ActiveEffects.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
 
-		// Drop the ID from the bound authoritative list. Server-side this is the source
-		// of truth that propagates to all clients; client-side it's a local mirror that
-		// will get overwritten by the next replication anyway, but keeping it consistent
-		// avoids transient validation hiccups.
+		// Drop the ID from the bound list on both sides — symmetric with the deterministic
+		// Add in ApplyAbilityEffect. Bind mode ServerAuth_Output_ServerValidated means the
+		// server's authoritative removal replicates back to client without triggering
+		// client-side replay; the client's local removal is just a transient that gets
+		// confirmed (or corrected) by the next replication.
 		BoundActiveEffectIDs_Remove(EffectID);
 	}
 
@@ -1860,6 +1927,10 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			// Apply effect immediately.
 			UGMCAbilityEffect* Effect = DuplicateObject(EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 			OutEffect = ApplyAbilityEffect(Effect, InitializationData);
+			// Inner Apply can return nullptr now (e.g. bUniqueByEffectTag rejection).
+			// Out params already initialised to sentinels (-1 / nullptr) at function top;
+			// signal failure to the caller via bSuccess=false rather than crashing.
+			if (OutEffect == nullptr) { return false; }
 			OutEffectId = OutEffect->EffectData.EffectID;
 			// OutEffectHandle = HandleData.Handle;
 			return true;
@@ -1981,11 +2052,38 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMC_AbilitySystemComponent::ApplyAbilityEffect: effect is null!"));
 		return nullptr;
 	}
-	
+
+	// Single-instance protection (opt-in). If the incoming effect data carries
+	// bUniqueByEffectTag and a non-empty EffectTag, refuse to apply when another
+	// active effect on this owner already carries the same tag (exact match).
+	//
+	// Run this check BEFORE InitializeEffect / EffectID assignment / bound-state
+	// writes — a rejected Apply must produce ZERO side effects: no EffectID burned,
+	// no Pending stamp in ProcessedEffectIDs, no entry in ActiveEffectIDsBound. The
+	// duplicated UObject argument is left for GC.
+	if (InitializationData.bUniqueByEffectTag && InitializationData.EffectTag.IsValid())
+	{
+		for (const TPair<int, UGMCAbilityEffect*>& Existing : ActiveEffects)
+		{
+			if (Existing.Value
+				&& Existing.Value != Effect
+				&& Existing.Value->EffectData.EffectTag.IsValid()
+				&& Existing.Value->EffectData.EffectTag.MatchesTagExact(InitializationData.EffectTag))
+			{
+				UE_LOG(LogGMCAbilitySystem, Verbose,
+					TEXT("ApplyAbilityEffect rejected: bUniqueByEffectTag=true and tag '%s' already active on %s (existing id=%d)"),
+					*InitializationData.EffectTag.ToString(),
+					*GetNameSafe(GetOwner()),
+					Existing.Value->EffectData.EffectID);
+				return nullptr;
+			}
+		}
+	}
+
 	// Force the component this is being applied to to be the owner
 	InitializationData.OwnerAbilityComponent = this;
 	InitializationData.SourceAbilityComponent = this;
-	
+
 	Effect->InitializeEffect(InitializationData);
 	
 	if (Effect->EffectData.EffectID == 0)
@@ -2005,13 +2103,20 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
 
-	// Mirror into the GMC-bound list. Both client (predict-apply) and server (auth-apply)
-	// add the ID to their local copy. The bound state replication enforces convergence:
-	// if both sides applied the same effect deterministically, the lists match and no replay
-	// is needed. If only the client predicted (server rejected via cooldown / tag check /
-	// resource cost / etc.), the lists diverge → server's empty value wins → bound state
-	// drops the ID on the client → TickActiveEffects sees the ID gone and the effect can
-	// be reaped via the existing timeout / removal path.
+	// Mirror the new EffectID into the GMC-bound list. Both client (predict-apply) and
+	// server (auth-apply) write deterministically — same EffectID is generated by both
+	// sides via GetNextAvailableEffectID since ActionTimer + ActiveEffects are synced
+	// through GMC bound state. The bind mode is ServerAuth_Output_ServerValidated, so
+	// the client's locally-written value is overwritten by the server's authoritative
+	// replication WITHOUT triggering a client-side replay (that's what made
+	// ClientValidated unworkable here — sprint spam churn would replay-storm endlessly).
+	//
+	// Pending → Validated polling reads this state. In the legitimate case both sides
+	// write the same ID, the client sees it after replication, polling promotes to
+	// Validated, no timeout. In the rejected case (cheat / cooldown / tag prereq) only
+	// the client writes, server's authoritative "absence of ID" replicates back and
+	// overwrites the client-local addition, polling stays Pending, the 1s timeout in
+	// TickActiveEffects reaps the orphan.
 	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
 
 	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see

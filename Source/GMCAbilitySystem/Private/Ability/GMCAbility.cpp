@@ -275,7 +275,7 @@ void UGMCAbility::FinishEndAbility() {
 	// End handled effect
 	for (const auto& EfData : DeclaredEffect)
 	{
-		// Skip Auth effect removal on client 
+		// Skip Auth effect removal on client
 		if (EfData.Value == EGMCAbilityEffectQueueType::ServerAuth && !OwnerAbilityComponent->HasAuthority())  { continue;}
 
 		if (UGMCAbilityEffect* Effect =	OwnerAbilityComponent->GetEffectById(EfData.Key))
@@ -283,7 +283,30 @@ void UGMCAbility::FinishEndAbility() {
 			// Don't try to close effects that are already ended
 			if (Effect->CurrentState == EGMASEffectState::Started)
 			{
-				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, EfData.Value);
+				// FinishEndAbility runs in BOTH contexts:
+				//   - inside movement tick (natural end during PredictionTick / PredictedQueued drain)
+				//   - outside movement tick (RPCClientEndAbility → server-authoritative end signal)
+				//
+				// The declared QueueType is typically Predicted, whose Safe path hard-rejects
+				// when called outside a movement cycle (ensureMsgf in RemoveEffectByIdSafe).
+				// That gate exists to catch BP/user code attempting to predict-remove from a
+				// non-prediction context — but here we are NOT predicting; we are reacting to
+				// either local end or server-driven end. Remap Predicted → PredictedQueued so
+				// the removal:
+				//   - executes immediately when inside the movement cycle (identical outcome
+				//     to the original Predicted path), AND
+				//   - buffers into PendingPredictedOperations for next-tick drain when called
+				//     from an RPC handler outside the movement cycle (the orphan-effect bug).
+				// PredictedQueued is the only queue type with this dual-context handling
+				// already wired in (see RemoveEffectByIdSafe case PredictedQueued).
+				//
+				// Other queue types (ServerAuth*, ClientAuth) keep their original semantics —
+				// only Predicted is rerouted, since it is the one with the gating mismatch.
+				const EGMCAbilityEffectQueueType QueueType =
+					(EfData.Value == EGMCAbilityEffectQueueType::Predicted)
+						? EGMCAbilityEffectQueueType::PredictedQueued
+						: EfData.Value;
+				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, QueueType);
 			}
 			else
 			{

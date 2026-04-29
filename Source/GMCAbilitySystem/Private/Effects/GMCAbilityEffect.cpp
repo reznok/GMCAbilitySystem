@@ -431,24 +431,6 @@ bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& Tag
 	return false;
 }
 
-bool UGMCAbilityEffect::DuplicateEffectAlreadyApplied()
-{
-	if (EffectData.EffectTag == FGameplayTag::EmptyTag)
-	{
-		return false;
-	}
-	
-	for (const TPair<int, UGMCAbilityEffect*> Effect : OwnerAbilityComponent->GetActiveEffects())
-	{
-		if (Effect.Value->EffectData.EffectTag == this->EffectData.EffectTag && Effect.Value->bHasStarted)
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
 void UGMCAbilityEffect::CheckState()
 {
 	switch (CurrentState)

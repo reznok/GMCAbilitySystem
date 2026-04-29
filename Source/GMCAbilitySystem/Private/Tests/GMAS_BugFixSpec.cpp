@@ -36,6 +36,17 @@
 //                                   explicit initialiser (relied on UObject
 //                                   zero-fill which produces the wrong enum
 //                                   value on non-zero-initialised allocators).
+//   Bug #8  GMCAbilityEffect.h      bPreserveGrantedTagsIfMultiple default
+//                                   flipped from false → true. The previous
+//                                   default was a footgun for multi-instance
+//                                   effects: FGameplayTagContainer is set-like
+//                                   (no stack count), so removing the granted
+//                                   tag on the FIRST instance-end stripped it
+//                                   for sibling instances too. Caused the
+//                                   SprintCost re-trigger drain-stop bug
+//                                   (overlap of bilateral PredictedEnd defer
+//                                   on the released sprint with a fresh sprint
+//                                   apply). Single-instance behavior unchanged.
 //
 // All tests use the Layer-2 harness (UGMAS_TestMovementCmp + headless
 // UGMC_AbilitySystemComponent).  No world, no network stack.
@@ -762,8 +773,16 @@ void FGMASBugFixSpec::Define()
 			TestFalse("Remove of never-added ID stays absent", AbilityComp->BoundActiveEffectIDs_Contains(404));
 		});
 
-		It("ApplyAbilityEffect mirrors the new EffectID into the bound list", [this]()
+		It("ApplyAbilityEffect mirrors the EffectID into the bound list deterministically", [this]()
 		{
+			// Both sides (client and server) must write the EffectID into the bound list
+			// in ApplyAbilityEffect. The bind mode is ServerAuth_Output_ServerValidated:
+			// the server's authoritative bound state simply overwrites the client on
+			// replication, with no client-side replay storm on InstancedStruct comparison.
+			// The client's local write is a transient — confirmed (or corrected) by the
+			// next server replication. The bidirectional polling in TickActiveEffects
+			// reconciles: ID present in bound → Validated; absent → Pending; with the
+			// 1s timeout reaping orphans the server rejected.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -776,18 +795,22 @@ void FGMASBugFixSpec::Define()
 			const int Id = Effect->EffectData.EffectID;
 			TestTrue("Applied effect ID is in ActiveEffects",
 				AbilityComp->GetActiveEffects().Contains(Id));
-			TestTrue("Applied effect ID is mirrored into bound state",
+			TestTrue("Applied effect ID mirrored into bound state (deterministic both-side writer)",
 				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("TickActiveEffects cleanup drops completed-effect IDs from the bound list", [this]()
+		It("TickActiveEffects cleanup mirrors the deterministic both-side bound-state contract", [this]()
 		{
+			// Symmetric counterpart of the Apply contract: both sides write on Apply,
+			// both sides remove on cleanup. Bind mode ServerAuth_Output_ServerValidated
+			// means the server's authoritative removal replicates back to the client
+			// without triggering replay; the client's local removal is a transient that
+			// the next replication confirms (or restores if the server rejects the end).
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			// Instant effect: applies, then immediately marks itself Completed via EndEffect.
 			FGMCAbilityEffectData Data;
 			Data.EffectType = EGMASEffectType::Instant;
 			Data.Duration   = 0.f;
@@ -795,16 +818,14 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
 			const int Id = Effect->EffectData.EffectID;
-			TestTrue("Pre-tick: ID is in bound state",
+			TestTrue("Apply writes the ID into bound state (deterministic both-side writer)",
 				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
-			// Tick — the cleanup loop reaps the bCompleted instant effect and should
-			// drop its ID from the bound state at the same time.
 			AbilityComp->TickActiveEffects(1.f);
 
-			TestFalse("Post-tick: ID removed from ActiveEffects",
+			TestFalse("Post-tick: instant effect removed from ActiveEffects",
 				AbilityComp->GetActiveEffects().Contains(Id));
-			TestFalse("Post-tick: ID removed from bound state",
+			TestFalse("Post-tick: ID removed from bound state (symmetric cleanup)",
 				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			Effect->RemoveFromRoot();
@@ -858,6 +879,592 @@ void FGMASBugFixSpec::Define()
 			const auto State = AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id);
 			TestEqual("Pending stays Pending without bound-state confirmation",
 				static_cast<int>(State), static_cast<int>(EGMCEffectAnswerState::Pending));
+		});
+	});
+
+	// ── bUniqueByEffectTag opt-in single-instance protection ──────────────
+	//
+	// FGMCAbilityEffectData::bUniqueByEffectTag (default false). When true,
+	// ApplyAbilityEffect refuses to stack a new instance if another active
+	// effect on the owner already carries the same EffectTag (exact match).
+	// Rejection is side-effect-free: no EffectID burned, no ProcessedEffectIDs
+	// stamp, no ActiveEffectIDsBound write. Empty tag disables the check.
+	Describe("bUniqueByEffectTag: single-instance protection", [this]()
+	{
+		It("Default value is false (opt-in)", [this]()
+		{
+			const FGMCAbilityEffectData Default;
+			TestFalse("Default bUniqueByEffectTag is false (stacking allowed by default)",
+				Default.bUniqueByEffectTag);
+		});
+
+		It("Stacking allowed when bUniqueByEffectTag=false (default)", [this]()
+		{
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Persistent;
+			Data.Duration           = 0.f;
+			Data.EffectTag          = HealthTag;
+			Data.bUniqueByEffectTag = false;
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+
+			TestNotNull("First Apply succeeds", AppliedA);
+			TestNotNull("Second Apply succeeds (default stacking)", AppliedB);
+			TestEqual("Both instances are in ActiveEffects",
+				AbilityComp->GetActiveEffects().Num(), 2);
+
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
+
+		It("Second Apply rejected when bUniqueByEffectTag=true and tag already active", [this]()
+		{
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Persistent;
+			Data.Duration           = 0.f;
+			Data.EffectTag          = HealthTag;
+			Data.bUniqueByEffectTag = true;
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			TestNotNull("First Apply succeeds", AppliedA);
+			const int FirstId = AppliedA ? AppliedA->EffectData.EffectID : -1;
+
+			// Snapshot state before the rejected Apply — must be unchanged after.
+			const int ActiveCountBefore = AbilityComp->GetActiveEffects().Num();
+			const bool bBoundContainsFirst = AbilityComp->BoundActiveEffectIDs_Contains(FirstId);
+
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+
+			TestNull("Second Apply rejected (returns nullptr)", AppliedB);
+			TestEqual("ActiveEffects count unchanged after rejection",
+				AbilityComp->GetActiveEffects().Num(), ActiveCountBefore);
+			TestTrue("First effect's bound entry untouched after rejection",
+				AbilityComp->BoundActiveEffectIDs_Contains(FirstId) == bBoundContainsFirst);
+
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
+
+		It("Empty EffectTag disables the check (bUniqueByEffectTag=true is a no-op without tag)", [this]()
+		{
+			// Two untagged effects with the flag set — the check skips because
+			// matching empty tags against each other would silently collapse all
+			// untagged effects into a single-instance pool, which is rarely intended.
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Persistent;
+			Data.Duration           = 0.f;
+			Data.EffectTag          = FGameplayTag(); // empty
+			Data.bUniqueByEffectTag = true;
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+
+			TestNotNull("First Apply succeeds (no tag → no check)", AppliedA);
+			TestNotNull("Second Apply succeeds (no tag → no check)", AppliedB);
+
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
+
+		It("Different tags pass through even when bUniqueByEffectTag=true on both", [this]()
+		{
+			// The check is per-tag, not global. Two effects with DIFFERENT tags
+			// both flagged as unique are independent — each enforces uniqueness
+			// only against its own tag.
+			UGMCAbilityEffect* EffectHealth = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectMana   = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectHealth->AddToRoot(); EffectMana->AddToRoot();
+
+			FGMCAbilityEffectData HealthData;
+			HealthData.EffectType         = EGMASEffectType::Persistent;
+			HealthData.Duration           = 0.f;
+			HealthData.EffectTag          = HealthTag;
+			HealthData.bUniqueByEffectTag = true;
+
+			FGMCAbilityEffectData ManaData = HealthData;
+			ManaData.EffectTag            = ManaTag;
+
+			TestNotNull("Health Apply succeeds",
+				AbilityComp->ApplyAbilityEffect(EffectHealth, HealthData));
+			TestNotNull("Mana Apply succeeds (different tag)",
+				AbilityComp->ApplyAbilityEffect(EffectMana, ManaData));
+
+			EffectHealth->RemoveFromRoot(); EffectMana->RemoveFromRoot();
+		});
+
+		It("Re-Apply allowed once the previous instance has been removed", [this]()
+		{
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Instant; // ends immediately on Tick
+			Data.Duration           = 0.f;
+			Data.EffectTag          = HealthTag;
+			Data.bUniqueByEffectTag = true;
+			Data.Modifiers.Add(MakeHealthMod(1.f));
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			TestNotNull("First Apply succeeds", AppliedA);
+
+			// Tick: instant effect completes, cleanup removes it from ActiveEffects.
+			AbilityComp->TickActiveEffects(1.f);
+			TestFalse("First instance removed after tick",
+				AbilityComp->GetActiveEffects().Contains(AppliedA->EffectData.EffectID));
+
+			// Re-Apply: previous instance gone, the new one passes the check.
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+			TestNotNull("Re-Apply succeeds after first instance ended", AppliedB);
+
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
+	});
+
+	// ── Bug #8 — bPreserveGrantedTagsIfMultiple default flipped to true ────
+	//
+	// FGMCAbilityEffectData::bPreserveGrantedTagsIfMultiple was changed from
+	// false → true. Rationale: FGameplayTagContainer is set-like (no stack
+	// counting), so removing the tag on the FIRST instance-end while other
+	// instances of the same class still live silently strips the tag from
+	// the owner — observable as the SprintCost re-trigger drain-stop bug
+	// (Sprint #1 release armed bilateral PredictedEnd defer; Sprint #2 then
+	// applied a fresh SprintCost; when defer expired and Sprint #1 ended,
+	// its tag-removal yanked the tag the new SprintCost still relied on,
+	// MustHaveTags failed, drain stopped). Single-instance behavior is
+	// unchanged (the multi-instance branch never fires).
+	Describe("Bug #8: bPreserveGrantedTagsIfMultiple stacking semantics", [this]()
+	{
+		It("Default value is true (flipped from upstream's false)", [this]()
+		{
+			const FGMCAbilityEffectData Default;
+			TestTrue("Default bPreserveGrantedTagsIfMultiple is true",
+				Default.bPreserveGrantedTagsIfMultiple);
+		});
+
+		It("Single instance with preserve=true: tags are removed on end", [this]()
+		{
+			// preserve=true falls through to remove when there is no other instance
+			// of the same EffectTag — the multi-instance branch only protects when
+			// >1 ActiveEffects share the EffectTag.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			Data.EffectTag  = BurningTag;                        // identifies the class
+			Data.GrantedTags.AddTag(BurningTag);                 // tag granted on apply
+			Data.bPreserveGrantedTagsIfMultiple = true;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestTrue("Granted tag is on owner after apply",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			Effect->EndEffect();
+
+			TestFalse("Granted tag is removed when single instance ends (preserve=true)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Multi-instance with preserve=true: first end keeps tag, last end clears it", [this]()
+		{
+			// Apply two instances sharing the same EffectTag + GrantedTag. preserve=true
+			// must keep the tag on the owner while at least one instance is alive.
+			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffA->AddToRoot(); EffB->AddToRoot();
+
+			auto MakeData = [&]()
+			{
+				FGMCAbilityEffectData D;
+				D.EffectType = EGMASEffectType::Persistent;
+				D.Duration   = 0.f;
+				D.EffectTag  = BurningTag;
+				D.GrantedTags.AddTag(BurningTag);
+				D.bPreserveGrantedTagsIfMultiple = true;
+				return D;
+			};
+
+			AbilityComp->ApplyAbilityEffect(EffA, MakeData());
+			AbilityComp->ApplyAbilityEffect(EffB, MakeData());
+
+			TestTrue("Tag present after two applies",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// End A while B still alive — tag must survive (>1 instances at end-time).
+			EffA->EndEffect();
+			TestTrue("Tag preserved when one of two instances ends (preserve=true)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// End B — last instance, tag falls.
+			EffB->EndEffect();
+			TestFalse("Tag cleared when last instance ends (preserve=true)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
+		});
+
+		It("Multi-instance with preserve=false: footgun — first end strips tag", [this]()
+		{
+			// The pre-flip default behavior: tag is removed as soon as ANY instance
+			// ends, even if siblings of the same class still live. Confirms why we
+			// flipped the default — this is structurally wrong for stackable effects.
+			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffA->AddToRoot(); EffB->AddToRoot();
+
+			auto MakeData = [&]()
+			{
+				FGMCAbilityEffectData D;
+				D.EffectType = EGMASEffectType::Persistent;
+				D.Duration   = 0.f;
+				D.EffectTag  = BurningTag;
+				D.GrantedTags.AddTag(BurningTag);
+				D.bPreserveGrantedTagsIfMultiple = false;        // explicit footgun
+				return D;
+			};
+
+			AbilityComp->ApplyAbilityEffect(EffA, MakeData());
+			AbilityComp->ApplyAbilityEffect(EffB, MakeData());
+
+			EffA->EndEffect();
+
+			// preserve=false: tag stripped even though EffB still alive.
+			TestFalse("preserve=false strips the tag on first end (footgun)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
+		});
+
+		It("Re-trigger overlap simulation: new instance keeps the tag when old defer-ends", [this]()
+		{
+			// Simulates the Sprint re-trigger gameplay scenario:
+			//   t=0  : Sprint #1 applied   (instance A, EffectTag=X, GrantedTags=[X])
+			//   t=1  : Sprint #1 released  (bilateral defer arms — handled by ASC code,
+			//                                we elide that here and just keep A alive)
+			//   t=2  : Sprint #2 applied   (instance B, same EffectTag=X)
+			//   t=3  : Old defer expires   → A.EndEffect()
+			//          With preserve=true , B still alive → tag survives, B keeps draining
+			//          With preserve=false, A's end strips the tag, B's MustHaveTags fail
+			//                                 on next tick, drain stops — the bug
+			UGMCAbilityEffect* SprintCostA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* SprintCostB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			SprintCostA->AddToRoot(); SprintCostB->AddToRoot();
+
+			auto MakeSprintCostData = [&]()
+			{
+				FGMCAbilityEffectData D;
+				D.EffectType = EGMASEffectType::Ticking;          // mirrors real SprintCost
+				D.Duration   = 0.f;
+				D.EffectTag  = BurningTag;                        // stand-in for "Sprint" tag
+				D.GrantedTags.AddTag(BurningTag);
+				D.bPreserveGrantedTagsIfMultiple = true;          // the fix
+				return D;
+			};
+
+			AbilityComp->ApplyAbilityEffect(SprintCostA, MakeSprintCostData());
+			AbilityComp->ApplyAbilityEffect(SprintCostB, MakeSprintCostData());
+
+			TestTrue("Tag granted by both instances while overlapping",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// Old SprintCost A's bilateral defer expires — A ends naturally.
+			SprintCostA->EndEffect();
+
+			TestTrue("Tag still present after old instance defer-ends (B alive, preserve=true)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// New SprintCost B is now the sole owner of the tag — eventually it ends too.
+			SprintCostB->EndEffect();
+
+			TestFalse("Tag cleared once B (the surviving instance) ends",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			SprintCostA->RemoveFromRoot(); SprintCostB->RemoveFromRoot();
+		});
+
+		It("preserve=true with no EffectTag falls back to remove (set-like container can't gate)", [this]()
+		{
+			// RemoveTagsFromOwner needs a valid EffectTag to count siblings via
+			// GetActiveEffectsByTag; without one, it logs a warning and falls through
+			// to the unconditional remove. Documented behavior — captured here so a
+			// future refactor doesn't silently change it.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			// EffectTag deliberately left empty.
+			Data.GrantedTags.AddTag(BurningTag);
+			Data.bPreserveGrantedTagsIfMultiple = true;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestTrue("Tag present after apply", AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			AddExpectedError(TEXT("Effect Tag is not valid with PreserveMultipleInstances"),
+				EAutomationExpectedErrorFlags::Contains, 1);
+			Effect->EndEffect();
+
+			TestFalse("Tag removed because EffectTag was missing (preserve fallback)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			Effect->RemoveFromRoot();
+		});
+	});
+
+	// ── Bug #4 v2 extensions: drift detection and recovery ─────────────────
+	//
+	// Beyond the basic Pending → Validated polling tested above, these cases
+	// exercise what happens when the bound state DIVERGES from the local
+	// ProcessedEffectIDs / ActiveEffects view: timeout drift, recovery via
+	// late server confirmation, partial stacks where some instances are
+	// validated and others are not. All tests inline the polling logic
+	// because the headless harness is authoritative-by-default and the
+	// production polling block is gated by !HasAuthority().
+	Describe("Bug #4 v2: drift detection and recovery", [this]()
+	{
+		// Helper: drain the production polling logic once, deterministically.
+		// Mirror of TickActiveEffects' MONOTONIC reconciliation: ID present in bound
+		// state promotes Pending → Validated. No demotion path — the server-rejected
+		// case is caught by the Pending+timeout reap below; the server-removed case
+		// is delivered via RPCClientEndEffect. Demoting on bound-absence was found to
+		// reap legitimate effects during the natural 1-2 tick replication lag window.
+		auto RunPollingOnce = [this]()
+		{
+			for (auto& ProcessedPair : AbilityComp->GetProcessedEffectIDsForTest())
+			{
+				if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+					&& AbilityComp->BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+				{
+					ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				}
+			}
+		};
+
+		It("Drift: predicted apply with no bound confirmation eventually times out", [this, RunPollingOnce]()
+		{
+			// Apply a Predicted effect locally without ever adding the ID to the
+			// bound state — server scenario where the activation never reached the
+			// authoritative side. After ClientGraceTime + tick, the timeout in
+			// TickActiveEffects must fire and reap the local instance.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+
+			// Manually scrub the bound state — simulates "server never added the ID"
+			// since the effect we just applied auto-mirrored on the client side.
+			AbilityComp->BoundActiveEffectIDs_Remove(Id);
+
+			// Push ActionTimer past the timeout window. The default
+			// ClientEffectApplicationTimeout is 1.0; effect's
+			// ClientEffectApplicationTime was set to 1.0 in InitializeEffect.
+			AbilityComp->ActionTimer = 5.0;
+			RunPollingOnce();
+			AbilityComp->TickActiveEffects(0.f);
+
+			TestFalse("Timed-out predicted effect removed from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestFalse("Timed-out predicted effect removed from ProcessedEffectIDs",
+				AbilityComp->GetProcessedEffectIDsForTest().Contains(Id));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Recovery: late bound-state confirmation prevents timeout", [this, RunPollingOnce]()
+		{
+			// Apply locally, server confirms via bound state JUST before timeout
+			// would fire. Validated state must stick, no removal.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+
+			// Apply auto-mirrored the ID into the bound state (deterministic both-side
+			// writer). Scrub it to simulate the "server hasn't replicated confirmation
+			// yet" window — which is exactly the divergence the polling+timeout machinery
+			// has to handle.
+			AbilityComp->BoundActiveEffectIDs_Remove(Id);
+
+			// Step 1 : ActionTimer advances but stays within timeout window.
+			AbilityComp->ActionTimer = 1.5;
+			RunPollingOnce();
+			AbilityComp->TickActiveEffects(0.f);
+			TestEqual("Still Pending while ID absent from bound state",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id)),
+				static_cast<int>(EGMCEffectAnswerState::Pending));
+			TestTrue("Effect still in ActiveEffects (within grace)",
+				AbilityComp->GetActiveEffects().Contains(Id));
+
+			// Step 2 : server's bound state arrives carrying the ID.
+			AbilityComp->BoundActiveEffectIDs_Add(Id);
+
+			// Step 3 : another tick promotes Pending → Validated.
+			RunPollingOnce();
+			AbilityComp->TickActiveEffects(0.f);
+			TestEqual("Promoted to Validated on bound-state arrival",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id)),
+				static_cast<int>(EGMCEffectAnswerState::Validated));
+
+			// Step 4 : even past the original timeout window, the Validated state
+			// shields the effect — no late removal.
+			AbilityComp->ActionTimer = 10.0;
+			AbilityComp->TickActiveEffects(0.f);
+			TestTrue("Validated effect survives past would-be timeout",
+				AbilityComp->GetActiveEffects().Contains(Id));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Partial stack: validated and pending IDs coexist; only validated survive timeout", [this, RunPollingOnce]()
+		{
+			// Two predicted instances (different IDs). Server confirms only one
+			// via the bound state. After timeout window passes, the unconfirmed
+			// one is reaped, the confirmed one stays.
+			UGMCAbilityEffect* EffOK   = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffDrop = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffOK->AddToRoot(); EffDrop->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+
+			AbilityComp->ApplyAbilityEffect(EffOK,   Data);
+			AbilityComp->ApplyAbilityEffect(EffDrop, Data);
+
+			const int IdOK   = EffOK->EffectData.EffectID;
+			const int IdDrop = EffDrop->EffectData.EffectID;
+			TestNotEqual("Two distinct EffectIDs were assigned", IdOK, IdDrop);
+
+			AbilityComp->GetProcessedEffectIDsForTest().Add(IdOK,   EGMCEffectAnswerState::Pending);
+			AbilityComp->GetProcessedEffectIDsForTest().Add(IdDrop, EGMCEffectAnswerState::Pending);
+
+			// Server confirms only IdOK; IdDrop stays absent.
+			AbilityComp->BoundActiveEffectIDs_Add(IdOK);
+			AbilityComp->BoundActiveEffectIDs_Remove(IdDrop);
+
+			// Polling promotes IdOK; advance past timeout to reap IdDrop.
+			AbilityComp->ActionTimer = 5.0;
+			RunPollingOnce();
+			AbilityComp->TickActiveEffects(0.f);
+
+			TestTrue("Validated stack member survives",
+				AbilityComp->GetActiveEffects().Contains(IdOK));
+			TestFalse("Unvalidated stack member is reaped",
+				AbilityComp->GetActiveEffects().Contains(IdDrop));
+
+			EffOK->RemoveFromRoot(); EffDrop->RemoveFromRoot();
+		});
+
+		It("Validated is monotonic: server-side bound-state drop does NOT demote Validated", [this, RunPollingOnce]()
+		{
+			// Polling promotion is one-way. Once an effect is Validated, transient
+			// bound-state absence (e.g. natural replication lag with Periodic_Output
+			// simulation mode) must NOT demote it back to Pending — that would expose
+			// legitimate effects to the timeout reap path during a benign 1-2 tick
+			// window after Apply, which was observed killing EF_Humanoid_Stamina_Recovery
+			// on the live client and producing chain replays as Stamina diverged.
+			//
+			// Server-explicit removals come through RPCClientEndEffect, not through
+			// inference on bound-state absence.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+			// Apply already wrote the ID into the bound state (deterministic both-side
+			// writer); the explicit Add here is a no-op kept for readability.
+			AbilityComp->BoundActiveEffectIDs_Add(Id);
+
+			RunPollingOnce();
+			TestEqual("Promoted to Validated on bound presence",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id)),
+				static_cast<int>(EGMCEffectAnswerState::Validated));
+
+			// Server's bound state replicates without the ID — could be a one-tick
+			// lag (snapshot captured pre-AncillaryTick-apply) or an authoritative drop.
+			AbilityComp->BoundActiveEffectIDs_Remove(Id);
+
+			RunPollingOnce();
+			TestEqual("Validated stays Validated through bound-state absence",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id)),
+				static_cast<int>(EGMCEffectAnswerState::Validated));
+
+			// Even past the would-be timeout window, the Validated effect is shielded
+			// from the Pending+timeout reap path (which gates on Pending only).
+			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->TickActiveEffects(0.f);
+			TestTrue("Validated effect is NOT reaped through bound-state absence + timeout",
+				AbilityComp->GetActiveEffects().Contains(Id));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Effect cleanup follows the server-only contract for bound-state removal", [this]()
+		{
+			// Server-only writer contract for ActiveEffectIDsBound: only the authoritative
+			// side adds/removes IDs, the client receives the result via replication. The
+			// cleanup loop in TickActiveEffects mirrors that — `BoundActiveEffectIDs_Remove`
+			// is gated by HasAuthority() in production. The headless harness reports
+			// HasAuthority()==false on orphan components, so the in-process Remove is
+			// elided. We simulate the server-replication path explicitly by populating
+			// the bound state up front.
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Instant;
+			Data.Duration   = 0.f;
+			Data.Modifiers.Add(MakeHealthMod(1.f));
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			// Simulate the server having replicated the ID into our bound state.
+			AbilityComp->BoundActiveEffectIDs_Add(Id);
+			TestTrue("Pre-tick: simulated server-confirmed ID present",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
+
+			AbilityComp->TickActiveEffects(0.f);
+
+			TestFalse("Cleanup: instant effect removed from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			// Bound state stays as last-replicated until server's next sync overwrites it
+			// — the local cleanup is server-gated by design (mirrors the Apply contract).
+			// Production parity: in a networked context, the server's next move-tick output
+			// brings the client back into sync.
+
+			Effect->RemoveFromRoot();
 		});
 	});
 

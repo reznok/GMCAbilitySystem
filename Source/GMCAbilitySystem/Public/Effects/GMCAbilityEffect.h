@@ -109,10 +109,52 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
-	// Whether to preserve the granted tags if multiple instances of the same effect are applied
-	// If false, will remove all stacks of the tag
+	// When an effect ends, controls whether the GrantedTags are removed from the owner if other
+	// instances of the same effect class are still active.
+	//
+	//  true  (default) — tags are preserved while ANY instance of this class is alive on the
+	//                    owner; the last instance to end clears the tags. Matches the natural
+	//                    "tag reflects whether the effect's state is currently active" semantic.
+	//                    Required for stackable effects (multiple buffs of same class) AND for
+	//                    re-trigger overlap scenarios where an old instance is still in its
+	//                    bilateral PredictedEnd defer (Bug #3) while a new instance has been
+	//                    applied — without preservation, the old instance's EndEffect cleanup
+	//                    would yank the tag the new instance still relies on (e.g. SprintCost
+	//                    overlap killing drain on the new sprint).
+	//  false           — remove granted tags as soon as ANY instance of this class ends. Only
+	//                    pick this when per-instance tag tracking is explicitly desired and
+	//                    you understand that overlapping instances will produce a tag flicker.
+	//
+	// Default flipped from `false` to `true` in this fork: the previous default was a footgun
+	// for multi-instance effects (FGameplayTagContainer is set-like — it cannot represent stack
+	// counts — so removing the tag on first-instance-end was structurally wrong as soon as more
+	// than one instance lived). For single-instance effects (the common case), the new default
+	// is identical to the old: there is no other instance to consider.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	bool bPreserveGrantedTagsIfMultiple = false;
+	bool bPreserveGrantedTagsIfMultiple = true;
+
+	// Opt-in single-instance protection. When true, ApplyAbilityEffect refuses to
+	// stack a new instance if another active effect on the owner already carries
+	// the same EffectTag (exact match). Returns nullptr from the inner Apply path;
+	// callers using the outer overloads receive bSuccess=false / OutEffect=nullptr.
+	//
+	// Requires EffectTag to be set — an empty tag disables the check (we don't want
+	// to silently match every untagged effect against every other untagged effect).
+	//
+	// Use cases:
+	//   - Buffs/debuffs that should refresh-or-ignore rather than stack (e.g. one
+	//     active "Bleeding" instance regardless of how many sources hit you).
+	//   - One-shot consumables whose double-apply is a UI / input-spam bug.
+	//   - Persistent state markers where multiple instances would corrupt the
+	//     attribute pipeline (e.g. paired Add/Remove modifier semantics).
+	//
+	// Off by default — stacking IS the intended behaviour for many effect types
+	// (DoT instances from multiple sources, multi-source heals, etc.) and the
+	// existing bPreserveGrantedTagsIfMultiple already handles tag-set semantics
+	// for the multi-instance case. Enable explicitly only when single-instance
+	// is the desired contract.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	bool bUniqueByEffectTag = false;
 
 	// Tags that the owner must have to apply this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -322,8 +364,6 @@ private:
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
 	
-	bool DuplicateEffectAlreadyApplied();
-
 	void EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery);
 
 	
