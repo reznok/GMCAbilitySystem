@@ -109,65 +109,24 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
-	// When an effect ends, controls whether the GrantedTags are removed from the owner if other
-	// instances of the same effect class are still active.
-	//
-	//  true  (default) — tags are preserved while ANY instance of this class is alive on the
-	//                    owner; the last instance to end clears the tags. Matches the natural
-	//                    "tag reflects whether the effect's state is currently active" semantic.
-	//                    Required for stackable effects (multiple buffs of same class) AND for
-	//                    re-trigger overlap scenarios where an old instance is still in its
-	//                    bilateral PredictedEnd defer (Bug #3) while a new instance has been
-	//                    applied — without preservation, the old instance's EndEffect cleanup
-	//                    would yank the tag the new instance still relies on (e.g. SprintCost
-	//                    overlap killing drain on the new sprint).
-	//  false           — remove granted tags as soon as ANY instance of this class ends. Only
-	//                    pick this when per-instance tag tracking is explicitly desired and
-	//                    you understand that overlapping instances will produce a tag flicker.
-	//
-	// Default flipped from `false` to `true` in this fork: the previous default was a footgun
-	// for multi-instance effects (FGameplayTagContainer is set-like — it cannot represent stack
-	// counts — so removing the tag on first-instance-end was structurally wrong as soon as more
-	// than one instance lived). For single-instance effects (the common case), the new default
-	// is identical to the old: there is no other instance to consider.
+	// When true (default), GrantedTags survive on the owner while any other same-EffectTag
+	// instance is still alive — only the last instance to end clears the tags. Required for
+	// stackable effects: FGameplayTagContainer is set-like and can't track stack counts, so
+	// per-instance tag removal would yank the tag while siblings still depend on it.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bPreserveGrantedTagsIfMultiple = true;
 
-	// Opt-in single-instance protection. When true, ApplyAbilityEffect refuses to
-	// stack a new instance if another active effect on the owner already carries
-	// the same EffectTag (exact match). Returns nullptr from the inner Apply path;
-	// callers using the outer overloads receive bSuccess=false / OutEffect=nullptr.
+	// Opt-in single-instance protection by EffectTag (exact match). New Apply is
+	// rejected if a same-tag effect is functionally active; if the match is in its
+	// bilateral PredictedEnd defer window, the new Apply succeeds and the old is
+	// replaced — server force-ends immediately, client suspends-then-finalizes-or-
+	// revives based on the successor's server verdict (Validated vs Timeout).
+	// Empty EffectTag disables the check.
 	//
-	// Requires EffectTag to be set — an empty tag disables the check (we don't want
-	// to silently match every untagged effect against every other untagged effect).
-	//
-	// Replace-on-deferred semantics: if the existing same-tag effect is in its
-	// bilateral PredictedEnd defer window (EndAtActionTimer >= 0), the new Apply
-	// SUCCEEDS and the old instance is suspended client-side (stops applying
-	// modifiers) and recoverable. The polling later finalizes the old when the
-	// new effect is server-confirmed (Validated), or revives the old if the new
-	// is server-rejected (Timeout). On the server, the old is force-ended
-	// immediately at apply time — server is authoritative, no recovery needed.
-	//
-	// ⚠️ Drift caveat for non-Ticking effects:
-	// The replace-on-deferred recovery preserves drain-rate symmetry between client
-	// and server PERFECTLY for `Ticking` effects (continuous flow `ModifierValue ×
-	// DeltaTime` per tick — both sides drain at the same rate from different
-	// sources during the recovery window). For other types there are bounded edge
-	// cases:
-	//   - Periodic: firing OFFSETS differ between OLD and NEW (different StartTime),
-	//     so the rolling stamina/attribute can drift up to one modifier-worth at
-	//     any instant within the period cycle. Bounded, not cumulative.
-	//   - Persistent + bNegateEffectAtEnd: when the OLD ends naturally on server,
-	//     the negate fires server-side but the NEW persists client-side — produces
-	//     a `ModifierValue`-sized step divergence at the OLD's natural-end moment.
-	// Use bUniqueByEffectTag mainly on Ticking effects, or accept the caveat above.
-	//
-	// Off by default — stacking IS the intended behaviour for many effect types
-	// (DoT instances from multiple sources, multi-source heals, etc.) and the
-	// existing bPreserveGrantedTagsIfMultiple already handles tag-set semantics
-	// for the multi-instance case. Enable explicitly only when single-instance
-	// is the desired contract.
+	// Drain-rate symmetry between client and server during the recovery window is
+	// exact for Ticking modifiers (continuous flow). Periodic/Persistent effects
+	// can produce a bounded drift up to one modifier-worth — prefer Ticking, or
+	// accept the bounded mismatch.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bUniqueByEffectTag = false;
 
@@ -207,8 +166,13 @@ struct FGMCAbilityEffectData
 	
 	bool IsValid() const
 	{
+		// bUniqueByEffectTag carries runtime intent on its own (single-instance protection
+		// keyed on EffectTag); EffectTag's presence is similarly meaningful as identity for
+		// query/removal paths even without granted content. Both count as "valid override"
+		// against the CDO defaults at apply time.
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
-				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
+				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer()
+				|| bUniqueByEffectTag || EffectTag.IsValid();
 	}
 
 	FString ToString() const{
@@ -328,22 +292,16 @@ public:
 
 	bool bCompleted;
 
-	// Anti-drift on Predicted Remove for Ticking/Periodic effects: deterministic bilateral defer using
-	// an absolute ActionTimer timestamp instead of a per-tick countdown. Both client and server arm
-	// EndAtActionTimer = ActionTimer + ClientGraceTime when Remove is processed at the same logical
-	// move tick (GMC replay invariant) — they end on the exact same logical tick by construction,
-	// independent of DeltaTime, framerate, or replay re-execution.
-	//
-	// -1.0 = not armed. >= 0 = armed, end when OwnerAbilityComponent->ActionTimer >= EndAtActionTimer.
+	// Bilateral defer absolute timestamp for Predicted Remove on Ticking/Periodic effects.
+	// Both sides arm `ActionTimer + ClientGraceTime` at the same logical move tick so they
+	// end on the same logical tick regardless of DeltaTime / framerate / replay count.
+	// -1.0 = not armed; >= 0 = armed, end when ActionTimer reaches the value.
 	double EndAtActionTimer { -1.0 };
 
-	// Predict-replace recoverable suspension. Set on the OLD instance when a new same-tag effect with
-	// bUniqueByEffectTag was predicted client-side and may be rejected by server. Suspended effects
-	// stop applying their modifiers (Tick early-returns) but stay otherwise intact (tags, abilities,
-	// EndAtActionTimer all preserved). The component finalizes the death (calls EndEffect) when the
-	// replacing effect is server-confirmed (Validated), or revives the OLD by clearing this flag if
-	// the replacement is rejected (Timeout). On the server, this flag is never set — the server is
-	// authoritative and force-ends the OLD immediately at apply time.
+	// Set on the OLD instance during a client-side bUniqueByEffectTag REPLACE. Tick early-
+	// returns (no modifier application) but tags / abilities / EndAtActionTimer survive.
+	// Cleared by the polling block in TickActiveEffects when the successor reaches
+	// Validated (real EndEffect runs) or Timeout (OLD is revived).
 	bool bPendingDeathBySuccessor = false;
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not

@@ -149,27 +149,11 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::PeriodicAndOnChange_Output,
 		EGMC_InterpolationFunction::TargetValue);
 
-	// Bind our operation queues.
-	// QueuedAbilityOperations.BindToGMC(GMCMovementComponent);
-	// QueuedEffectOperations.BindToGMC(GMCMovementComponent);
-	// QueuedEffectOperations_ClientAuth.BindToGMC(GMCMovementComponent);
-	// QueuedEventOperations.BindToGMC(GMCMovementComponent);
 	BoundQueueV2.BindToGMC(GMCMovementComponent);
 
-	// Active effect IDs — atomic with the move state via GMC bound state. Single source of
-	// truth for the Pending → Validated transition on Predicted effects (see
-	// FGMASActiveEffectIDsState docstring).
-	//
-	// Bind mode: ServerAuth_Output_ServerValidated. Critical choice — the alternative
-	// `ClientValidated` mode triggers a client-side replay every time the client's
-	// computed bound state diverges from the server's incoming value. Under sprint spam
-	// (rapid Apply/Remove churn on this list) the GMC InstancedStruct equality check is
-	// imprecise enough that minor element-order or transient single-frame differences
-	// register as a divergence, producing replay storms (observed: 30+ replays/sec
-	// of 25-50 moves each). With ServerValidated, divergence on the OUTPUT side does
-	// not trigger client replay — server is the truth, the client just receives it.
-	// Validation happens server-side on the client's INPUT (move log), which is what
-	// we actually care about for anti-cheat.
+	// ServerValidated (not ClientValidated): output-side divergence does not trigger
+	// client replay — required because GMC's InstancedStruct equality is order-sensitive
+	// and would replay-storm under apply/remove churn on this list.
 	if (!ActiveEffectIDsBound.IsValid())
 	{
 		ActiveEffectIDsBound.InitializeAs<FGMASActiveEffectIDsState>();
@@ -180,12 +164,6 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
 }
-
-// ---------------------------------------------------------------------------
-// FGMASActiveEffectIDsState helpers — keep callers tidy. The bound state is an
-// FInstancedStruct so direct access requires GetMutablePtr / GetPtr; centralise
-// that here. All three helpers are idempotent w.r.t. the underlying TArray.
-// ---------------------------------------------------------------------------
 
 void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Add(int EffectID)
 {
@@ -1046,55 +1024,15 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
-	// Replay-safety gate. TickActiveEffects runs from GenPredictionTick, which re-runs
-	// during GMC client replay. During replay:
-	//   - GMC-bound state (ActiveEffectIDsBound) IS rewound to a past snapshot, then
-	//     re-applied move-by-move.
-	//   - Non-bound state (ProcessedEffectIDs, ActiveEffects) is NOT rewound — it
-	//     persists across the replay loop.
-	// If we let the polling/timeout block run during replay, it can transition the
-	// PERSISTENT state (Validated → Pending → Reap) based on a TRANSIENT bound-state
-	// snapshot that's mid-rewind. Worst-case scenario observed: a long-lived effect
-	// like EF_Humanoid_Stamina_Recovery gets reaped during replay (because
-	// ClientEffectApplicationTime is old), the local instance is destroyed, Stamina
-	// stops regenerating on the client → permanent divergence with the server →
-	// chain replays forever.
-	//
-	// The post-replay frame's polling reconciles cleanly against the converged
-	// bound state. Skipping the block during replay does not delay legitimate
-	// promotions/demotions — it just defers them by one tick past replay end.
+	// Skip during replay: ProcessedEffectIDs / ActiveEffects don't rewind, so mutating
+	// them off transient rewound bound-state snapshots reaps live effects mid-replay.
 	const bool bIsReplaying = IsReplayingForGMASLogic();
 
-	// One-way reconciliation against the GMC-bound list (replicated server
-	// authoritative, ServerAuth_Output_ServerValidated mode):
-	//
-	//   ID present in bound + Pending → promote to Validated
-	//   anything else                 → no change
-	//
-	// The promotion path is monotonic and safe. We deliberately DO NOT demote
-	// Validated → Pending when the ID is absent from bound, even though that
-	// would help auto-reap server-rejected effects after-the-fact. Reasons:
-	//
-	//   1. The server-rejected case (client predict-apply, server never validated)
-	//      is already caught by the timeout branch below: ProcessedEffectIDs is
-	//      stamped Pending in ApplyAbilityEffect line 2040, the server never adds
-	//      the ID to bound, polling never promotes, the 1s ClientEffectApplicationTimeout
-	//      window reaps it. No demotion needed.
-	//
-	//   2. The server-explicitly-removed case (dispel, cleanse, ability cancel) has
-	//      a dedicated channel: RPCClientEndEffect from the server's cleanup loop
-	//      (line 1099). Inferring removal from bound-state absence duplicates that
-	//      signal with worse timing characteristics.
-	//
-	//   3. The bound state has natural replication latency. With Periodic_Output
-	//      simulation mode, the server's snapshot at time T may not yet reflect
-	//      a same-tick AncillaryTick apply (snapshot captured from PredictionTick
-	//      output, AncillaryTick runs AFTER). When the server's "ID-less" snapshot
-	//      reaches the client and overwrites the local Add (ServerValidated mode),
-	//      a demotion path would reap the local instance during a benign 1-2 tick
-	//      lag window. Observed in production: EF_Humanoid_Stamina_Recovery_C
-	//      reaped within ~1s of apply, killing client-side regen, producing chain
-	//      replays as Stamina diverged from the still-regenerating server value.
+	// Monotonic Pending → Validated promotion. Demotion is intentionally absent —
+	// bound-state replication has natural latency, and inferring removal from
+	// bound absence would reap legitimate effects during the round-trip window.
+	// Server-explicit removal goes through RPCClientEndEffect; server-rejected
+	// predicts age out via the Pending+timeout reap below.
 	if (!HasAuthority() && !bIsReplaying)
 	{
 		for (auto& ProcessedPair : ProcessedEffectIDs)
@@ -1187,9 +1125,8 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		// Notify client. Redundant.
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
 
-		// Safety: if the successor never reached Validated or Timeout but is being
-		// cleaned up through some other path (ability force-end, manual remove,
-		// etc.), revive any still-suspended OLDs we'd otherwise orphan as zombies.
+		// Revive any OLDs still suspended on this successor — covers cleanup paths
+		// that bypass the Validated/Timeout transitions.
 		if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(EffectID))
 		{
 			for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
@@ -1208,11 +1145,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		ActiveEffects.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
 
-		// Drop the ID from the bound list on both sides — symmetric with the deterministic
-		// Add in ApplyAbilityEffect. Bind mode ServerAuth_Output_ServerValidated means the
-		// server's authoritative removal replicates back to client without triggering
-		// client-side replay; the client's local removal is just a transient that gets
-		// confirmed (or corrected) by the next replication.
+		// Symmetric with the Add in ApplyAbilityEffect.
 		BoundActiveEffectIDs_Remove(EffectID);
 	}
 
@@ -2130,38 +2063,9 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		return nullptr;
 	}
 
-	// Single-instance protection (opt-in). If the incoming effect data carries
-	// bUniqueByEffectTag and a non-empty EffectTag, refuse to apply when another
-	// active effect on this owner already carries the same tag (exact match).
-	//
-	// Two cases for an existing same-tag match:
-	//
-	//   FUNCTIONALLY ACTIVE  (EndAtActionTimer < 0): the existing instance owns
-	//      the tag slot — REJECT the new Apply with zero side effects.
-	//
-	//   IN BILATERAL DEFER   (EndAtActionTimer >= 0, armed by Remove on a Ticking/
-	//      Periodic effect with ClientGraceTime): the existing instance is in
-	//      teardown, kept alive only to preserve client/server tick-count symmetry.
-	//      We REPLACE: the new Apply proceeds AND we force-end the existing one
-	//      immediately. Without the force-end, the deferred effect keeps ticking its
-	//      modifiers until its timer fires (Tick early-returns only on bCompleted,
-	//      not on armed-but-not-yet-due defer), producing double-drain during the
-	//      overlap window. Concrete repro: spam-Sprint at the moment of release/
-	//      re-press, both SprintCost #1 (in defer) and SprintCost #2 (fresh) tick
-	//      Stamina drain → 2× consumption for ~ClientGraceTime.
-	//
-	// Run the rejection-check BEFORE InitializeEffect / EffectID assignment /
-	// bound-state writes — a rejected Apply must produce ZERO side effects.
-	// The force-end of deferred matches happens AFTER the new is added to
-	// ActiveEffects (further down in this function), so the new instance is in
-	// place when the old's RemoveTagsFromOwner(bPreserveGrantedTagsIfMultiple=true)
-	// counts siblings; otherwise the GrantedTags would flicker for one tick.
-	//
-	// Determinism: Apply is invoked at the same logical ActionTimer on client and
-	// server (predicted via PredictionTick or via the bound queue); the resulting
-	// force-end fires on both sides at the same logical tick, so the OLD effect's
-	// total tick count remains identical between client and server (just shorter
-	// than the originally-scheduled defer). Bilateral symmetry preserved.
+	// bUniqueByEffectTag: reject if a same-tag effect is functionally active; collect
+	// deferred (EndAtActionTimer >= 0) ones to replace after the new is added below.
+	// Done before InitializeEffect so a rejection has zero side effects.
 	TArray<UGMCAbilityEffect*> DeferredMatchesToReplace;
 	if (InitializationData.bUniqueByEffectTag && InitializationData.EffectTag.IsValid())
 	{
@@ -2177,14 +2081,12 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 
 			if (Existing.Value->EndAtActionTimer >= 0.0)
 			{
-				// Deferred — schedule for force-end after the new instance is added.
 				DeferredMatchesToReplace.Add(Existing.Value);
 			}
 			else
 			{
-				// Functionally active — reject.
 				UE_LOG(LogGMCAbilitySystem, Verbose,
-					TEXT("ApplyAbilityEffect rejected: bUniqueByEffectTag=true and tag '%s' already active on %s (existing id=%d)"),
+					TEXT("ApplyAbilityEffect rejected: bUniqueByEffectTag=true, tag '%s' already active on %s (id=%d)"),
 					*InitializationData.EffectTag.ToString(),
 					*GetNameSafe(GetOwner()),
 					Existing.Value->EffectData.EffectID);
@@ -2216,44 +2118,14 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
 
-	// Mirror the new EffectID into the GMC-bound list. Both client (predict-apply) and
-	// server (auth-apply) write deterministically — same EffectID is generated by both
-	// sides via GetNextAvailableEffectID since ActionTimer + ActiveEffects are synced
-	// through GMC bound state. The bind mode is ServerAuth_Output_ServerValidated, so
-	// the client's locally-written value is overwritten by the server's authoritative
-	// replication WITHOUT triggering a client-side replay (that's what made
-	// ClientValidated unworkable here — sprint spam churn would replay-storm endlessly).
-	//
-	// Pending → Validated polling reads this state. In the legitimate case both sides
-	// write the same ID, the client sees it after replication, polling promotes to
-	// Validated, no timeout. In the rejected case (cheat / cooldown / tag prereq) only
-	// the client writes, server's authoritative "absence of ID" replicates back and
-	// overwrites the client-local addition, polling stays Pending, the 1s timeout in
-	// TickActiveEffects reaps the orphan.
+	// Both sides write deterministically; server's value overwrites client on replication.
 	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
 
-	// Replace deferred same-tag matches. Client and server use different paths:
-	//
-	//   SERVER (HasAuthority): force-end immediately. The server is authoritative;
-	//   if we're here, the new effect is committed. Run full EndEffect on the OLD.
-	//
-	//   CLIENT (predict-apply): suspend the OLD via bPendingDeathBySuccessor and
-	//   record the (successor, [old]) mapping in PendingReplacements. Suspension
-	//   stops the OLD's modifier application but leaves tags / abilities /
-	//   EndAtActionTimer intact, so we can revive cheaply if the server rejects
-	//   the new effect. The client polling later promotes the successor (Pending →
-	//   Validated) or times it out, at which point we finalize OR revive the OLD.
-	//
-	//   Why split: a client predict-then-server-reject scenario otherwise leaves
-	//   the OLD permanently dead client-side while the server keeps it ticking,
-	//   producing exactly the chain-replay-on-Stamina pattern this project has
-	//   spent prior sessions eliminating. Keeping the OLD recoverable on the
-	//   client until the server confirms preserves drain-rate symmetry: in both
-	//   accept and reject branches, exactly one same-tag effect ticks per side.
-	//
-	// Order rationale unchanged from the immediate-finalize variant: ActiveEffects.Add
-	// of the NEW must precede any EndEffect on the OLD so the multi-instance preserve
-	// check counts the NEW as a sibling and avoids a one-tick GrantedTags flicker.
+	// Replace deferred same-tag matches. Server force-ends immediately (authoritative);
+	// client suspends the OLD pending the successor's Validated/Timeout verdict so a
+	// server-rejected predict can revive the OLD instead of leaving it permanently dead.
+	// Order: ActiveEffects.Add above must precede any EndEffect here so the multi-instance
+	// preserve check counts the NEW as a sibling (no one-tick GrantedTags flicker).
 	if (HasAuthority())
 	{
 		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
@@ -2285,9 +2157,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		}
 	}
 
-	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see
-	// exactly which path created this instance (RPCOnServerOperationAdded, bound state replay,
-	// PendingPredictedOperations drain, BP, etc.). Use to chase duplicate-apply bugs.
+	// CVar-gated apply-path stackdump for chasing duplicate-apply bugs.
 	if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
 	{
 		const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
@@ -2868,10 +2738,6 @@ bool UGMC_AbilitySystemComponent::IsReplayingForGMASLogic() const
 #endif
 	return GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Replay-burst diagnostic — sliding-window occurrence counter
-// ─────────────────────────────────────────────────────────────────────────────
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()
 {

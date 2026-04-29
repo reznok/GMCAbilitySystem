@@ -1,55 +1,5 @@
-// Layer 2 regression tests covering the bugs fixed in this release:
-//
-//   Bug #1  GMCAbilityEffect.cpp   MustMaintainQuery logic was inverted —
-//                                   effect ended when query matched instead of
-//                                   when it stopped matching.
-//   Bug #2  Retired — CheckRemovedEffects + ActiveEffectIDs (DOREPLIFETIME)
-//                                   dropped in the single-channel refactor.
-//                                   Effect removal flows exclusively through
-//                                   BoundQueueV2 ops; cf. Bug #4 v2 below for
-//                                   the GMC-bound replacement that handles
-//                                   Pending → Validated transitions.
-//   Bug #3  GMCAbility.cpp          TickTasks / AncillaryTickTasks iterated a
-//                                   TMap<int,Task*> via RunningTasks[i] —
-//                                   TMap::operator[] keyed by integer crashes
-//                                   when key i does not exist.
-//   Bug #4 v1 GMCAbilityComponent.cpp GetEffectFromHandle accessed
-//                                   ActiveEffects[NetworkId] without a
-//                                   Contains guard (UB / potential crash).
-//   Bug #4 v2 GMCAbilityComponent.{h,cpp} GMC-bound ActiveEffectIDs replaces
-//                                   the original DOREPLIFETIME pattern. Atomic
-//                                   with move state, single channel for both
-//                                   apply mirroring and Pending → Validated
-//                                   transition on Predicted effects. Replaces
-//                                   the dropped V1 OnRep_ActiveEffectIDs whose
-//                                   absence was causing Sprint to time out 1s
-//                                   after each apply ("Effect Not Confirmed
-//                                   By Server").
-//   Bug #5  GMCAbilityComponent.cpp ProcessedEffectIDs entries were added at
-//                                   effect creation but never removed after
-//                                   expiry, causing unbounded map growth.
-//   Bug #6  GMCAbility.cpp          CanAffordAbilityCost used O(n×m) nested
-//                                   loop with GetAllAttributes() heap-allocated
-//                                   on every iteration; fixed to O(n) via
-//                                   GetAttributeByTag.
-//   Bug #7  GMCAbilityEffect.h      EGMASEffectState CurrentState lacked an
-//                                   explicit initialiser (relied on UObject
-//                                   zero-fill which produces the wrong enum
-//                                   value on non-zero-initialised allocators).
-//   Bug #8  GMCAbilityEffect.h      bPreserveGrantedTagsIfMultiple default
-//                                   flipped from false → true. The previous
-//                                   default was a footgun for multi-instance
-//                                   effects: FGameplayTagContainer is set-like
-//                                   (no stack count), so removing the granted
-//                                   tag on the FIRST instance-end stripped it
-//                                   for sibling instances too. Caused the
-//                                   SprintCost re-trigger drain-stop bug
-//                                   (overlap of bilateral PredictedEnd defer
-//                                   on the released sprint with a fresh sprint
-//                                   apply). Single-instance behavior unchanged.
-//
-// All tests use the Layer-2 harness (UGMAS_TestMovementCmp + headless
-// UGMC_AbilitySystemComponent).  No world, no network stack.
+// Layer-2 regression tests. Use the headless UGMAS_TestMovementCmp +
+// UGMC_AbilitySystemComponent harness — no world, no network stack.
 
 #include "Misc/AutomationTest.h"
 #include "NativeGameplayTags.h"
@@ -183,7 +133,7 @@ void FGMASBugFixSpec::Define()
 	// Prior to fix: EndEffect() was called when the query DID match, keeping
 	// the effect alive only when the query was unsatisfied (backwards).
 	// After fix: effect stays alive while the query matches; ends when it stops.
-	Describe("Bug #1: MustMaintainQuery", [this]()
+	Describe("MustMaintainQuery", [this]()
 	{
 		It("effect remains active while MustMaintainQuery is satisfied", [this]()
 		{
@@ -298,7 +248,7 @@ void FGMASBugFixSpec::Define()
 	// Testing approach: activate an ability, advance a tick.  If the loop
 	// were still broken the test would crash (hard assert in TMap::operator[]).
 	// A successful run (no crash, task count unchanged) validates the fix.
-	Describe("Bug #3: TickTasks TMap iteration", [this]()
+	Describe("TickTasks TMap iteration", [this]()
 	{
 		It("TickTasks does not crash when RunningTasks is empty", [this]()
 		{
@@ -316,7 +266,7 @@ void FGMASBugFixSpec::Define()
 	// Before fix: ActiveEffects[NetworkId] was called even when NetworkId was
 	// absent, causing a TMap crash / undefined behaviour.
 	// After fix: Contains check guards the access.
-	Describe("Bug #4: GetEffectFromHandle stale handle safety", [this]()
+	Describe("GetEffectFromHandle stale handle safety", [this]()
 	{
 		It("returns false and leaves OutEffect null when handle's NetworkId is absent from ActiveEffects", [this]()
 		{
@@ -380,7 +330,7 @@ void FGMASBugFixSpec::Define()
 	// effect creation but never removed on expiry.
 	// After fix: each expired EffectID is removed from ProcessedEffectIDs in
 	// the CompletedActiveEffects cleanup loop inside TickActiveEffects.
-	Describe("Bug #5: ProcessedEffectIDs cleanup on effect expiry", [this]()
+	Describe("ProcessedEffectIDs cleanup on effect expiry", [this]()
 	{
 		It("ProcessedEffectIDs entry is removed when an effect expires", [this]()
 		{
@@ -462,7 +412,7 @@ void FGMASBugFixSpec::Define()
 	//
 	// UGMAS_TestCostEffect is a dedicated subclass so we mutate its isolated
 	// CDO without touching the shared UGMCAbilityEffect CDO.
-	Describe("Bug #6: CanAffordAbilityCost correctness", [this]()
+	Describe("CanAffordAbilityCost correctness", [this]()
 	{
 		It("returns false when the attribute value would go below zero", [this]()
 		{
@@ -538,7 +488,7 @@ void FGMASBugFixSpec::Define()
 	// EGMASEffectState CurrentState now has an explicit = EGMASEffectState::Initialized
 	// initialiser so freshly NewObject<>'d effects always start in Initialized
 	// regardless of how the underlying memory was allocated.
-	Describe("Bug #7: EGMASEffectState CurrentState initialiser", [this]()
+	Describe("EGMASEffectState CurrentState initialiser", [this]()
 	{
 		It("a freshly created UGMCAbilityEffect has CurrentState == Initialized", [this]()
 		{
@@ -576,7 +526,7 @@ void FGMASBugFixSpec::Define()
 	// initialised effect and verify Tick fires EndEffect at the absolute timestamp regardless
 	// of DeltaTime. The new design uses ActionTimer comparison (deterministic across replays)
 	// instead of a per-tick countdown.
-	Describe("Bug #3: PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
+	Describe("PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
 	{
 		It("Tick keeps the defer pending while ActionTimer < EndAtActionTimer", [this]()
 		{
@@ -737,7 +687,7 @@ void FGMASBugFixSpec::Define()
 	//   - TickActiveEffects cleanup drops the ID when an effect completes
 	//   - The Pending → Validated polling logic, isolated from HasAuthority
 	//     gating so the headless harness can drive it deterministically.
-	Describe("Bug #4 v2: GMC-bound ActiveEffectIDs", [this]()
+	Describe("GMC-bound ActiveEffectIDs", [this]()
 	{
 		It("BoundActiveEffectIDs_Add stores the ID and Contains finds it", [this]()
 		{
@@ -1200,7 +1150,7 @@ void FGMASBugFixSpec::Define()
 	// its tag-removal yanked the tag the new SprintCost still relied on,
 	// MustHaveTags failed, drain stopped). Single-instance behavior is
 	// unchanged (the multi-instance branch never fires).
-	Describe("Bug #8: bPreserveGrantedTagsIfMultiple stacking semantics", [this]()
+	Describe("bPreserveGrantedTagsIfMultiple stacking semantics", [this]()
 	{
 		It("Default value is true (flipped from upstream's false)", [this]()
 		{
@@ -1445,7 +1395,7 @@ void FGMASBugFixSpec::Define()
 	// validated and others are not. All tests inline the polling logic
 	// because the headless harness is authoritative-by-default and the
 	// production polling block is gated by !HasAuthority().
-	Describe("Bug #4 v2: drift detection and recovery", [this]()
+	Describe("Drift detection and recovery", [this]()
 	{
 		// Helper: drain the production polling logic once, deterministically.
 		// Mirror of TickActiveEffects' MONOTONIC reconciliation: ID present in bound

@@ -283,22 +283,9 @@ void UGMCAbility::FinishEndAbility() {
 			// Don't try to close effects that are already ended
 			if (Effect->CurrentState == EGMASEffectState::Started)
 			{
-				// Conditional remap Predicted → PredictedQueued.
-				//
-				// The Safe path for Predicted hard-rejects (ensureMsgf in RemoveEffectByIdSafe)
-				// when called outside a movement cycle. FinishEndAbility runs in both contexts:
-				//   - inside movement tick (natural end via PredictionTick / PredictedQueued drain)
-				//   - outside movement tick (RPCClientEndAbility, server-authoritative end signal)
-				//
-				// Only the second case needs the remap to avoid the rejection. The first case
-				// works fine with Predicted directly and removes immediately. Remapping
-				// unconditionally introduces a 1-tick delay for the in-movement path that we
-				// don't actually need.
-				//
-				// We check both: the movement component's executing state AND our own
-				// AncillaryTick flag (PredictedQueued's Safe path treats both as "inside a
-				// GMC tick context"). Standalone (no networking) doesn't need the remap
-				// either — the gate doesn't fire there.
+				// Predicted's Safe path ensure-rejects outside a GMC tick. Remap to
+				// PredictedQueued only when called from an RPC handler (outside any
+				// tick); inside a tick, Predicted removes immediately with no delay.
 				const bool bInsideGMCTick =
 					(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
 					|| OwnerAbilityComponent->IsInAncillaryTick()
