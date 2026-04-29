@@ -1426,30 +1426,53 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 
 void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data)
 {
-	if (Data.EffectClass)
-	{
-		UGMCAbilityEffect* Effect;
-		int OutEffectHandle;
-		int OutEffectId;
-			
-		if (Data.EffectData.IsValid())
-		{
-			ApplyAbilityEffect(Data.EffectClass, Data.EffectData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
-		}
-		else
-		{
-			// Otherwise, we can apply the default effect data
-			FGMCAbilityEffectData DefaultData = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
-			DefaultData.EffectID = Data.EffectID; // Need to slam the effect ID in there
-			ApplyAbilityEffect(Data.EffectClass,DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
-		}
+	if (!Data.EffectClass) return;
 
-		// Auto validate the effect since this was added via a server operation
-		if (!HasAuthority() && Effect != nullptr)
-		{
-			ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
-			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
-		}
+	// Idempotency on replay. CL_OnRepAPMove → CL_ReplayMoves → ExecuteMove re-runs the same
+	// move log on the autonomous proxy. Each replayed GenPredictionTick re-invokes
+	// ProcessOperation on the same Apply op, which would otherwise call ApplyAbilityEffect
+	// a second time. With the existing effect already in ActiveEffects under Data.EffectID,
+	// the second call would either:
+	//   - overwrite the TMap entry (Add semantics), orphaning the live instance, OR
+	//   - take the IsValid() branch with EffectData.EffectID==0 → GetNextAvailableEffectID
+	//     would skip 338 (taken) and return 339, creating a *second* live instance.
+	// The latter is what the [ApplyTrace] logs caught: live id=338 then replayed id=339,
+	// both ticking → bound attributes drain/regen at 2× rate on the client → forced
+	// corrections → continuous chain replay.
+	// The bound state has already been replayed so the existing instance carries the
+	// correct snapshot — there is nothing for a second instantiation to add.
+	if (ActiveEffects.Contains(Data.EffectID))
+	{
+		return;
+	}
+
+	UGMCAbilityEffect* Effect;
+	int OutEffectHandle;
+	int OutEffectId;
+
+	if (Data.EffectData.IsValid())
+	{
+		// Slam the EffectID here too — the inline EffectData carries no ID by default
+		// (callers fill Modifiers/Tags but rarely the nested EffectID). Without this,
+		// ApplyAbilityEffect would fall through to GetNextAvailableEffectID and assign
+		// a fresh ID instead of using the authoritative ID from the operation.
+		FGMCAbilityEffectData InitData = Data.EffectData;
+		InitData.EffectID = Data.EffectID;
+		ApplyAbilityEffect(Data.EffectClass, InitData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
+	}
+	else
+	{
+		// Apply the CDO's default effect data with the authoritative EffectID.
+		FGMCAbilityEffectData DefaultData = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
+		DefaultData.EffectID = Data.EffectID;
+		ApplyAbilityEffect(Data.EffectClass, DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
+	}
+
+	// Auto validate the effect since this was added via a server operation
+	if (!HasAuthority() && Effect != nullptr)
+	{
+		ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
 	}
 }
 
