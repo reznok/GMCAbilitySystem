@@ -11,9 +11,30 @@
 #include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "HAL/PlatformStackWalk.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Net/UnrealNetwork.h"
+
+namespace GMASApplyTrace {
+	// Diagnostic: dump full C++ + script callstack on every ApplyAbilityEffect that creates a
+	// new local instance. Filters by class-name substring to keep the noise down (one effect at
+	// a time). Set to empty to log all applies. Disabled when the substring is empty AND the
+	// enable flag is off.
+	static TAutoConsoleVariable<bool> CVarLogApplyTrace(
+		TEXT("GMAS.LogApplyTrace"),
+		false,
+		TEXT("If true, dump C++ + script callstack on every ApplyAbilityEffect that creates a ")
+		TEXT("local effect instance whose class name contains the substring in GMAS.ApplyTraceFilter."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<FString> CVarApplyTraceFilter(
+		TEXT("GMAS.ApplyTraceFilter"),
+		TEXT("Stamina_Recovery"),
+		TEXT("Substring matched against effect class name. Only effects whose class contains this ")
+		TEXT("substring are stack-traced when GMAS.LogApplyTrace is enabled. Empty = match all."),
+		ECVF_Default);
+}
 
 
 // Sets default values for this component's properties
@@ -1820,7 +1841,27 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	}
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
-	
+
+	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see
+	// exactly which path created this instance (RPCOnServerOperationAdded, bound state replay,
+	// PendingPredictedOperations drain, BP, etc.). Use to chase duplicate-apply bugs.
+	if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+	{
+		const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
+		const FString ClassName = Effect->GetClass()->GetName();
+		if (Filter.IsEmpty() || ClassName.Contains(Filter))
+		{
+			ANSICHAR CppStack[8192] = { 0 };
+			FPlatformStackWalk::StackWalkAndDump(CppStack, sizeof(CppStack), /*IgnoreCount=*/1);
+			const FString ScriptStack = FFrame::GetScriptCallstack(true);
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ApplyTrace] class=%s id=%d auth=%d action_t=%f netmode=%d\nC++ stack:\n%hs\nScript stack:\n%s"),
+				*ClassName, Effect->EffectData.EffectID, HasAuthority() ? 1 : 0,
+				ActionTimer, static_cast<int32>(GetNetMode()),
+				CppStack, *ScriptStack);
+		}
+	}
+
 	return Effect;
 }
 
