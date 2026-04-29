@@ -55,6 +55,34 @@ struct FEffectStatePrediction
 	uint8 State;
 };
 
+/**
+ * GMC-bound authoritative list of currently-active effect IDs on this ASC.
+ *
+ * Replicated atomically with the move state via BindInstancedStruct, NOT via
+ * standard DOREPLIFETIME. This is the architectural difference from the V1
+ * pattern that was dropped in commit 82f717b: moving the list onto the GMC
+ * bound channel eliminates the asymmetric replication window between
+ * RPCOnServerOperationAdded (RPC, ~RTT/2) and DOREPLIFETIME (~RTT) that
+ * caused Bug #4 ("Recovery wipes itself"). The list and the apply ops that
+ * mutate it now travel in the same packet, in the same order.
+ *
+ * Consumed for the Pending → Validated transition on Predicted effects:
+ * client predict-applies, marks ProcessedEffectIDs[id] = Pending; once the
+ * id appears in this bound list (server's authoritative side replicates it
+ * during the move tick), TickActiveEffects flips it to Validated. Without
+ * this transition the 1s timeout in TickActiveEffects fires "Not Confirmed
+ * By Server" and removes the local instance — that was the Sprint-dies-
+ * after-1s bug observed in ETL post-refactor 82f717b.
+ */
+USTRUCT()
+struct FGMASActiveEffectIDsState
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<int> IDs;
+};
+
 USTRUCT()
 struct FGMASQueueOperationHandle
 {
@@ -773,25 +801,24 @@ private:
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);
 
-	// Active Effects with a duration affecting this component
-	// Can be just normally replicated since if the client doesn't have them already
-	// then prediction is already out the window
-
-	UPROPERTY(ReplicatedUsing=OnRep_ActiveEffectIDs)
-	TArray<int> ActiveEffectIDs;
-
-	UFUNCTION()
-	void OnRep_ActiveEffectIDs();
-
 	// Max time a client will predict an effect without it being confirmed by the server before cancelling
 	float ClientEffectApplicationTimeout = 1.f;
 
-	// Check if any effects have been removed by the server and remove them locally
-	void CheckRemovedEffects();
-
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
-	
+
+	// GMC-bound list of currently-active EffectIDs. Authoritative source for the
+	// Pending → Validated transition on Predicted effects. See FGMASActiveEffectIDsState
+	// docstring for the full rationale.
+	UPROPERTY()
+	FInstancedStruct ActiveEffectIDsBound;
+
+	// Helpers to mutate the bound state without callers having to wrangle the
+	// FInstancedStruct accessor + struct construction every time.
+	void BoundActiveEffectIDs_Add(int EffectID);
+	void BoundActiveEffectIDs_Remove(int EffectID);
+	bool BoundActiveEffectIDs_Contains(int EffectID) const;
+
 	// IDs that have been claimed by server-auth effect applications
 	TArray<int> ReservedEffectIDs;
 
@@ -843,9 +870,7 @@ private:
 public:
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
-	TArray<int>&                           GetActiveEffectIDsForTest()     { return ActiveEffectIDs; }
 	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
-	void CheckRemovedEffectsForTest()                                       { CheckRemovedEffects(); }
 	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
 	{
 		return GetEffectFromHandle(Handle, OutNetId, OutEffect);

@@ -11,9 +11,30 @@
 #include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "HAL/PlatformStackWalk.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Net/UnrealNetwork.h"
+
+namespace GMASApplyTrace {
+	// Diagnostic: dump full C++ + script callstack on every ApplyAbilityEffect that creates a
+	// new local instance. Filters by class-name substring to keep the noise down (one effect at
+	// a time). Set to empty to log all applies. Disabled when the substring is empty AND the
+	// enable flag is off.
+	static TAutoConsoleVariable<bool> CVarLogApplyTrace(
+		TEXT("GMAS.LogApplyTrace"),
+		false,
+		TEXT("If true, dump C++ + script callstack on every ApplyAbilityEffect that creates a ")
+		TEXT("local effect instance whose class name contains the substring in GMAS.ApplyTraceFilter."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<FString> CVarApplyTraceFilter(
+		TEXT("GMAS.ApplyTraceFilter"),
+		TEXT("Stamina_Recovery"),
+		TEXT("Substring matched against effect class name. Only effects whose class contains this ")
+		TEXT("substring are stack-traced when GMAS.LogApplyTrace is enabled. Empty = match all."),
+		ECVF_Default);
+}
 
 
 // Sets default values for this component's properties
@@ -130,7 +151,51 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// QueuedEffectOperations_ClientAuth.BindToGMC(GMCMovementComponent);
 	// QueuedEventOperations.BindToGMC(GMCMovementComponent);
 	BoundQueueV2.BindToGMC(GMCMovementComponent);
-	
+
+	// Active effect IDs — atomic with the move state via GMC bound state. Single source of
+	// truth for the Pending → Validated transition on Predicted effects (see
+	// FGMASActiveEffectIDsState docstring). Initialise to an empty struct so the
+	// FInstancedStruct has a valid script struct from frame zero.
+	if (!ActiveEffectIDsBound.IsValid())
+	{
+		ActiveEffectIDsBound.InitializeAs<FGMASActiveEffectIDsState>();
+	}
+	GMCMovementComponent->BindInstancedStruct(ActiveEffectIDsBound,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::Periodic_Output,
+		EGMC_InterpolationFunction::TargetValue);
+}
+
+// ---------------------------------------------------------------------------
+// FGMASActiveEffectIDsState helpers — keep callers tidy. The bound state is an
+// FInstancedStruct so direct access requires GetMutablePtr / GetPtr; centralise
+// that here. All three helpers are idempotent w.r.t. the underlying TArray.
+// ---------------------------------------------------------------------------
+
+void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Add(int EffectID)
+{
+	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+	{
+		State->IDs.AddUnique(EffectID);
+	}
+}
+
+void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Remove(int EffectID)
+{
+	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+	{
+		State->IDs.Remove(EffectID);
+	}
+}
+
+bool UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Contains(int EffectID) const
+{
+	if (const FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetPtr<FGMASActiveEffectIDsState>())
+	{
+		return State->IDs.Contains(EffectID);
+	}
+	return false;
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
@@ -941,20 +1006,36 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
-	CheckRemovedEffects();
-	
+	// Pending → Validated reconciliation against the GMC-bound authoritative list.
+	// Each tick, any local Predicted effect whose EffectID now appears in the bound
+	// state (replicated atomically from the server's authoritative side) is promoted
+	// to Validated. This is the polling replacement for the V1 OnRep_ActiveEffectIDs
+	// hook; idempotent and replay-safe because it just compares the current bound
+	// state against ProcessedEffectIDs each tick.
+	if (!HasAuthority())
+	{
+		for (auto& ProcessedPair : ProcessedEffectIDs)
+		{
+			if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+				&& BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+			{
+				ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+			}
+		}
+	}
+
 	TArray<int> CompletedActiveEffects;
 
 	// Tick Effects
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
-		
+
 		if (!Effect.Value->IsValidLowLevel()) {
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null or pending kill, removing from the list."), Effect.Key);
 			CompletedActiveEffects.Push(Effect.Key);
-			continue;	
+			continue;
 		}
-		
+
 		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted)
 		{
@@ -964,7 +1045,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		// Check for predicted effects that have not been server confirmed
 		if (!HasAuthority() &&
 			!Effect.Value->EffectData.bServerAuth
-			&& ProcessedEffectIDs.Contains(Effect.Key) 
+			&& ProcessedEffectIDs.Contains(Effect.Key)
 			&& ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending
 			&& Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
@@ -974,7 +1055,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			CompletedActiveEffects.Push(Effect.Key);
 		}
 	}
-	
+
 	// Clean expired effects
 	for (const int EffectID : CompletedActiveEffects)
 	{
@@ -982,8 +1063,13 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
 
 		ActiveEffects.Remove(EffectID);
-		ActiveEffectIDs.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
+
+		// Drop the ID from the bound authoritative list. Server-side this is the source
+		// of truth that propagates to all clients; client-side it's a local mirror that
+		// will get overwritten by the next replication anyway, but keeping it consistent
+		// avoids transient validation hiccups.
+		BoundActiveEffectIDs_Remove(EffectID);
 	}
 
 	// Clean effect handles
@@ -1045,47 +1131,6 @@ void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
 	}
 }
 
-void UGMC_AbilitySystemComponent::CheckRemovedEffects()
-{
-	TArray<int> EffectsToRemove;
-
-	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
-	{
-		// Ensure this effect has been processed locally
-		if (!ProcessedEffectIDs.Contains(Effect.Key)) { continue; }
-
-		// Ensure this effect has already been confirmed by the server so that if it's now missing,
-		// it means the server removed it
-		if (ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending) { continue; }
-
-		// Replication grace: server-initiated effects (RPC-pushed via RPCOnServerOperationAdded) auto-validate
-		// the moment they arrive on the client, but ActiveEffectIDs is DOREPLIFETIME-driven and lags ~1 RTT
-		// behind. Without this guard we'd wipe the freshly applied effect on the same tick, before the replicated
-		// list catches up — see "Recovery wipes itself" symptom (continuous chain replay on bound attributes).
-		if (Effect.Value)
-		{
-			const float TimeSinceApply         = ActionTimer - Effect.Value->ClientEffectApplicationTime;
-			const float ReplicationGracePeriod = Effect.Value->EffectData.ClientGraceTime;
-			if (TimeSinceApply < ReplicationGracePeriod) { continue; }
-		}
-
-		// If the server's replicated effect list no longer contains this effect, remove it locally
-		if (!ActiveEffectIDs.Contains(Effect.Key))
-		{
-			if (Effect.Value) { Effect.Value->EndEffect(); }
-			EffectsToRemove.Add(Effect.Key);
-		}
-	}
-
-	for (const int EffectID : EffectsToRemove)
-	{
-		if (HasAuthority()) { RPCClientEndEffect(EffectID); }
-		ActiveEffects.Remove(EffectID);
-		ActiveEffectIDs.Remove(EffectID);
-		ProcessedEffectIDs.Remove(EffectID);
-	}
-}
-
 bool UGMC_AbilitySystemComponent::IsLocallyControlledPawnASC() const
 {
 	if (const APawn* Pawn = Cast<APawn>(GetOwner()))
@@ -1136,19 +1181,34 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 
 
 void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
-	if (HasAuthority() && StartingEffects.Num() > 0 && (bForce || !bStartingEffectsApplied))
+	if (!HasAuthority() || StartingEffects.Num() == 0 || (!bForce && bStartingEffectsApplied))
 	{
-		for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
-		{
-			// Dont apply the same effect twice
-			if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
-				return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
-			})) {
-				ApplyAbilityEffectShort(Effect, EGMCAbilityEffectQueueType::ServerAuth);
-			}
-		}
-		bStartingEffectsApplied = true;
+		return;
 	}
+
+	// Defer until the owner pawn is actually controlled. ApplyAbilityEffectShort with
+	// ServerAuth pushes RPCOnServerOperationAdded to the owning client; if we fire it
+	// before PossessedBy completes, no relevant connection exists yet and the RPC is
+	// dropped silently and the client never gets the local instance — bound attributes
+	// drift and there is no signal to reapply. Gating on Controller is the smallest
+	// safe condition: it is non-null only after PossessedBy has finished server-side,
+	// which is exactly when the owning connection is established.
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn || !OwnerPawn->GetController())
+	{
+		return;
+	}
+
+	for (const TSubclassOf<UGMCAbilityEffect>& Effect : StartingEffects)
+	{
+		// Dont apply the same effect twice
+		if (!Algo::FindByPredicate(ActiveEffects, [Effect](const TPair<int, UGMCAbilityEffect*>& ActiveEffect) {
+			return IsValid(ActiveEffect.Value) && ActiveEffect.Value->GetClass() == Effect;
+		})) {
+			ApplyAbilityEffectShort(Effect, EGMCAbilityEffectQueueType::ServerAuth);
+		}
+	}
+	bStartingEffectsApplied = true;
 }
 
 
@@ -1361,6 +1421,18 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		BoundQueueV2.OperationData  = PayloadData;
+
+		// Diagnostic: log every ability activation that traverses ProcessOperation, including
+		// what the server side does with it. Pair with [ServerOpAccept]/[ServerOpDrop] to
+		// trace a Sprint activation from client predict → server validation → server apply.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ProcessOp] op=%d activate_ability tag=%s auth=%d fromMove=%d force=%d"),
+				OperationID, *Data.InputTag.ToString(),
+				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
+		}
+
 		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce);
 	}
 
@@ -1377,6 +1449,23 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	if (StructType == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2ApplyEffectOperation Data = PayloadData.Get<FGMASBoundQueueV2ApplyEffectOperation>();
+
+		// Diagnostic: server-side or client-side Apply Effect op processing. Filtered by class
+		// name so we can isolate the Sprint/SprintCost/Recovery investigation without flooding
+		// the log with every single effect.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
+			const FString ClassName = Data.EffectClass ? Data.EffectClass->GetName() : TEXT("null");
+			if (Filter.IsEmpty() || ClassName.Contains(Filter))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ProcessOp] op=%d apply_effect class=%s effect_id=%d auth=%d fromMove=%d"),
+					OperationID, *ClassName, Data.EffectID,
+					HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0);
+			}
+		}
+
 		ProcessEffectApplicationFromOperation(Data);
 		if (!HasAuthority())
 		{
@@ -1434,37 +1523,77 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 
 void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data)
 {
-	if (Data.EffectClass)
-	{
-		UGMCAbilityEffect* Effect;
-		int OutEffectHandle;
-		int OutEffectId;
-			
-		if (Data.EffectData.IsValid())
-		{
-			ApplyAbilityEffect(Data.EffectClass, Data.EffectData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
-		}
-		else
-		{
-			// Otherwise, we can apply the default effect data
-			FGMCAbilityEffectData DefaultData = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
-			DefaultData.EffectID = Data.EffectID; // Need to slam the effect ID in there
-			ApplyAbilityEffect(Data.EffectClass,DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
-		}
+	if (!Data.EffectClass) return;
 
-		// Auto validate the effect since this was added via a server operation
-		if (!HasAuthority() && Effect != nullptr)
-		{
-			ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
-			UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
-		}
+	// Idempotency on replay. CL_OnRepAPMove → CL_ReplayMoves → ExecuteMove re-runs the same
+	// move log on the autonomous proxy. Each replayed GenPredictionTick re-invokes
+	// ProcessOperation on the same Apply op, which would otherwise call ApplyAbilityEffect
+	// a second time. With the existing effect already in ActiveEffects under Data.EffectID,
+	// the second call would either:
+	//   - overwrite the TMap entry (Add semantics), orphaning the live instance, OR
+	//   - take the IsValid() branch with EffectData.EffectID==0 → GetNextAvailableEffectID
+	//     would skip 338 (taken) and return 339, creating a *second* live instance.
+	// The latter is what the [ApplyTrace] logs caught: live id=338 then replayed id=339,
+	// both ticking → bound attributes drain/regen at 2× rate on the client → forced
+	// corrections → continuous chain replay.
+	// The bound state has already been replayed so the existing instance carries the
+	// correct snapshot — there is nothing for a second instantiation to add.
+	if (ActiveEffects.Contains(Data.EffectID))
+	{
+		return;
+	}
+
+	UGMCAbilityEffect* Effect;
+	int OutEffectHandle;
+	int OutEffectId;
+
+	if (Data.EffectData.IsValid())
+	{
+		// Slam the EffectID here too — the inline EffectData carries no ID by default
+		// (callers fill Modifiers/Tags but rarely the nested EffectID). Without this,
+		// ApplyAbilityEffect would fall through to GetNextAvailableEffectID and assign
+		// a fresh ID instead of using the authoritative ID from the operation.
+		FGMCAbilityEffectData InitData = Data.EffectData;
+		InitData.EffectID = Data.EffectID;
+		ApplyAbilityEffect(Data.EffectClass, InitData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
+	}
+	else
+	{
+		// Apply the CDO's default effect data with the authoritative EffectID.
+		FGMCAbilityEffectData DefaultData = Data.EffectClass->GetDefaultObject<UGMCAbilityEffect>()->EffectData;
+		DefaultData.EffectID = Data.EffectID;
+		ApplyAbilityEffect(Data.EffectClass, DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
+	}
+
+	// Auto validate the effect since this was added via a server operation
+	if (!HasAuthority() && Effect != nullptr)
+	{
+		ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
 	}
 }
 
 void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick)
 {
 	if (!HasAuthority()) return;
-	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return;
+	if (!BoundQueueV2.IsValidGMASOperation(OperationData))
+	{
+		// Diagnostic: signal when an op arrived but the GMAS validation rejected it.
+		// Empty/default ops (OperationID==0) are routine and not interesting; only log
+		// when there is real payload data getting dropped.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			const FGMASBoundQueueV2OperationBaseData* BD = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+			if (BD && BD->OperationID != 0)
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerOpDrop] op=%d reason=IsValidGMASOperation_failed struct=%s"),
+					BD->OperationID,
+					OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+			}
+		}
+		return;
+	}
 
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 	const int OperationID = BaseData->OperationID;
@@ -1482,13 +1611,39 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			ServerProcessAcknowledgedOperation(BaseData->OperationID, bFromMovementTick);
 			return;
 		}
-		
+
 		if (!BoundQueueV2.HasPayloadByID(OperationID))
 		{
 			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
 		}
-		
+
+		// Diagnostic: server actually received and accepted a client op. Pair this with the
+		// client-side Apply trace to see if the op makes it across the wire at all.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ServerOpAccept] op=%d struct=%s fromMove=%d"),
+				OperationID,
+				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
+				bFromMovementTick ? 1 : 0);
+		}
+
 		ProcessOperation(OperationData, bFromMovementTick);
+	}
+	else
+	{
+		// Diagnostic: op reached the server but failed the IsValidClientOperation security check.
+		// This is the most likely failure point for "Sprint Not Confirmed By Server" — a client
+		// op gets dropped here and never reaches ProcessOperation, so no apply happens server-side
+		// and the client's Predicted timeout fires after 1s.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ServerOpDrop] op=%d reason=IsValidClientOperation_failed struct=%s fromMove=%d"),
+				OperationID,
+				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
+				bFromMovementTick ? 1 : 0);
+		}
 	}
 }
 
@@ -1838,12 +1993,10 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		Effect->EffectData.EffectID = GetNextAvailableEffectID();
 	}
 
-	// This is Replicated, so only server needs to manage it
 	if (HasAuthority())
 	{
 		// If this was a server-auth, the ID is already generated and needs to be cleaned up from reserved
 		ReservedEffectIDs.Remove(Effect->EffectData.EffectID);
-		ActiveEffectIDs.Push(Effect->EffectData.EffectID); 
 	}
 	else
 	{
@@ -1851,7 +2004,36 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	}
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
-	
+
+	// Mirror into the GMC-bound list. Both client (predict-apply) and server (auth-apply)
+	// add the ID to their local copy. The bound state replication enforces convergence:
+	// if both sides applied the same effect deterministically, the lists match and no replay
+	// is needed. If only the client predicted (server rejected via cooldown / tag check /
+	// resource cost / etc.), the lists diverge → server's empty value wins → bound state
+	// drops the ID on the client → TickActiveEffects sees the ID gone and the effect can
+	// be reaped via the existing timeout / removal path.
+	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
+
+	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see
+	// exactly which path created this instance (RPCOnServerOperationAdded, bound state replay,
+	// PendingPredictedOperations drain, BP, etc.). Use to chase duplicate-apply bugs.
+	if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+	{
+		const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
+		const FString ClassName = Effect->GetClass()->GetName();
+		if (Filter.IsEmpty() || ClassName.Contains(Filter))
+		{
+			ANSICHAR CppStack[8192] = { 0 };
+			FPlatformStackWalk::StackWalkAndDump(CppStack, sizeof(CppStack), /*IgnoreCount=*/1);
+			const FString ScriptStack = FFrame::GetScriptCallstack(true);
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ApplyTrace] class=%s id=%d auth=%d action_t=%f netmode=%d\nC++ stack:\n%hs\nScript stack:\n%s"),
+				*ClassName, Effect->EffectData.EffectID, HasAuthority() ? 1 : 0,
+				ActionTimer, static_cast<int32>(GetNetMode()),
+				CppStack, *ScriptStack);
+		}
+	}
+
 	return Effect;
 }
 
@@ -1872,14 +2054,15 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 
 	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{
-		// First call arms the defer; subsequent calls during the defer window are no-ops.
-		// Critical: the early return MUST happen even when defer is already armed, otherwise
-		// a duplicate Remove (e.g. RPCClientEndEffect arriving while local defer is running)
-		// would fall through to the EndEffect() below and defeat the bilateral synchronization.
-		if (!Effect->bPendingPredictedEnd)
+		// Idempotent arming on absolute ActionTimer. The first call latches EndAtActionTimer using
+		// the current ActionTimer (which is identical on client and server replay because both
+		// process this Remove at the same logical move tick — GMC bound state invariant). Re-arming
+		// during the defer window must be a NO-OP: a duplicate Remove path (e.g. RPCClientEndEffect
+		// landing on top of a local-replayed Remove) would otherwise reset the latch and shift the
+		// end timestamp, breaking bilateral symmetry.
+		if (Effect->EndAtActionTimer < 0.0)
 		{
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = Effect->EffectData.ClientGraceTime;
+			Effect->EndAtActionTimer = ActionTimer + Effect->EffectData.ClientGraceTime;
 		}
 		return;
 	}
@@ -2400,25 +2583,10 @@ void UGMC_AbilitySystemComponent::MC_SpawnSound_Implementation(USoundBase* Sound
 	SpawnSound(Sound, Location, VolumeMultiplier, PitchMultiplier, bIsClientPredicted);
 }
 
-//ActiveEffectIds OnRep
-void UGMC_AbilitySystemComponent::OnRep_ActiveEffectIDs()
-{
-	// This is called when the ActiveEffectIDs array is replicated to the client
-	// We need to update the ActiveEffects map based on the replicated IDs
-	for (int EffectId : ActiveEffectIDs)
-	{
-		if (ProcessedEffectIDs.Contains(EffectId))
-		{
-			ProcessedEffectIDs[EffectId] = EGMCEffectAnswerState::Validated;
-		}
-	}
-}
-
 // ReplicatedProps
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
-	DOREPLIFETIME(UGMC_AbilitySystemComponent, ActiveEffectIDs);
 }
 

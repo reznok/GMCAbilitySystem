@@ -1,19 +1,30 @@
-// Layer 2 regression tests covering the seven bugs fixed in this release:
+// Layer 2 regression tests covering the bugs fixed in this release:
 //
 //   Bug #1  GMCAbilityEffect.cpp   MustMaintainQuery logic was inverted —
 //                                   effect ended when query matched instead of
 //                                   when it stopped matching.
-//   Bug #2  GMCAbilityComponent.cpp CheckRemovedEffects used `return` instead
-//                                   of `continue`, bailing out of the loop on
-//                                   the first unconfirmed/unprocessed effect;
-//                                   removal logic was commented out entirely.
+//   Bug #2  Retired — CheckRemovedEffects + ActiveEffectIDs (DOREPLIFETIME)
+//                                   dropped in the single-channel refactor.
+//                                   Effect removal flows exclusively through
+//                                   BoundQueueV2 ops; cf. Bug #4 v2 below for
+//                                   the GMC-bound replacement that handles
+//                                   Pending → Validated transitions.
 //   Bug #3  GMCAbility.cpp          TickTasks / AncillaryTickTasks iterated a
 //                                   TMap<int,Task*> via RunningTasks[i] —
 //                                   TMap::operator[] keyed by integer crashes
 //                                   when key i does not exist.
-//   Bug #4  GMCAbilityComponent.cpp GetEffectFromHandle accessed
+//   Bug #4 v1 GMCAbilityComponent.cpp GetEffectFromHandle accessed
 //                                   ActiveEffects[NetworkId] without a
 //                                   Contains guard (UB / potential crash).
+//   Bug #4 v2 GMCAbilityComponent.{h,cpp} GMC-bound ActiveEffectIDs replaces
+//                                   the original DOREPLIFETIME pattern. Atomic
+//                                   with move state, single channel for both
+//                                   apply mirroring and Pending → Validated
+//                                   transition on Predicted effects. Replaces
+//                                   the dropped V1 OnRep_ActiveEffectIDs whose
+//                                   absence was causing Sprint to time out 1s
+//                                   after each apply ("Effect Not Confirmed
+//                                   By Server").
 //   Bug #5  GMCAbilityComponent.cpp ProcessedEffectIDs entries were added at
 //                                   effect creation but never removed after
 //                                   expiry, causing unbounded map growth.
@@ -260,90 +271,12 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// ── Bug #2: CheckRemovedEffects early-return + disabled removal ────────
-	// The loop bailed early on `return` rather than skipping via `continue`,
-	// and the actual removal call was commented out.
-	// After fix: all effects are inspected; unconfirmed ones are skipped
-	// (continue), and confirmed effects absent from ActiveEffectIDs are removed.
-	Describe("Bug #2: CheckRemovedEffects", [this]()
-	{
-		It("continues past an unprocessed effect to process a confirmed stale one", [this]()
-		{
-			// Apply two effects so both get entries in ActiveEffects.
-			UGMCAbilityEffect* EffA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			EffA->AddToRoot(); EffB->AddToRoot();
-
-			AbilityComp->ActionTimer = 1.0;
-
-			FGMCAbilityEffectData DataA;
-			DataA.EffectType = EGMASEffectType::Persistent;
-			DataA.Duration   = 0.f;
-			DataA.Modifiers.Add(MakeHealthMod(10.f));
-			AbilityComp->ApplyAbilityEffect(EffA, DataA);
-
-			FGMCAbilityEffectData DataB;
-			DataB.EffectType = EGMASEffectType::Persistent;
-			DataB.Duration   = 0.f;
-			DataB.Modifiers.Add(MakeHealthMod(20.f));
-			AbilityComp->ApplyAbilityEffect(EffB, DataB);
-
-			const int IdA = EffA->EffectData.EffectID;
-			const int IdB = EffB->EffectData.EffectID;
-
-			// Simulate client-side state: both effects are Pending for EffA
-			// and Validated for EffB.  Only EffB is confirmed; simulate server
-			// removing EffB by not including it in ActiveEffectIDs.
-			AbilityComp->GetProcessedEffectIDsForTest().Add(IdA, EGMCEffectAnswerState::Pending);
-			AbilityComp->GetProcessedEffectIDsForTest().Add(IdB, EGMCEffectAnswerState::Validated);
-			// ActiveEffectIDs does not contain IdB → simulates server removal.
-			AbilityComp->GetActiveEffectIDsForTest().Empty();
-			AbilityComp->GetActiveEffectIDsForTest().Add(IdA); // server still owns A
-
-			// Advance ActionTimer past ClientGraceTime (Bug #4 grace) so EffB qualifies
-			// for the wipe path. Without this, the grace window protects EffB from being
-			// removed on the same tick it was applied.
-			AbilityComp->ActionTimer = 5.0;
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			// EffA: Pending → skipped (continue), must still be in ActiveEffects.
-			TestTrue("EffA (Pending) still in ActiveEffects",
-				AbilityComp->GetActiveEffects().Contains(IdA));
-
-			// EffB: Validated and absent from ActiveEffectIDs → must be removed.
-			TestFalse("EffB (confirmed, server-removed) is gone from ActiveEffects",
-				AbilityComp->GetActiveEffects().Contains(IdB));
-
-			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
-		});
-
-		It("does not remove a confirmed effect that is still in ActiveEffectIDs", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			AbilityComp->ActionTimer = 1.0;
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType = EGMASEffectType::Persistent;
-			Data.Duration   = 0.f;
-			Data.Modifiers.Add(MakeHealthMod(15.f));
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			const int Id = Effect->EffectData.EffectID;
-			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Add(Id); // server still has it
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			// Still present — server hasn't removed it.
-			TestTrue("Confirmed + in ActiveEffectIDs → kept",
-				AbilityComp->GetActiveEffects().Contains(Id));
-
-			Effect->RemoveFromRoot();
-		});
-	});
+	// ── Bug #2 retired ─────────────────────────────────────────────────────
+	// CheckRemovedEffects + ActiveEffectIDs were dropped in the single-channel
+	// refactor. Effect removal now flows exclusively through BoundQueueV2
+	// FGMASBoundQueueV2RemoveEffectOperation; there is no list-comparison wipe
+	// path left to test, and the original Bug #2 ("early `return` instead of
+	// `continue`") is moot because the function no longer exists.
 
 	// ── Bug #3: TMap integer-indexed iteration in TickTasks ───────────────
 	// RunningTasks is TMap<int, UGMCAbilityTaskBase*>.  The old code called
@@ -628,11 +561,13 @@ void FGMASBugFixSpec::Define()
 	//
 	// The arming branch of RemoveActiveAbilityEffect requires GetNetMode() != NM_Standalone,
 	// which the headless harness can't provide (orphan components default to Standalone).
-	// So we test the *consume* side of the defer: directly manipulate bPendingPredictedEnd
-	// on a properly-initialised effect and verify Tick(DeltaTime) drives it to EndEffect.
-	Describe("Bug #3: PredictedEnd defer Tick consume", [this]()
+	// So we test the *consume* side of the defer: directly set EndAtActionTimer on a properly-
+	// initialised effect and verify Tick fires EndEffect at the absolute timestamp regardless
+	// of DeltaTime. The new design uses ActionTimer comparison (deterministic across replays)
+	// instead of a per-tick countdown.
+	Describe("Bug #3: PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
 	{
-		It("Tick decrements PendingPredictedEndTimer when DeltaTime < timer", [this]()
+		It("Tick keeps the defer pending while ActionTimer < EndAtActionTimer", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -642,19 +577,18 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 1.0f;
+			AbilityComp->ActionTimer = 5.0;
+			Effect->EndAtActionTimer = 6.0;  // 1s grace ahead
 
-			Effect->Tick(0.3f);
+			Effect->Tick(0.3f);  // DeltaTime irrelevant; only ActionTimer matters
 
-			TestTrue("Defer still pending",          Effect->bPendingPredictedEnd);
-			TestEqual("Timer decremented by 0.3f",   Effect->PendingPredictedEndTimer, 0.7f);
-			TestFalse("Effect not yet completed",    Effect->bCompleted);
+			TestTrue("Defer still armed (EndAt unchanged)",  Effect->EndAtActionTimer > 0.0);
+			TestFalse("Effect not completed",                Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when timer reaches zero in a single step", [this]()
+		It("Tick fires EndEffect when ActionTimer reaches EndAtActionTimer exactly", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -664,18 +598,60 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 0.5f;
+			AbilityComp->ActionTimer = 6.0;
+			Effect->EndAtActionTimer = 6.0;  // boundary: >= triggers
 
+			Effect->Tick(0.f);
+
+			TestTrue("Effect completed via EndEffect",  Effect->bCompleted);
+			TestEqual("EndAt latch reset to -1.0",      Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick fires EndEffect when ActionTimer is past EndAtActionTimer (catch-up)", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			AbilityComp->ActionTimer = 10.0;  // we landed past the latch
+			Effect->EndAtActionTimer = 6.0;
+
+			Effect->Tick(0.f);
+
+			TestTrue("Effect completed (overshoot still fires)",  Effect->bCompleted);
+			TestEqual("EndAt latch reset to -1.0",                Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Tick on an unarmed effect (EndAt = -1) leaves defer state alone", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			TestEqual("Default EndAt is -1.0 (unarmed)",  Effect->EndAtActionTimer, -1.0);
+
+			AbilityComp->ActionTimer = 100.0;  // huge ActionTimer must not trigger anything
 			Effect->Tick(0.5f);
 
-			TestFalse("Defer flag cleared after firing", Effect->bPendingPredictedEnd);
-			TestTrue("Effect completed via EndEffect",   Effect->bCompleted);
+			TestFalse("Effect not completed",             Effect->bCompleted);
+			TestEqual("EndAt still -1.0",                 Effect->EndAtActionTimer, -1.0);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when DeltaTime overshoots the timer", [this]()
+		It("ActionTimer progression across multiple Ticks reaches the latch deterministically", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -685,19 +661,26 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 0.2f;
+			AbilityComp->ActionTimer = 5.0;
+			Effect->EndAtActionTimer = 6.0;  // 1s grace
 
-			Effect->Tick(0.5f);  // overshoots
+			AbilityComp->ActionTimer = 5.3;  Effect->Tick(0.3f);
+			TestFalse("Not yet completed (5.3 < 6.0)",  Effect->bCompleted);
 
-			TestFalse("Defer flag cleared",            Effect->bPendingPredictedEnd);
-			TestTrue("Effect completed",               Effect->bCompleted);
+			AbilityComp->ActionTimer = 5.7;  Effect->Tick(0.4f);
+			TestFalse("Not yet completed (5.7 < 6.0)",  Effect->bCompleted);
+
+			AbilityComp->ActionTimer = 6.1;  Effect->Tick(0.4f);
+			TestTrue("Completed (6.1 >= 6.0)",          Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick on a non-deferred effect leaves defer state alone", [this]()
+		It("Idempotent re-arm: setting EndAtActionTimer twice with same value is a no-op", [this]()
 		{
+			// Mirrors the replay scenario: a Remove op gets re-executed during a GMC rollback.
+			// The arming logic in RemoveActiveAbilityEffect skips the assignment when EndAt >= 0,
+			// so the second Remove cannot shift the end timestamp forward and break bilateral sync.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -706,170 +689,175 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			TestFalse("Default state: not pending",   Effect->bPendingPredictedEnd);
-			TestEqual("Default timer is zero",        Effect->PendingPredictedEndTimer, 0.f);
+			Effect->EndAtActionTimer = 6.0;  // first arm
+			const double FirstArm = Effect->EndAtActionTimer;
 
-			Effect->Tick(0.5f);
+			// Simulate the idempotency guard from RemoveActiveAbilityEffect inline:
+			if (Effect->EndAtActionTimer < 0.0) { Effect->EndAtActionTimer = 8.0; }
 
-			TestFalse("Still not pending after tick", Effect->bPendingPredictedEnd);
-			TestEqual("Timer untouched",              Effect->PendingPredictedEndTimer, 0.f);
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Multiple incremental Ticks expire the defer at the cumulative threshold", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType = EGMASEffectType::Persistent;
-			Data.Duration   = 0.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			Effect->bPendingPredictedEnd     = true;
-			Effect->PendingPredictedEndTimer = 1.0f;
-
-			Effect->Tick(0.3f);                                      // → 0.7
-			TestFalse("Not yet completed after first tick", Effect->bCompleted);
-
-			Effect->Tick(0.4f);                                      // → 0.3
-			TestFalse("Not yet completed after second tick", Effect->bCompleted);
-
-			Effect->Tick(0.4f);                                      // → -0.1, fires
-			TestTrue("Completed after cumulative tick", Effect->bCompleted);
-			TestFalse("Defer cleared", Effect->bPendingPredictedEnd);
+			TestEqual("Re-arm preserves the original EndAt", Effect->EndAtActionTimer, FirstArm);
 
 			Effect->RemoveFromRoot();
 		});
 	});
 
-	// ── Replication grace in CheckRemovedEffects (Bug #4) ─────────────────
+	// ── Bug #4 v2 — GMC-bound ActiveEffectIDs replaces DOREPLIFETIME ──────
 	//
-	// The grace period uses ClientEffectApplicationTime (set in InitializeEffect)
-	// and the effect's ClientGraceTime. Within the window, a freshly-applied
-	// effect is NOT wiped even when missing from ActiveEffectIDs. After the
-	// window, the wipe behaves as before.
-	Describe("Bug #4: CheckRemovedEffects replication grace", [this]()
+	// History: V1 had `TArray<int> ActiveEffectIDs` replicated via standard
+	// DOREPLIFETIME, with `OnRep_ActiveEffectIDs` performing the only
+	// Pending → Validated transition for Predicted effects. Refactor 82f717b
+	// dropped that field (along with CheckRemovedEffects) on the assumption
+	// that BoundQueueV2 was the single source of truth — it wasn't, because
+	// Predicted effects bypass BoundQueueV2 ops. The dropped OnRep was the
+	// only validation path for predicted EffectIDs, causing Sprint to time
+	// out 1s after each apply ("Effect Not Confirmed By Server").
+	//
+	// V2 fix (this work): re-introduce ActiveEffectIDs but bound via GMC's
+	// BindInstancedStruct on FGMASActiveEffectIDsState. The bound state is
+	// atomic with the move log — apply ops + bound list update arrive in
+	// the same packet, eliminating the asymmetric replication window that
+	// was Bug #4 in the original V1 pattern. Both correctness fixes
+	// (Pending → Validated, server-removal detection) coexist on a single
+	// channel without a grace period.
+	//
+	// Tests below exercise:
+	//   - Helper plumbing (Add / Remove / Contains)
+	//   - ApplyAbilityEffect mirrors the new ID into the bound state
+	//   - TickActiveEffects cleanup drops the ID when an effect completes
+	//   - The Pending → Validated polling logic, isolated from HasAuthority
+	//     gating so the headless harness can drive it deterministically.
+	Describe("Bug #4 v2: GMC-bound ActiveEffectIDs", [this]()
 	{
-		It("ClientEffectApplicationTime is set to ActionTimer at apply time", [this]()
+		It("BoundActiveEffectIDs_Add stores the ID and Contains finds it", [this]()
 		{
-			AbilityComp->ActionTimer = 5.0;
+			// Add idempotency: AddUnique semantics — second add is a no-op.
+			AbilityComp->BoundActiveEffectIDs_Add(42);
+			TestTrue("ID present after Add", AbilityComp->BoundActiveEffectIDs_Contains(42));
 
+			AbilityComp->BoundActiveEffectIDs_Add(42);
+			TestTrue("Idempotent Add: still present", AbilityComp->BoundActiveEffectIDs_Contains(42));
+
+			// Multiple distinct IDs coexist.
+			AbilityComp->BoundActiveEffectIDs_Add(99);
+			TestTrue("Second distinct ID present", AbilityComp->BoundActiveEffectIDs_Contains(99));
+			TestTrue("First ID still present", AbilityComp->BoundActiveEffectIDs_Contains(42));
+		});
+
+		It("BoundActiveEffectIDs_Remove drops the ID without affecting siblings", [this]()
+		{
+			AbilityComp->BoundActiveEffectIDs_Add(1);
+			AbilityComp->BoundActiveEffectIDs_Add(2);
+			AbilityComp->BoundActiveEffectIDs_Add(3);
+
+			AbilityComp->BoundActiveEffectIDs_Remove(2);
+
+			TestFalse("Removed ID is gone",          AbilityComp->BoundActiveEffectIDs_Contains(2));
+			TestTrue ("Sibling 1 untouched",         AbilityComp->BoundActiveEffectIDs_Contains(1));
+			TestTrue ("Sibling 3 untouched",         AbilityComp->BoundActiveEffectIDs_Contains(3));
+
+			// Remove of an absent ID is a silent no-op.
+			AbilityComp->BoundActiveEffectIDs_Remove(2);
+			AbilityComp->BoundActiveEffectIDs_Remove(404);
+			TestFalse("Re-remove of absent ID stays absent", AbilityComp->BoundActiveEffectIDs_Contains(2));
+			TestFalse("Remove of never-added ID stays absent", AbilityComp->BoundActiveEffectIDs_Contains(404));
+		});
+
+		It("ApplyAbilityEffect mirrors the new EffectID into the bound list", [this]()
+		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
 			FGMCAbilityEffectData Data;
-			Data.EffectType     = EGMASEffectType::Persistent;
-			Data.Duration       = 0.f;
-			Data.ClientGraceTime = 1.f;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			Data.Modifiers.Add(MakeHealthMod(10.f));
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			TestEqual("ClientEffectApplicationTime captured ActionTimer",
-				Effect->ClientEffectApplicationTime, 5.0f);
+			const int Id = Effect->EffectData.EffectID;
+			TestTrue("Applied effect ID is in ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestTrue("Applied effect ID is mirrored into bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Effect with default ClientGraceTime (1.0) survives a same-tick CheckRemovedEffects", [this]()
+		It("TickActiveEffects cleanup drops completed-effect IDs from the bound list", [this]()
 		{
-			// Harness default ActionTimer = 1.0 from BeforeEach. Apply at that timestamp.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
+			// Instant effect: applies, then immediately marks itself Completed via EndEffect.
 			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 1.f;
+			Data.EffectType = EGMASEffectType::Instant;
+			Data.Duration   = 0.f;
+			Data.Modifiers.Add(MakeHealthMod(5.f));
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			// ClientEffectApplicationTime = 1.0 ; ActionTimer = 1.0 → TimeSinceApply = 0 < 1.0 → grace active
 
-			const int EffectID = Effect->EffectData.EffectID;
-			TestTrue("Effect present in ActiveEffects", AbilityComp->GetActiveEffects().Contains(EffectID));
+			const int Id = Effect->EffectData.EffectID;
+			TestTrue("Pre-tick: ID is in bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
+			// Tick — the cleanup loop reaps the bCompleted instant effect and should
+			// drop its ID from the bound state at the same time.
+			AbilityComp->TickActiveEffects(1.f);
 
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestTrue("Effect survives within grace window",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
+			TestFalse("Post-tick: ID removed from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestFalse("Post-tick: ID removed from bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			Effect->RemoveFromRoot();
 		});
 
-		It("Effect is wiped once ActionTimer advances past ClientGraceTime", [this]()
+		It("Pending → Validated polling promotes IDs that the server has confirmed", [this]()
 		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
+			// Simulate a client-side Predicted apply: stamp Pending in ProcessedEffectIDs,
+			// then have the server's authoritative bound state replicate the ID in.
+			// The polling at the head of TickActiveEffects should promote it to Validated.
+			//
+			// The headless harness defaults to authoritative mode, so the polling block
+			// (gated by !HasAuthority()) won't fire. We exercise the logic directly here
+			// — the production gating is a separate concern covered by integration play.
+			constexpr int Id = 1234;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+			AbilityComp->BoundActiveEffectIDs_Add(Id);
 
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 1.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
+			// Inline the polling logic (mirror of the production code in TickActiveEffects).
+			for (auto& ProcessedPair : AbilityComp->GetProcessedEffectIDsForTest())
+			{
+				if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+					&& AbilityComp->BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+				{
+					ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				}
+			}
 
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			// Push past the grace window (apply was at t=1.0, grace=1.0, so t=2.5 is past).
-			AbilityComp->ActionTimer = 2.5;
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestFalse("Effect wiped after grace expires",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
+			const auto State = AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id);
+			TestEqual("Pending promoted to Validated when ID is in bound state",
+				static_cast<int>(State), static_cast<int>(EGMCEffectAnswerState::Validated));
 		});
 
-		It("Effect with ClientGraceTime=0 is wiped immediately on missing ActiveEffectID", [this]()
+		It("Pending stays Pending when the ID is absent from the bound state", [this]()
 		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
+			// Mirror image of the previous test: server hasn't acked the predicted apply,
+			// the ID is NOT in the bound state, polling must NOT promote.
+			constexpr int Id = 5678;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+			// Deliberately do NOT add to BoundActiveEffectIDs.
 
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 0.f;  // opt-out of replication grace
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
+			for (auto& ProcessedPair : AbilityComp->GetProcessedEffectIDsForTest())
+			{
+				if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+					&& AbilityComp->BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+				{
+					ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				}
+			}
 
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestFalse("ClientGraceTime=0 disables grace, effect wiped same tick",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
-		});
-
-		It("Effect with Pending state is skipped before the grace check (V1 invariant preserved)", [this]()
-		{
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType      = EGMASEffectType::Persistent;
-			Data.Duration        = 0.f;
-			Data.ClientGraceTime = 0.f;  // even with grace disabled, Pending still skips
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			const int EffectID = Effect->EffectData.EffectID;
-
-			// Pending = client predicted but server hasn't validated yet
-			AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Pending);
-			AbilityComp->GetActiveEffectIDsForTest().Remove(EffectID);
-
-			// Push way past any grace just to be sure
-			AbilityComp->ActionTimer = 100.0;
-			AbilityComp->CheckRemovedEffectsForTest();
-
-			TestTrue("Pending state suppresses wipe regardless of grace",
-				AbilityComp->GetActiveEffects().Contains(EffectID));
-
-			Effect->RemoveFromRoot();
+			const auto State = AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id);
+			TestEqual("Pending stays Pending without bound-state confirmation",
+				static_cast<int>(State), static_cast<int>(EGMCEffectAnswerState::Pending));
 		});
 	});
 

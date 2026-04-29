@@ -190,17 +190,16 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
-	// Consume the bilateral predicted-end defer. Both client and server run this on the same logical move tick,
-	// so they reach EndEffect() simultaneously after ClientGraceTime — no Apply/Remove drain asymmetry.
-	if (bPendingPredictedEnd)
+	// Consume the bilateral predicted-end defer. Uses an absolute ActionTimer timestamp instead of a
+	// per-tick countdown — both client and server compute the same EndAtActionTimer (same move log,
+	// same ActionTimer at Remove + same ClientGraceTime), and the comparison below fires on the
+	// exact same logical tick on both sides regardless of DeltaTime / framerate / replay count.
+	if (EndAtActionTimer >= 0.0 && OwnerAbilityComponent
+		&& OwnerAbilityComponent->ActionTimer >= EndAtActionTimer)
 	{
-		PendingPredictedEndTimer -= DeltaTime;
-		if (PendingPredictedEndTimer <= 0.f)
-		{
-			bPendingPredictedEnd = false;
-			EndEffect();
-			return;
-		}
+		EndAtActionTimer = -1.0;
+		EndEffect();
+		return;
 	}
 
 	if (bCompleted) {
