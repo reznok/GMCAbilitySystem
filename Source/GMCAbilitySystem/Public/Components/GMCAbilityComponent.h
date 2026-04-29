@@ -55,6 +55,34 @@ struct FEffectStatePrediction
 	uint8 State;
 };
 
+/**
+ * GMC-bound authoritative list of currently-active effect IDs on this ASC.
+ *
+ * Replicated atomically with the move state via BindInstancedStruct, NOT via
+ * standard DOREPLIFETIME. This is the architectural difference from the V1
+ * pattern that was dropped in commit 82f717b: moving the list onto the GMC
+ * bound channel eliminates the asymmetric replication window between
+ * RPCOnServerOperationAdded (RPC, ~RTT/2) and DOREPLIFETIME (~RTT) that
+ * caused Bug #4 ("Recovery wipes itself"). The list and the apply ops that
+ * mutate it now travel in the same packet, in the same order.
+ *
+ * Consumed for the Pending → Validated transition on Predicted effects:
+ * client predict-applies, marks ProcessedEffectIDs[id] = Pending; once the
+ * id appears in this bound list (server's authoritative side replicates it
+ * during the move tick), TickActiveEffects flips it to Validated. Without
+ * this transition the 1s timeout in TickActiveEffects fires "Not Confirmed
+ * By Server" and removes the local instance — that was the Sprint-dies-
+ * after-1s bug observed in ETL post-refactor 82f717b.
+ */
+USTRUCT()
+struct FGMASActiveEffectIDsState
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<int> IDs;
+};
+
 USTRUCT()
 struct FGMASQueueOperationHandle
 {
@@ -778,7 +806,19 @@ private:
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
-	
+
+	// GMC-bound list of currently-active EffectIDs. Authoritative source for the
+	// Pending → Validated transition on Predicted effects. See FGMASActiveEffectIDsState
+	// docstring for the full rationale.
+	UPROPERTY()
+	FInstancedStruct ActiveEffectIDsBound;
+
+	// Helpers to mutate the bound state without callers having to wrangle the
+	// FInstancedStruct accessor + struct construction every time.
+	void BoundActiveEffectIDs_Add(int EffectID);
+	void BoundActiveEffectIDs_Remove(int EffectID);
+	bool BoundActiveEffectIDs_Contains(int EffectID) const;
+
 	// IDs that have been claimed by server-auth effect applications
 	TArray<int> ReservedEffectIDs;
 

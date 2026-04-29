@@ -151,7 +151,51 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 	// QueuedEffectOperations_ClientAuth.BindToGMC(GMCMovementComponent);
 	// QueuedEventOperations.BindToGMC(GMCMovementComponent);
 	BoundQueueV2.BindToGMC(GMCMovementComponent);
-	
+
+	// Active effect IDs — atomic with the move state via GMC bound state. Single source of
+	// truth for the Pending → Validated transition on Predicted effects (see
+	// FGMASActiveEffectIDsState docstring). Initialise to an empty struct so the
+	// FInstancedStruct has a valid script struct from frame zero.
+	if (!ActiveEffectIDsBound.IsValid())
+	{
+		ActiveEffectIDsBound.InitializeAs<FGMASActiveEffectIDsState>();
+	}
+	GMCMovementComponent->BindInstancedStruct(ActiveEffectIDsBound,
+		EGMC_PredictionMode::ServerAuth_Output_ClientValidated,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::Periodic_Output,
+		EGMC_InterpolationFunction::TargetValue);
+}
+
+// ---------------------------------------------------------------------------
+// FGMASActiveEffectIDsState helpers — keep callers tidy. The bound state is an
+// FInstancedStruct so direct access requires GetMutablePtr / GetPtr; centralise
+// that here. All three helpers are idempotent w.r.t. the underlying TArray.
+// ---------------------------------------------------------------------------
+
+void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Add(int EffectID)
+{
+	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+	{
+		State->IDs.AddUnique(EffectID);
+	}
+}
+
+void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Remove(int EffectID)
+{
+	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+	{
+		State->IDs.Remove(EffectID);
+	}
+}
+
+bool UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Contains(int EffectID) const
+{
+	if (const FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetPtr<FGMASActiveEffectIDsState>())
+	{
+		return State->IDs.Contains(EffectID);
+	}
+	return false;
 }
 void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsCombinedClientMove)
 {
@@ -962,18 +1006,36 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 {
+	// Pending → Validated reconciliation against the GMC-bound authoritative list.
+	// Each tick, any local Predicted effect whose EffectID now appears in the bound
+	// state (replicated atomically from the server's authoritative side) is promoted
+	// to Validated. This is the polling replacement for the V1 OnRep_ActiveEffectIDs
+	// hook; idempotent and replay-safe because it just compares the current bound
+	// state against ProcessedEffectIDs each tick.
+	if (!HasAuthority())
+	{
+		for (auto& ProcessedPair : ProcessedEffectIDs)
+		{
+			if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+				&& BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+			{
+				ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+			}
+		}
+	}
+
 	TArray<int> CompletedActiveEffects;
 
 	// Tick Effects
 	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
 	{
-		
+
 		if (!Effect.Value->IsValidLowLevel()) {
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null or pending kill, removing from the list."), Effect.Key);
 			CompletedActiveEffects.Push(Effect.Key);
-			continue;	
+			continue;
 		}
-		
+
 		Effect.Value->Tick(DeltaTime);
 		if (Effect.Value->bCompleted)
 		{
@@ -983,7 +1045,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		// Check for predicted effects that have not been server confirmed
 		if (!HasAuthority() &&
 			!Effect.Value->EffectData.bServerAuth
-			&& ProcessedEffectIDs.Contains(Effect.Key) 
+			&& ProcessedEffectIDs.Contains(Effect.Key)
 			&& ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending
 			&& Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
@@ -993,7 +1055,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			CompletedActiveEffects.Push(Effect.Key);
 		}
 	}
-	
+
 	// Clean expired effects
 	for (const int EffectID : CompletedActiveEffects)
 	{
@@ -1002,6 +1064,12 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 
 		ActiveEffects.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
+
+		// Drop the ID from the bound authoritative list. Server-side this is the source
+		// of truth that propagates to all clients; client-side it's a local mirror that
+		// will get overwritten by the next replication anyway, but keeping it consistent
+		// avoids transient validation hiccups.
+		BoundActiveEffectIDs_Remove(EffectID);
 	}
 
 	// Clean effect handles
@@ -1353,6 +1421,18 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		BoundQueueV2.OperationData  = PayloadData;
+
+		// Diagnostic: log every ability activation that traverses ProcessOperation, including
+		// what the server side does with it. Pair with [ServerOpAccept]/[ServerOpDrop] to
+		// trace a Sprint activation from client predict → server validation → server apply.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ProcessOp] op=%d activate_ability tag=%s auth=%d fromMove=%d force=%d"),
+				OperationID, *Data.InputTag.ToString(),
+				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
+		}
+
 		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce);
 	}
 
@@ -1369,6 +1449,23 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	if (StructType == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2ApplyEffectOperation Data = PayloadData.Get<FGMASBoundQueueV2ApplyEffectOperation>();
+
+		// Diagnostic: server-side or client-side Apply Effect op processing. Filtered by class
+		// name so we can isolate the Sprint/SprintCost/Recovery investigation without flooding
+		// the log with every single effect.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
+			const FString ClassName = Data.EffectClass ? Data.EffectClass->GetName() : TEXT("null");
+			if (Filter.IsEmpty() || ClassName.Contains(Filter))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ProcessOp] op=%d apply_effect class=%s effect_id=%d auth=%d fromMove=%d"),
+					OperationID, *ClassName, Data.EffectID,
+					HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0);
+			}
+		}
+
 		ProcessEffectApplicationFromOperation(Data);
 		if (!HasAuthority())
 		{
@@ -1479,7 +1576,24 @@ void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FG
 void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick)
 {
 	if (!HasAuthority()) return;
-	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return;
+	if (!BoundQueueV2.IsValidGMASOperation(OperationData))
+	{
+		// Diagnostic: signal when an op arrived but the GMAS validation rejected it.
+		// Empty/default ops (OperationID==0) are routine and not interesting; only log
+		// when there is real payload data getting dropped.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			const FGMASBoundQueueV2OperationBaseData* BD = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+			if (BD && BD->OperationID != 0)
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerOpDrop] op=%d reason=IsValidGMASOperation_failed struct=%s"),
+					BD->OperationID,
+					OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+			}
+		}
+		return;
+	}
 
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 	const int OperationID = BaseData->OperationID;
@@ -1497,13 +1611,39 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			ServerProcessAcknowledgedOperation(BaseData->OperationID, bFromMovementTick);
 			return;
 		}
-		
+
 		if (!BoundQueueV2.HasPayloadByID(OperationID))
 		{
 			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
 		}
-		
+
+		// Diagnostic: server actually received and accepted a client op. Pair this with the
+		// client-side Apply trace to see if the op makes it across the wire at all.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ServerOpAccept] op=%d struct=%s fromMove=%d"),
+				OperationID,
+				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
+				bFromMovementTick ? 1 : 0);
+		}
+
 		ProcessOperation(OperationData, bFromMovementTick);
+	}
+	else
+	{
+		// Diagnostic: op reached the server but failed the IsValidClientOperation security check.
+		// This is the most likely failure point for "Sprint Not Confirmed By Server" — a client
+		// op gets dropped here and never reaches ProcessOperation, so no apply happens server-side
+		// and the client's Predicted timeout fires after 1s.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[ServerOpDrop] op=%d reason=IsValidClientOperation_failed struct=%s fromMove=%d"),
+				OperationID,
+				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
+				bFromMovementTick ? 1 : 0);
+		}
 	}
 }
 
@@ -1864,6 +2004,15 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	}
 
 	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
+
+	// Mirror into the GMC-bound list. Both client (predict-apply) and server (auth-apply)
+	// add the ID to their local copy. The bound state replication enforces convergence:
+	// if both sides applied the same effect deterministically, the lists match and no replay
+	// is needed. If only the client predicted (server rejected via cooldown / tag check /
+	// resource cost / etc.), the lists diverge → server's empty value wins → bound state
+	// drops the ID on the client → TickActiveEffects sees the ID gone and the effect can
+	// be reaped via the existing timeout / removal path.
+	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
 
 	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see
 	// exactly which path created this instance (RPCOnServerOperationAdded, bound state replay,

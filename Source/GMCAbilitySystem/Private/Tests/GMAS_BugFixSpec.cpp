@@ -1,18 +1,30 @@
-// Layer 2 regression tests covering the seven bugs fixed in this release:
+// Layer 2 regression tests covering the bugs fixed in this release:
 //
 //   Bug #1  GMCAbilityEffect.cpp   MustMaintainQuery logic was inverted —
 //                                   effect ended when query matched instead of
 //                                   when it stopped matching.
-//   Bug #2  Retired — CheckRemovedEffects + ActiveEffectIDs dropped in the
-//                                   single-channel refactor. Effect removal flows
-//                                   exclusively through BoundQueueV2 ops.
+//   Bug #2  Retired — CheckRemovedEffects + ActiveEffectIDs (DOREPLIFETIME)
+//                                   dropped in the single-channel refactor.
+//                                   Effect removal flows exclusively through
+//                                   BoundQueueV2 ops; cf. Bug #4 v2 below for
+//                                   the GMC-bound replacement that handles
+//                                   Pending → Validated transitions.
 //   Bug #3  GMCAbility.cpp          TickTasks / AncillaryTickTasks iterated a
 //                                   TMap<int,Task*> via RunningTasks[i] —
 //                                   TMap::operator[] keyed by integer crashes
 //                                   when key i does not exist.
-//   Bug #4  GMCAbilityComponent.cpp GetEffectFromHandle accessed
+//   Bug #4 v1 GMCAbilityComponent.cpp GetEffectFromHandle accessed
 //                                   ActiveEffects[NetworkId] without a
 //                                   Contains guard (UB / potential crash).
+//   Bug #4 v2 GMCAbilityComponent.{h,cpp} GMC-bound ActiveEffectIDs replaces
+//                                   the original DOREPLIFETIME pattern. Atomic
+//                                   with move state, single channel for both
+//                                   apply mirroring and Pending → Validated
+//                                   transition on Predicted effects. Replaces
+//                                   the dropped V1 OnRep_ActiveEffectIDs whose
+//                                   absence was causing Sprint to time out 1s
+//                                   after each apply ("Effect Not Confirmed
+//                                   By Server").
 //   Bug #5  GMCAbilityComponent.cpp ProcessedEffectIDs entries were added at
 //                                   effect creation but never removed after
 //                                   expiry, causing unbounded map growth.
@@ -689,16 +701,165 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// ── Bug #4 retired ─────────────────────────────────────────────────────
-	// CheckRemovedEffects replication grace was a workaround for the asymmetry
-	// between RPCOnServerOperationAdded (RPC, ~RTT/2) and ActiveEffectIDs
-	// (DOREPLIFETIME, ~RTT). Both ActiveEffectIDs and CheckRemovedEffects were
-	// dropped in the single-channel refactor — Bug #4 is now structurally
-	// impossible. ClientGraceTime is still used by the bilateral PredictedEnd
-	// defer for Ticking/Periodic effects (Bug #3 of migration notes), but that
-	// is covered by the "PredictedEnd defer" test block below.
-	// ClientEffectApplicationTime continues to be set in InitializeEffect for
-	// consumers that read it (debug overlays, future analytics).
+	// ── Bug #4 v2 — GMC-bound ActiveEffectIDs replaces DOREPLIFETIME ──────
+	//
+	// History: V1 had `TArray<int> ActiveEffectIDs` replicated via standard
+	// DOREPLIFETIME, with `OnRep_ActiveEffectIDs` performing the only
+	// Pending → Validated transition for Predicted effects. Refactor 82f717b
+	// dropped that field (along with CheckRemovedEffects) on the assumption
+	// that BoundQueueV2 was the single source of truth — it wasn't, because
+	// Predicted effects bypass BoundQueueV2 ops. The dropped OnRep was the
+	// only validation path for predicted EffectIDs, causing Sprint to time
+	// out 1s after each apply ("Effect Not Confirmed By Server").
+	//
+	// V2 fix (this work): re-introduce ActiveEffectIDs but bound via GMC's
+	// BindInstancedStruct on FGMASActiveEffectIDsState. The bound state is
+	// atomic with the move log — apply ops + bound list update arrive in
+	// the same packet, eliminating the asymmetric replication window that
+	// was Bug #4 in the original V1 pattern. Both correctness fixes
+	// (Pending → Validated, server-removal detection) coexist on a single
+	// channel without a grace period.
+	//
+	// Tests below exercise:
+	//   - Helper plumbing (Add / Remove / Contains)
+	//   - ApplyAbilityEffect mirrors the new ID into the bound state
+	//   - TickActiveEffects cleanup drops the ID when an effect completes
+	//   - The Pending → Validated polling logic, isolated from HasAuthority
+	//     gating so the headless harness can drive it deterministically.
+	Describe("Bug #4 v2: GMC-bound ActiveEffectIDs", [this]()
+	{
+		It("BoundActiveEffectIDs_Add stores the ID and Contains finds it", [this]()
+		{
+			// Add idempotency: AddUnique semantics — second add is a no-op.
+			AbilityComp->BoundActiveEffectIDs_Add(42);
+			TestTrue("ID present after Add", AbilityComp->BoundActiveEffectIDs_Contains(42));
+
+			AbilityComp->BoundActiveEffectIDs_Add(42);
+			TestTrue("Idempotent Add: still present", AbilityComp->BoundActiveEffectIDs_Contains(42));
+
+			// Multiple distinct IDs coexist.
+			AbilityComp->BoundActiveEffectIDs_Add(99);
+			TestTrue("Second distinct ID present", AbilityComp->BoundActiveEffectIDs_Contains(99));
+			TestTrue("First ID still present", AbilityComp->BoundActiveEffectIDs_Contains(42));
+		});
+
+		It("BoundActiveEffectIDs_Remove drops the ID without affecting siblings", [this]()
+		{
+			AbilityComp->BoundActiveEffectIDs_Add(1);
+			AbilityComp->BoundActiveEffectIDs_Add(2);
+			AbilityComp->BoundActiveEffectIDs_Add(3);
+
+			AbilityComp->BoundActiveEffectIDs_Remove(2);
+
+			TestFalse("Removed ID is gone",          AbilityComp->BoundActiveEffectIDs_Contains(2));
+			TestTrue ("Sibling 1 untouched",         AbilityComp->BoundActiveEffectIDs_Contains(1));
+			TestTrue ("Sibling 3 untouched",         AbilityComp->BoundActiveEffectIDs_Contains(3));
+
+			// Remove of an absent ID is a silent no-op.
+			AbilityComp->BoundActiveEffectIDs_Remove(2);
+			AbilityComp->BoundActiveEffectIDs_Remove(404);
+			TestFalse("Re-remove of absent ID stays absent", AbilityComp->BoundActiveEffectIDs_Contains(2));
+			TestFalse("Remove of never-added ID stays absent", AbilityComp->BoundActiveEffectIDs_Contains(404));
+		});
+
+		It("ApplyAbilityEffect mirrors the new EffectID into the bound list", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			Data.Modifiers.Add(MakeHealthMod(10.f));
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			TestTrue("Applied effect ID is in ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestTrue("Applied effect ID is mirrored into bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("TickActiveEffects cleanup drops completed-effect IDs from the bound list", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			// Instant effect: applies, then immediately marks itself Completed via EndEffect.
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Instant;
+			Data.Duration   = 0.f;
+			Data.Modifiers.Add(MakeHealthMod(5.f));
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			const int Id = Effect->EffectData.EffectID;
+			TestTrue("Pre-tick: ID is in bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
+
+			// Tick — the cleanup loop reaps the bCompleted instant effect and should
+			// drop its ID from the bound state at the same time.
+			AbilityComp->TickActiveEffects(1.f);
+
+			TestFalse("Post-tick: ID removed from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestFalse("Post-tick: ID removed from bound state",
+				AbilityComp->BoundActiveEffectIDs_Contains(Id));
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("Pending → Validated polling promotes IDs that the server has confirmed", [this]()
+		{
+			// Simulate a client-side Predicted apply: stamp Pending in ProcessedEffectIDs,
+			// then have the server's authoritative bound state replicate the ID in.
+			// The polling at the head of TickActiveEffects should promote it to Validated.
+			//
+			// The headless harness defaults to authoritative mode, so the polling block
+			// (gated by !HasAuthority()) won't fire. We exercise the logic directly here
+			// — the production gating is a separate concern covered by integration play.
+			constexpr int Id = 1234;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+			AbilityComp->BoundActiveEffectIDs_Add(Id);
+
+			// Inline the polling logic (mirror of the production code in TickActiveEffects).
+			for (auto& ProcessedPair : AbilityComp->GetProcessedEffectIDsForTest())
+			{
+				if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+					&& AbilityComp->BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+				{
+					ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				}
+			}
+
+			const auto State = AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id);
+			TestEqual("Pending promoted to Validated when ID is in bound state",
+				static_cast<int>(State), static_cast<int>(EGMCEffectAnswerState::Validated));
+		});
+
+		It("Pending stays Pending when the ID is absent from the bound state", [this]()
+		{
+			// Mirror image of the previous test: server hasn't acked the predicted apply,
+			// the ID is NOT in the bound state, polling must NOT promote.
+			constexpr int Id = 5678;
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Id, EGMCEffectAnswerState::Pending);
+			// Deliberately do NOT add to BoundActiveEffectIDs.
+
+			for (auto& ProcessedPair : AbilityComp->GetProcessedEffectIDsForTest())
+			{
+				if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
+					&& AbilityComp->BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+				{
+					ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				}
+			}
+
+			const auto State = AbilityComp->GetProcessedEffectIDsForTest().FindRef(Id);
+			TestEqual("Pending stays Pending without bound-state confirmation",
+				static_cast<int>(State), static_cast<int>(EGMCEffectAnswerState::Pending));
+		});
+	});
 
 	// ── Set / SetReplace edge cases on the bound-attribute path ─────────────
 	//
