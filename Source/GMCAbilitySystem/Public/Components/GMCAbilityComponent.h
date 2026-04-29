@@ -41,6 +41,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEffectRemoved, UGMCAbilityEffect*
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTaskTimeout, FGameplayTag, TaskTag);
 
+// Replay-burst diagnostic: fires on the local autonomous proxy when N replay
+// occurrences happen within a configurable window (UGMASReplayBurstSettings).
+// Counts OCCURRENCES (one per frame in which CL_IsReplaying() was true at any
+// point), not the number of moves replayed. Server-side and simulated proxies
+// never fire — replay is an autonomous-client concept.
+//   BurstCount   : number of occurrences in the trailing window when threshold tripped
+//   WindowSeconds: width of the window in seconds (mirror of the setting at fire time)
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnReplayBurstDetected, int32, BurstCount, float, WindowSeconds);
+
 USTRUCT()
 struct FEffectStatePrediction
 {
@@ -527,6 +536,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnEffectRemoved OnEffectRemoved;
 
+	// Fires on the local autonomous proxy when the count of replay occurrences over
+	// the trailing window crosses the threshold configured in UGMASReplayBurstSettings.
+	// Intended for diagnostic UIs / telemetry hooks. Does NOT fire on server, listen
+	// server (locally-controlled host pawn never replays its own moves), or simulated
+	// proxies. Reset-on-fire: after firing the buffer is cleared, so a sustained chain
+	// re-triggers approximately once per WindowSeconds.
+	UPROPERTY(BlueprintAssignable, Category="GMAS|Diagnostics")
+	FOnReplayBurstDetected OnReplayBurstDetected;
+
 	/** Returns an array of pointers to all attributes */
 	TArray<const FAttribute*> GetAllAttributes() const;
 
@@ -867,6 +885,36 @@ private:
 	// this is just for redundancy
 	UFUNCTION(Client, Reliable)
 	void RPCClientEndEffect(int EffectID);
+
+	// ── Replay-burst diagnostic state ─────────────────────────────────────
+	//
+	// Sticky flag — set by GenPredictionTick when CL_IsReplaying() is observed
+	// during a replay re-run, consumed once by GenAncillaryTick at end-of-frame.
+	// AncillaryTick runs once per real frame, so reading the flag there gives us
+	// exactly one event per "frame in which a replay happened" regardless of how
+	// many moves were replayed in that frame.
+	bool bReplayObservedThisFrame = false;
+
+	// Sliding-window timestamps of recent replay occurrences (FPlatformTime::Seconds()).
+	// Pruned every frame to drop entries older than the configured WindowSeconds.
+	TArray<double> RecentReplayTimestamps;
+
+	// Active diagnostic widget instance (if any). Weak — auto-clears if the widget
+	// is GC'd or removed externally; the auto-remove timer is just a safety net.
+	UPROPERTY(Transient)
+	TWeakObjectPtr<class UUserWidget> ActiveReplayWarningWidget;
+
+	// Timer handle for auto-removal of the warning widget after WidgetDurationSeconds.
+	FTimerHandle ReplayWarningWidgetTimerHandle;
+
+	// Drain RecentReplayTimestamps + check threshold + fire delegate / log / widget.
+	// Called once per frame from GenAncillaryTick when bReplayObservedThisFrame is set.
+	void ProcessReplayBurstDiagnostic();
+
+	// Lazy-load the configured warning widget class and add an instance to the
+	// local player's viewport for WidgetDurationSeconds. No-op if the class is
+	// unset, the owner has no local PC, or the load fails.
+	void TryShowReplayBurstWarningWidget();
 
 	friend UGMCAbilityAnimInstance;
 

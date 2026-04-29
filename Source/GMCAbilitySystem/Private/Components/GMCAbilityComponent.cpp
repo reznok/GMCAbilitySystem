@@ -10,11 +10,15 @@
 #include "Ability/GMCAbility.h"
 #include "Ability/GMCAbilityMapData.h"
 #include "Attributes/GMCAttributesData.h"
+#include "Diagnostics/GMASReplayBurstSettings.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Blueprint/UserWidget.h"
+#include "GameFramework/PlayerController.h"
 #include "HAL/PlatformStackWalk.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 
 namespace GMASApplyTrace {
 	// Diagnostic: dump full C++ + script callstack on every ApplyAbilityEffect that creates a
@@ -255,8 +259,17 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	SendTaskDataToActiveAbility(false);
 	TickAncillaryActiveAbilities(DeltaTime);
 	
-	ClearAbilityAndTaskData(); 
-	
+	ClearAbilityAndTaskData();
+
+	// Replay-burst diagnostic — consume the sticky flag set by any GenPredictionTick
+	// invocations during this frame's replay loop. AncillaryTick runs once per real
+	// frame, so this collapses N replayed-move ticks into a single observation.
+	if (bReplayObservedThisFrame)
+	{
+		bReplayObservedThisFrame = false;
+		ProcessReplayBurstDiagnostic();
+	}
+
 	bInAncillaryTick = false;
 }
 
@@ -738,9 +751,16 @@ void UGMC_AbilitySystemComponent::DrawDebugAttribute(const FGameplayTag& Attribu
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenPredictionTick)
-	
+
 	bJustTeleported = false;
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
+
+	// Replay-burst diagnostic — sticky flag, consumed by GenAncillaryTick.
+	// Set early so even short-circuiting paths below still record the observation.
+	if (GMCMovementComponent && GMCMovementComponent->CL_IsReplaying())
+	{
+		bReplayObservedThisFrame = true;
+	}
 
 	// Drain any PredictedQueued operations buffered since the last tick.
 	DrainPendingPredictedOperations();
@@ -2057,19 +2077,55 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	// bUniqueByEffectTag and a non-empty EffectTag, refuse to apply when another
 	// active effect on this owner already carries the same tag (exact match).
 	//
-	// Run this check BEFORE InitializeEffect / EffectID assignment / bound-state
-	// writes — a rejected Apply must produce ZERO side effects: no EffectID burned,
-	// no Pending stamp in ProcessedEffectIDs, no entry in ActiveEffectIDsBound. The
-	// duplicated UObject argument is left for GC.
+	// Two cases for an existing same-tag match:
+	//
+	//   FUNCTIONALLY ACTIVE  (EndAtActionTimer < 0): the existing instance owns
+	//      the tag slot — REJECT the new Apply with zero side effects.
+	//
+	//   IN BILATERAL DEFER   (EndAtActionTimer >= 0, armed by Remove on a Ticking/
+	//      Periodic effect with ClientGraceTime): the existing instance is in
+	//      teardown, kept alive only to preserve client/server tick-count symmetry.
+	//      We REPLACE: the new Apply proceeds AND we force-end the existing one
+	//      immediately. Without the force-end, the deferred effect keeps ticking its
+	//      modifiers until its timer fires (Tick early-returns only on bCompleted,
+	//      not on armed-but-not-yet-due defer), producing double-drain during the
+	//      overlap window. Concrete repro: spam-Sprint at the moment of release/
+	//      re-press, both SprintCost #1 (in defer) and SprintCost #2 (fresh) tick
+	//      Stamina drain → 2× consumption for ~ClientGraceTime.
+	//
+	// Run the rejection-check BEFORE InitializeEffect / EffectID assignment /
+	// bound-state writes — a rejected Apply must produce ZERO side effects.
+	// The force-end of deferred matches happens AFTER the new is added to
+	// ActiveEffects (further down in this function), so the new instance is in
+	// place when the old's RemoveTagsFromOwner(bPreserveGrantedTagsIfMultiple=true)
+	// counts siblings; otherwise the GrantedTags would flicker for one tick.
+	//
+	// Determinism: Apply is invoked at the same logical ActionTimer on client and
+	// server (predicted via PredictionTick or via the bound queue); the resulting
+	// force-end fires on both sides at the same logical tick, so the OLD effect's
+	// total tick count remains identical between client and server (just shorter
+	// than the originally-scheduled defer). Bilateral symmetry preserved.
+	TArray<UGMCAbilityEffect*> DeferredMatchesToReplace;
 	if (InitializationData.bUniqueByEffectTag && InitializationData.EffectTag.IsValid())
 	{
 		for (const TPair<int, UGMCAbilityEffect*>& Existing : ActiveEffects)
 		{
-			if (Existing.Value
-				&& Existing.Value != Effect
-				&& Existing.Value->EffectData.EffectTag.IsValid()
-				&& Existing.Value->EffectData.EffectTag.MatchesTagExact(InitializationData.EffectTag))
+			if (!Existing.Value
+				|| Existing.Value == Effect
+				|| !Existing.Value->EffectData.EffectTag.IsValid()
+				|| !Existing.Value->EffectData.EffectTag.MatchesTagExact(InitializationData.EffectTag))
 			{
+				continue;
+			}
+
+			if (Existing.Value->EndAtActionTimer >= 0.0)
+			{
+				// Deferred — schedule for force-end after the new instance is added.
+				DeferredMatchesToReplace.Add(Existing.Value);
+			}
+			else
+			{
+				// Functionally active — reject.
 				UE_LOG(LogGMCAbilitySystem, Verbose,
 					TEXT("ApplyAbilityEffect rejected: bUniqueByEffectTag=true and tag '%s' already active on %s (existing id=%d)"),
 					*InitializationData.EffectTag.ToString(),
@@ -2118,6 +2174,32 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	// overwrites the client-local addition, polling stays Pending, the 1s timeout in
 	// TickActiveEffects reaps the orphan.
 	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
+
+	// Force-end any deferred same-tag matches now that the NEW instance is in
+	// ActiveEffects. Deferred OLD instances were left ticking only to preserve
+	// bilateral tick-count symmetry on their own teardown — but with the NEW
+	// instance taking over the slot, the OLD's continued ticking would produce
+	// double-modifier-application during the overlap window. Clearing
+	// EndAtActionTimer first prevents Tick from racing the EndEffect path.
+	//
+	// Order rationale: ActiveEffects.Add(Effect, ...) above must precede this
+	// loop so RemoveTagsFromOwner(bPreserveGrantedTagsIfMultiple=true) inside
+	// EndEffect counts the NEW instance as a sibling and skips removal — without
+	// it, the GrantedTags flicker for one tick (out, then back in when NEW's
+	// StartEffect fires).
+	for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
+	{
+		if (!DeferredOld || DeferredOld->bCompleted)
+		{
+			continue;
+		}
+		DeferredOld->EndAtActionTimer = -1.0;
+		DeferredOld->EndEffect();
+		// DeferredOld stays in ActiveEffects until the next TickActiveEffects
+		// cleanup pass spots bCompleted=true; its Tick early-returns on
+		// bCompleted so no further modifiers fire. The bound-state ID is
+		// removed by the same cleanup pass (BoundActiveEffectIDs_Remove).
+	}
 
 	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see
 	// exactly which path created this instance (RPCOnServerOperationAdded, bound state replay,
@@ -2693,5 +2775,120 @@ void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimePr
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Replay-burst diagnostic — sliding-window occurrence counter
+// ─────────────────────────────────────────────────────────────────────────────
+
+void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()
+{
+	const UGMASReplayBurstSettings* Settings = GetDefault<UGMASReplayBurstSettings>();
+	if (!Settings || !Settings->bEnableDetection)
+	{
+		// Diagnostic disabled — keep the buffer empty so a re-enable doesn't
+		// fire on stale timestamps from a previous session.
+		RecentReplayTimestamps.Reset();
+		return;
+	}
+
+	const double Now      = FPlatformTime::Seconds();
+	const double Cutoff   = Now - static_cast<double>(Settings->WindowSeconds);
+
+	// Append the new occurrence + drop entries that fell out of the window.
+	RecentReplayTimestamps.Add(Now);
+	RecentReplayTimestamps.RemoveAll([Cutoff](double T) { return T < Cutoff; });
+
+	if (RecentReplayTimestamps.Num() < Settings->BurstThreshold)
+	{
+		return;
+	}
+
+	// Threshold tripped. Snapshot the count BEFORE clearing — callers want the
+	// number of occurrences that produced the alert, not 0.
+	const int32 BurstCount    = RecentReplayTimestamps.Num();
+	const float WindowSeconds = Settings->WindowSeconds;
+	RecentReplayTimestamps.Reset();
+
+	UE_LOG(LogGMCAbilitySystem, Warning,
+		TEXT("[ReplayBurst] %s observed %d replay occurrences within %.2fs (threshold=%d). ")
+		TEXT("Likely a sustained validation divergence — check recent attribute mutations or bound state writes."),
+		*GetNameSafe(GetOwner()), BurstCount, WindowSeconds, Settings->BurstThreshold);
+
+	OnReplayBurstDetected.Broadcast(BurstCount, WindowSeconds);
+
+	if (Settings->WarningWidgetClass.IsValid() || Settings->WarningWidgetClass.ToSoftObjectPath().IsValid())
+	{
+		TryShowReplayBurstWarningWidget();
+	}
+}
+
+void UGMC_AbilitySystemComponent::TryShowReplayBurstWarningWidget()
+{
+	const UGMASReplayBurstSettings* Settings = GetDefault<UGMASReplayBurstSettings>();
+	if (!Settings) { return; }
+
+	// Resolve the local PC. If the owner pawn isn't possessed by a local PC,
+	// there's no viewport to attach to and we silently skip — the delegate +
+	// log already fired, so nothing is lost.
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn) { return; }
+	APlayerController* PC = Cast<APlayerController>(OwnerPawn->GetController());
+	if (!PC || !PC->IsLocalController()) { return; }
+
+	// If a previous widget is still on screen, drop it before stacking another.
+	// The user wants ONE warning visible at a time, not a pile-up during chains.
+	if (UUserWidget* Existing = ActiveReplayWarningWidget.Get())
+	{
+		Existing->RemoveFromParent();
+		ActiveReplayWarningWidget.Reset();
+	}
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ReplayWarningWidgetTimerHandle);
+	}
+
+	// Lazy-load the soft class. LoadSynchronous because we're already in a slow
+	// path (the alert just fired) and we want the widget visible this frame.
+	UClass* WidgetClass = Settings->WarningWidgetClass.LoadSynchronous();
+	if (!WidgetClass)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[ReplayBurst] WarningWidgetClass is set but could not be loaded ('%s'). Skipping widget display."),
+			*Settings->WarningWidgetClass.ToString());
+		return;
+	}
+
+	UUserWidget* Widget = CreateWidget<UUserWidget>(PC, WidgetClass);
+	if (!Widget) { return; }
+
+	Widget->AddToPlayerScreen(Settings->WidgetZOrder);
+	ActiveReplayWarningWidget = Widget;
+
+	// Auto-remove after the configured duration. <=0 means "leave it persistent —
+	// the next burst will replace it (see RemoveFromParent above)".
+	if (Settings->WidgetDurationSeconds > 0.f)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			TWeakObjectPtr<UUserWidget>           WeakWidget(Widget);
+			TWeakObjectPtr<UGMC_AbilitySystemComponent> WeakSelf(this);
+			World->GetTimerManager().SetTimer(
+				ReplayWarningWidgetTimerHandle,
+				FTimerDelegate::CreateLambda([WeakWidget, WeakSelf]()
+				{
+					if (UUserWidget* W = WeakWidget.Get())
+					{
+						W->RemoveFromParent();
+					}
+					if (UGMC_AbilitySystemComponent* Self = WeakSelf.Get())
+					{
+						Self->ActiveReplayWarningWidget.Reset();
+					}
+				}),
+				Settings->WidgetDurationSeconds,
+				/*bLoop=*/false);
+		}
+	}
 }
 

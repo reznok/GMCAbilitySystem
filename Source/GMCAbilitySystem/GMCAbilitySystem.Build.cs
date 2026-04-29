@@ -30,8 +30,11 @@ public class GMCAbilitySystem : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Slate",
-				"SlateCore", "Niagara"
-				// ... add private dependencies that you statically link with here ...	
+				"SlateCore", "Niagara",
+				// Replay-burst diagnostics: settings registration + on-screen warning widget.
+				"DeveloperSettings",
+				"UMG"
+				// ... add private dependencies that you statically link with here ...
 			}
 			);
 		
