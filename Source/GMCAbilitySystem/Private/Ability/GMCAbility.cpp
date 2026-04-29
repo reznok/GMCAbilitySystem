@@ -283,27 +283,29 @@ void UGMCAbility::FinishEndAbility() {
 			// Don't try to close effects that are already ended
 			if (Effect->CurrentState == EGMASEffectState::Started)
 			{
-				// FinishEndAbility runs in BOTH contexts:
-				//   - inside movement tick (natural end during PredictionTick / PredictedQueued drain)
-				//   - outside movement tick (RPCClientEndAbility → server-authoritative end signal)
+				// Conditional remap Predicted → PredictedQueued.
 				//
-				// The declared QueueType is typically Predicted, whose Safe path hard-rejects
-				// when called outside a movement cycle (ensureMsgf in RemoveEffectByIdSafe).
-				// That gate exists to catch BP/user code attempting to predict-remove from a
-				// non-prediction context — but here we are NOT predicting; we are reacting to
-				// either local end or server-driven end. Remap Predicted → PredictedQueued so
-				// the removal:
-				//   - executes immediately when inside the movement cycle (identical outcome
-				//     to the original Predicted path), AND
-				//   - buffers into PendingPredictedOperations for next-tick drain when called
-				//     from an RPC handler outside the movement cycle (the orphan-effect bug).
-				// PredictedQueued is the only queue type with this dual-context handling
-				// already wired in (see RemoveEffectByIdSafe case PredictedQueued).
+				// The Safe path for Predicted hard-rejects (ensureMsgf in RemoveEffectByIdSafe)
+				// when called outside a movement cycle. FinishEndAbility runs in both contexts:
+				//   - inside movement tick (natural end via PredictionTick / PredictedQueued drain)
+				//   - outside movement tick (RPCClientEndAbility, server-authoritative end signal)
 				//
-				// Other queue types (ServerAuth*, ClientAuth) keep their original semantics —
-				// only Predicted is rerouted, since it is the one with the gating mismatch.
+				// Only the second case needs the remap to avoid the rejection. The first case
+				// works fine with Predicted directly and removes immediately. Remapping
+				// unconditionally introduces a 1-tick delay for the in-movement path that we
+				// don't actually need.
+				//
+				// We check both: the movement component's executing state AND our own
+				// AncillaryTick flag (PredictedQueued's Safe path treats both as "inside a
+				// GMC tick context"). Standalone (no networking) doesn't need the remap
+				// either — the gate doesn't fire there.
+				const bool bInsideGMCTick =
+					(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+					|| OwnerAbilityComponent->IsInAncillaryTick()
+					|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+
 				const EGMCAbilityEffectQueueType QueueType =
-					(EfData.Value == EGMCAbilityEffectQueueType::Predicted)
+					(EfData.Value == EGMCAbilityEffectQueueType::Predicted && !bInsideGMCTick)
 						? EGMCAbilityEffectQueueType::PredictedQueued
 						: EfData.Value;
 				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, QueueType);

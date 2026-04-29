@@ -1063,7 +1063,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// The post-replay frame's polling reconciles cleanly against the converged
 	// bound state. Skipping the block during replay does not delay legitimate
 	// promotions/demotions — it just defers them by one tick past replay end.
-	const bool bIsReplaying = GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
+	const bool bIsReplaying = IsReplayingForGMASLogic();
 
 	// One-way reconciliation against the GMC-bound list (replicated server
 	// authoritative, ServerAuth_Output_ServerValidated mode):
@@ -2859,6 +2859,14 @@ void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimePr
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGMC_AbilitySystemComponent, UnBoundAttributes);
+}
+
+bool UGMC_AbilitySystemComponent::IsReplayingForGMASLogic() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceReplayingForTest) { return true; }
+#endif
+	return GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

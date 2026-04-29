@@ -1058,6 +1058,64 @@ void FGMASBugFixSpec::Define()
 			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});
 
+		It("Replay-skip gate: polling and timeout reap are both no-ops during replay", [this]()
+		{
+			// Production invariant: while CL_IsReplaying() is true (forced here via the
+			// WITH_AUTOMATION_WORKER test seam bForceReplayingForTest), TickActiveEffects
+			// must NOT mutate ProcessedEffectIDs (no Pending → Validated promotion) and must
+			// NOT trigger the Pending+timeout reap. Both paths would otherwise corrupt
+			// non-rewinding state on rewound bound-state snapshots — the EF_Humanoid_Stamina_Recovery
+			// regression that motivated the gate.
+			UGMCAbilityEffect* PendingEffect  = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* ReapableEffect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			PendingEffect->AddToRoot(); ReapableEffect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+
+			// PendingEffect: would normally promote — stamp Pending + present in bound state.
+			UGMCAbilityEffect* Applied1 = AbilityComp->ApplyAbilityEffect(PendingEffect, Data);
+			TestNotNull("Pending effect applied", Applied1);
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Applied1->EffectData.EffectID, EGMCEffectAnswerState::Pending);
+			AbilityComp->BoundActiveEffectIDs_Add(Applied1->EffectData.EffectID);
+
+			// ReapableEffect: would normally time out — stamp Pending, absent from bound, past timeout.
+			UGMCAbilityEffect* Applied2 = AbilityComp->ApplyAbilityEffect(ReapableEffect, Data);
+			TestNotNull("Reapable effect applied", Applied2);
+			AbilityComp->GetProcessedEffectIDsForTest().Add(Applied2->EffectData.EffectID, EGMCEffectAnswerState::Pending);
+			AbilityComp->BoundActiveEffectIDs_Remove(Applied2->EffectData.EffectID);
+			AbilityComp->ActionTimer = 5.0;
+
+			// Force the replay gate active. Both the polling and the reap branch should skip.
+			AbilityComp->bForceReplayingForTest = true;
+			AbilityComp->TickActiveEffects(0.f);
+
+			TestEqual("During replay: Pending NOT promoted",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied1->EffectData.EffectID)),
+				static_cast<int>(EGMCEffectAnswerState::Pending));
+			TestEqual("During replay: Reapable NOT timed out",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied2->EffectData.EffectID)),
+				static_cast<int>(EGMCEffectAnswerState::Pending));
+			TestTrue("During replay: Reapable still in ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Applied2->EffectData.EffectID));
+
+			// Drop the gate; both paths fire on the next tick.
+			AbilityComp->bForceReplayingForTest = false;
+			AbilityComp->TickActiveEffects(0.f);
+
+			TestEqual("Post-replay: Pending promoted to Validated",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied1->EffectData.EffectID)),
+				static_cast<int>(EGMCEffectAnswerState::Validated));
+			TestEqual("Post-replay: Reapable timed out",
+				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied2->EffectData.EffectID)),
+				static_cast<int>(EGMCEffectAnswerState::Timeout));
+			TestFalse("Post-replay: Reapable removed from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Applied2->EffectData.EffectID));
+
+			PendingEffect->RemoveFromRoot(); ReapableEffect->RemoveFromRoot();
+		});
+
 		It("Deferred match revived by re-Apply timeout (server-reject path)", [this]()
 		{
 			// Client predict-apply: OLD suspended, successor stamped Pending. The

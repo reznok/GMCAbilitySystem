@@ -586,6 +586,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	bool HasAuthority() const { return GetOwnerRole() == ROLE_Authority; }
+
+	// True while we're inside the AncillaryTick scope (set at the top of GenAncillaryTick,
+	// cleared at the bottom). Used by callers that need to distinguish "in any GMC tick
+	// context" vs "outside any tick" to pick the right effect-removal path.
+	bool IsInAncillaryTick() const { return bInAncillaryTick; }
 	
 	UPROPERTY(BlueprintReadWrite, AdvancedDisplay, Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
@@ -875,7 +880,10 @@ private:
 	// On Pending → Validated: finalize each entry (real EndEffect on the OLD).
 	// On Pending → Timeout (server rejected): revive each entry (clear bPendingDeathBySuccessor).
 	// Server never populates this — server's force-end runs immediately at apply time.
-	UPROPERTY()
+	//
+	// Not UPROPERTY: UHT rejects TMap with TArray-typed values (nested-container limit).
+	// TWeakObjectPtr handles its own GC staleness tracking so we don't need reflection
+	// for safety — entries naturally expire if the effect UObject is GC'd.
 	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
 
 	// Let the client know that the server has activated this ability as well
@@ -936,10 +944,23 @@ public:
 	{
 		return GetEffectFromHandle(Handle, OutNetId, OutEffect);
 	}
+
+	// Test seam for the replay-skip gate in TickActiveEffects. CL_IsReplaying() on
+	// the GMC movement component is non-virtual so the headless harness can't
+	// override its behaviour through inheritance. Setting this flag forces
+	// IsReplayingForGMASLogic() to return true, exercising the production code
+	// path that skips polling/timeout reaping during replay.
+	bool bForceReplayingForTest = false;
 private:
 #endif
 
 public:
+	// Centralized "are we currently inside a GMC replay?" check used by GMAS-side
+	// logic that must skip mutating non-bound state during replay re-execution
+	// (polling promotion, Pending+timeout reap). Production wraps the GMC's own
+	// CL_IsReplaying(); test builds layer a per-component override on top.
+	bool IsReplayingForGMASLogic() const;
+
 	// Networked FX
 	// Is this ASC locally controlled?
 	bool IsLocallyControlledPawnASC() const;
