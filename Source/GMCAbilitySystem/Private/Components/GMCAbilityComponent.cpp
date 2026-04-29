@@ -1103,6 +1103,26 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 				&& BoundActiveEffectIDs_Contains(ProcessedPair.Key))
 			{
 				ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+
+				// Successor confirmed by server → finalize the suspended OLDs.
+				// Real EndEffect runs now (tag cleanup, modifier rollback, etc.) so the
+				// ability-cleanup pathways downstream see a properly-ended effect.
+				if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(ProcessedPair.Key))
+				{
+					for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
+					{
+						if (UGMCAbilityEffect* OldRaw = Old.Get())
+						{
+							if (!OldRaw->bCompleted)
+							{
+								OldRaw->bPendingDeathBySuccessor = false;
+								OldRaw->EndAtActionTimer = -1.0;
+								OldRaw->EndEffect();
+							}
+						}
+					}
+					PendingReplacements.Remove(ProcessedPair.Key);
+				}
 			}
 		}
 	}
@@ -1137,6 +1157,25 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		{
 			ProcessedEffectIDs[Effect.Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(Effect.Value), Effect.Key);
+
+			// Successor rejected by server → revive the suspended OLDs. They resume
+			// ticking modifiers from the next tick onward; their natural EndAtActionTimer
+			// (still set, never cleared in the suspend path) will fire when due.
+			if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Effect.Key))
+			{
+				for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
+				{
+					if (UGMCAbilityEffect* OldRaw = Old.Get())
+					{
+						if (!OldRaw->bCompleted)
+						{
+							OldRaw->bPendingDeathBySuccessor = false;
+						}
+					}
+				}
+				PendingReplacements.Remove(Effect.Key);
+			}
+
 			Effect.Value->EndEffect();
 			CompletedActiveEffects.Push(Effect.Key);
 		}
@@ -1147,6 +1186,24 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	{
 		// Notify client. Redundant.
 		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
+
+		// Safety: if the successor never reached Validated or Timeout but is being
+		// cleaned up through some other path (ability force-end, manual remove,
+		// etc.), revive any still-suspended OLDs we'd otherwise orphan as zombies.
+		if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(EffectID))
+		{
+			for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
+			{
+				if (UGMCAbilityEffect* OldRaw = Old.Get())
+				{
+					if (!OldRaw->bCompleted)
+					{
+						OldRaw->bPendingDeathBySuccessor = false;
+					}
+				}
+			}
+			PendingReplacements.Remove(EffectID);
+		}
 
 		ActiveEffects.Remove(EffectID);
 		ProcessedEffectIDs.Remove(EffectID);
@@ -2175,30 +2232,57 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	// TickActiveEffects reaps the orphan.
 	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
 
-	// Force-end any deferred same-tag matches now that the NEW instance is in
-	// ActiveEffects. Deferred OLD instances were left ticking only to preserve
-	// bilateral tick-count symmetry on their own teardown — but with the NEW
-	// instance taking over the slot, the OLD's continued ticking would produce
-	// double-modifier-application during the overlap window. Clearing
-	// EndAtActionTimer first prevents Tick from racing the EndEffect path.
+	// Replace deferred same-tag matches. Client and server use different paths:
 	//
-	// Order rationale: ActiveEffects.Add(Effect, ...) above must precede this
-	// loop so RemoveTagsFromOwner(bPreserveGrantedTagsIfMultiple=true) inside
-	// EndEffect counts the NEW instance as a sibling and skips removal — without
-	// it, the GrantedTags flicker for one tick (out, then back in when NEW's
-	// StartEffect fires).
-	for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
+	//   SERVER (HasAuthority): force-end immediately. The server is authoritative;
+	//   if we're here, the new effect is committed. Run full EndEffect on the OLD.
+	//
+	//   CLIENT (predict-apply): suspend the OLD via bPendingDeathBySuccessor and
+	//   record the (successor, [old]) mapping in PendingReplacements. Suspension
+	//   stops the OLD's modifier application but leaves tags / abilities /
+	//   EndAtActionTimer intact, so we can revive cheaply if the server rejects
+	//   the new effect. The client polling later promotes the successor (Pending →
+	//   Validated) or times it out, at which point we finalize OR revive the OLD.
+	//
+	//   Why split: a client predict-then-server-reject scenario otherwise leaves
+	//   the OLD permanently dead client-side while the server keeps it ticking,
+	//   producing exactly the chain-replay-on-Stamina pattern this project has
+	//   spent prior sessions eliminating. Keeping the OLD recoverable on the
+	//   client until the server confirms preserves drain-rate symmetry: in both
+	//   accept and reject branches, exactly one same-tag effect ticks per side.
+	//
+	// Order rationale unchanged from the immediate-finalize variant: ActiveEffects.Add
+	// of the NEW must precede any EndEffect on the OLD so the multi-instance preserve
+	// check counts the NEW as a sibling and avoids a one-tick GrantedTags flicker.
+	if (HasAuthority())
 	{
-		if (!DeferredOld || DeferredOld->bCompleted)
+		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
 		{
-			continue;
+			if (!DeferredOld || DeferredOld->bCompleted)
+			{
+				continue;
+			}
+			DeferredOld->EndAtActionTimer = -1.0;
+			DeferredOld->EndEffect();
 		}
-		DeferredOld->EndAtActionTimer = -1.0;
-		DeferredOld->EndEffect();
-		// DeferredOld stays in ActiveEffects until the next TickActiveEffects
-		// cleanup pass spots bCompleted=true; its Tick early-returns on
-		// bCompleted so no further modifiers fire. The bound-state ID is
-		// removed by the same cleanup pass (BoundActiveEffectIDs_Remove).
+	}
+	else
+	{
+		TArray<TWeakObjectPtr<UGMCAbilityEffect>> SuspendedOlds;
+		SuspendedOlds.Reserve(DeferredMatchesToReplace.Num());
+		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
+		{
+			if (!DeferredOld || DeferredOld->bCompleted)
+			{
+				continue;
+			}
+			DeferredOld->bPendingDeathBySuccessor = true;
+			SuspendedOlds.Add(DeferredOld);
+		}
+		if (SuspendedOlds.Num() > 0)
+		{
+			PendingReplacements.Add(Effect->EffectData.EffectID, MoveTemp(SuspendedOlds));
+		}
 	}
 
 	// Apply-path diagnostic. CVar-gated. Dumps both C++ and script callstacks so we can see

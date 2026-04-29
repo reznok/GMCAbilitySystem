@@ -869,6 +869,15 @@ private:
 	UPROPERTY()
 	TMap<int /*ID*/, EGMCEffectAnswerState /*bServerConfirmed*/> ProcessedEffectIDs;
 
+	// Predict-replace recovery map (client-only). Key: SUCCESSOR effect's ID (the new
+	// instance applied via bUniqueByEffectTag REPLACE). Value: list of OLD instances
+	// that were marked bPendingDeathBySuccessor by that apply, awaiting server's verdict.
+	// On Pending → Validated: finalize each entry (real EndEffect on the OLD).
+	// On Pending → Timeout (server rejected): revive each entry (clear bPendingDeathBySuccessor).
+	// Server never populates this — server's force-end runs immediately at apply time.
+	UPROPERTY()
+	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
+
 	// Let the client know that the server has activated this ability as well
 	// Needed for the client to cancel mis-predicted abilities
 	UFUNCTION(Client, Reliable)

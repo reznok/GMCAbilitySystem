@@ -141,12 +141,27 @@ struct FGMCAbilityEffectData
 	// Requires EffectTag to be set — an empty tag disables the check (we don't want
 	// to silently match every untagged effect against every other untagged effect).
 	//
-	// Use cases:
-	//   - Buffs/debuffs that should refresh-or-ignore rather than stack (e.g. one
-	//     active "Bleeding" instance regardless of how many sources hit you).
-	//   - One-shot consumables whose double-apply is a UI / input-spam bug.
-	//   - Persistent state markers where multiple instances would corrupt the
-	//     attribute pipeline (e.g. paired Add/Remove modifier semantics).
+	// Replace-on-deferred semantics: if the existing same-tag effect is in its
+	// bilateral PredictedEnd defer window (EndAtActionTimer >= 0), the new Apply
+	// SUCCEEDS and the old instance is suspended client-side (stops applying
+	// modifiers) and recoverable. The polling later finalizes the old when the
+	// new effect is server-confirmed (Validated), or revives the old if the new
+	// is server-rejected (Timeout). On the server, the old is force-ended
+	// immediately at apply time — server is authoritative, no recovery needed.
+	//
+	// ⚠️ Drift caveat for non-Ticking effects:
+	// The replace-on-deferred recovery preserves drain-rate symmetry between client
+	// and server PERFECTLY for `Ticking` effects (continuous flow `ModifierValue ×
+	// DeltaTime` per tick — both sides drain at the same rate from different
+	// sources during the recovery window). For other types there are bounded edge
+	// cases:
+	//   - Periodic: firing OFFSETS differ between OLD and NEW (different StartTime),
+	//     so the rolling stamina/attribute can drift up to one modifier-worth at
+	//     any instant within the period cycle. Bounded, not cumulative.
+	//   - Persistent + bNegateEffectAtEnd: when the OLD ends naturally on server,
+	//     the negate fires server-side but the NEW persists client-side — produces
+	//     a `ModifierValue`-sized step divergence at the OLD's natural-end moment.
+	// Use bUniqueByEffectTag mainly on Ticking effects, or accept the caveat above.
 	//
 	// Off by default — stacking IS the intended behaviour for many effect types
 	// (DoT instances from multiple sources, multi-source heals, etc.) and the
@@ -321,6 +336,15 @@ public:
 	//
 	// -1.0 = not armed. >= 0 = armed, end when OwnerAbilityComponent->ActionTimer >= EndAtActionTimer.
 	double EndAtActionTimer { -1.0 };
+
+	// Predict-replace recoverable suspension. Set on the OLD instance when a new same-tag effect with
+	// bUniqueByEffectTag was predicted client-side and may be rejected by server. Suspended effects
+	// stop applying their modifiers (Tick early-returns) but stay otherwise intact (tags, abilities,
+	// EndAtActionTimer all preserved). The component finalizes the death (calls EndEffect) when the
+	// replacing effect is server-confirmed (Validated), or revives the OLD by clearing this flag if
+	// the replacement is rejected (Timeout). On the server, this flag is never set — the server is
+	// authoritative and force-ends the OLD immediately at apply time.
+	bool bPendingDeathBySuccessor = false;
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.

@@ -205,7 +205,17 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	if (bCompleted) {
 		return;
 	}
-	
+
+	// Suspended pending the server's verdict on a successor effect. Stops applying
+	// modifiers; keeps everything else (tags, abilities, EndAtActionTimer) so the
+	// component can revive us if the successor is rejected. Note we still let the
+	// natural EndAtActionTimer path above fire — bilateral defer expiration trumps
+	// the replacement protocol (the successor revival, if it would have happened,
+	// is moot once we've ended naturally).
+	if (bPendingDeathBySuccessor) {
+		return;
+	}
+
 	EffectData.CurrentDuration = OwnerAbilityComponent->ActionTimer - EffectData.StartTime;
 	TickEvent(DeltaTime);
 	
