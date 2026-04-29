@@ -374,9 +374,35 @@ void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 	if (bPreserveOnMultipleInstances)
 	{
 		if (EffectData.EffectTag.IsValid()) {
-			TArray<UGMCAbilityEffect*> ActiveEffect = OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
-			
-			if (ActiveEffect.Num() > 1) {
+			// Only count OTHER, still-alive sibling instances — i.e. effects that
+			// share our EffectTag, are not us, and have not yet had EndEffect run
+			// on them (bCompleted=false). The container `ActiveEffects` keeps
+			// completed effects around until the next TickActiveEffects cleanup
+			// pass; counting those zombies inflates the apparent multi-instance
+			// population.
+			//
+			// Symptom of the broken count: rapid-firing an Instant effect (e.g.
+			// EF_Weapon_Fire) leaves F1 bCompleted-but-not-yet-cleaned-up when F2
+			// applies. F2's EndEffect sees [F1 zombie + F2 self] = 2 > 1 →
+			// preserve → granted tags never removed → the "Fire" tag latches
+			// permanently on the owner.
+			//
+			// Effects in bilateral PredictedEnd defer (EndAtActionTimer >= 0,
+			// bCompleted=false) ARE counted: they're still ticking their
+			// modifiers and conceptually still own the tag slot.
+			const TArray<UGMCAbilityEffect*> SameTagEffects =
+				OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
+
+			int32 OthersStillAlive = 0;
+			for (const UGMCAbilityEffect* Other : SameTagEffects)
+			{
+				if (Other && Other != this && !Other->bCompleted)
+				{
+					++OthersStillAlive;
+				}
+			}
+
+			if (OthersStillAlive > 0) {
 				return;
 			}
 		}
@@ -387,7 +413,7 @@ void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 	}
 
 
-	
+
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
 		OwnerAbilityComponent->RemoveActiveTag(Tag);

@@ -1173,6 +1173,59 @@ void FGMASBugFixSpec::Define()
 			EffA->RemoveFromRoot(); EffB->RemoveFromRoot();
 		});
 
+		It("Rapid-fire: zombie bCompleted effect doesn't inflate the multi-instance count", [this]()
+		{
+			// Repro of the Weapon.Fire latching-tag bug. F1 is an Instant effect:
+			// StartEffect adds the tag, then immediately calls EndEffect inline,
+			// which sets bCompleted=true. F1 stays in ActiveEffects until the next
+			// TickActiveEffects cleanup pass.
+			//
+			// Player fires again before that cleanup runs → F2 applied. F2's own
+			// inline EndEffect calls RemoveTagsFromOwner(preserve=true). The
+			// preserve check must NOT count F1 (zombie, bCompleted=true) as a
+			// live sibling, otherwise count = 2 → preserve → tags latched forever.
+			//
+			// With the fix: only !bCompleted siblings are counted, so F1 is skipped,
+			// OthersStillAlive == 0, and F2's tag removal proceeds.
+			UGMCAbilityEffect* F1 = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* F2 = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			F1->AddToRoot(); F2->AddToRoot();
+
+			auto MakeFireData = [&]()
+			{
+				FGMCAbilityEffectData D;
+				D.EffectType = EGMASEffectType::Instant;             // ends inside StartEffect
+				D.Duration   = 0.f;
+				D.EffectTag  = BurningTag;
+				D.GrantedTags.AddTag(BurningTag);
+				D.bPreserveGrantedTagsIfMultiple = true;
+				return D;
+			};
+
+			AbilityComp->ApplyAbilityEffect(F1, MakeFireData());
+			TestTrue ("F1 set bCompleted via inline EndEffect (Instant)", F1->bCompleted);
+			TestFalse("F1 already cleared the tag (only sibling was self)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// F1 still in ActiveEffects (cleanup happens at next Tick). Re-add the
+			// tag to simulate F2's StartEffect grant — F2's own AddTagsToOwner runs
+			// before F2's inline EndEffect, so the tag is present at that moment.
+			AbilityComp->AddActiveTag(BurningTag);
+			TestTrue("Tag re-present after manual re-add (simulating F2 StartEffect)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			// F2 applied — Instant → StartEffect → AddTags → EndEffect (inline).
+			// EndEffect calls RemoveTagsFromOwner(preserve=true). Without the fix,
+			// the count = [F1 zombie, F2 self] = 2 → preserve → tag latches.
+			AbilityComp->ApplyAbilityEffect(F2, MakeFireData());
+
+			TestTrue("F2 set bCompleted via inline EndEffect (Instant)", F2->bCompleted);
+			TestFalse("Tag removed by F2's EndEffect (zombie F1 not counted)",
+				AbilityComp->GetActiveTags().HasTag(BurningTag));
+
+			F1->RemoveFromRoot(); F2->RemoveFromRoot();
+		});
+
 		It("Multi-instance with preserve=false: footgun — first end strips tag", [this]()
 		{
 			// The pre-flip default behavior: tag is removed as soon as ANY instance
