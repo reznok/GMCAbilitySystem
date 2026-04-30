@@ -370,11 +370,14 @@ public:
 	 * Queue Type is anything else, the effect must be queued on the server and will be replicated to the client.
 	 * @param HandlingAbility : Optional ability handling, if provided, the end ability will trigger also automatically the end of the effect.
 	 */
+	// OutEffectHandle is a deprecated alias of OutEffectId, kept for binary/BP compatibility.
+	// All apply paths now mirror the EffectId into the handle. New code should read OutEffectId
+	// and use the *ById remove APIs instead of *ByHandle (which are themselves deprecated).
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Apply Ability Effect")
 	void ApplyAbilityEffectSafe(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType,
 		UPARAM(DisplayName="Success")
 		bool& OutSuccess,
-		UPARAM(DisplayName="Effect Handle") int& OutEffectHandle,
+		UPARAM(DisplayName="Effect Handle (Deprecated — alias of Network ID)") int& OutEffectHandle,
 		UPARAM(DisplayName="Effect Network ID") int& OutEffectId,
 		UPARAM(DisplayName="Effect Instance") UGMCAbilityEffect*& OutEffect,
 		UPARAM(DisplayName="(Opt) Ability Handling") UGMCAbility* HandlingAbility = nullptr);
@@ -394,7 +397,7 @@ public:
 	 * @param EffectClass The class of ability effect to add.
 	 * @param InitializationData The initialization data for the ability effect.
 	 * @param QueueType How to queue the effect.
-	 * @param OutEffectHandle A local handle to this effect, only valid locally.
+	 * @param OutEffectHandle Deprecated alias of OutEffectId, kept for compatibility. Mirrored from OutEffectId on every apply path.
 	 * @param OutEffectId The newly-created effect's network ID, if one is available. Valid across server/client.
 	 * @param OutEffect The newly-created effect instance, if available.
 	 * @return true if the effect was applied, false otherwise.
@@ -422,7 +425,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	void RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect);
 
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	// The "handle" is a deprecated alias of the EffectId; this API simply forwards to the
+	// id-based path. Prefer RemoveActiveAbilityEffectSafe (by pointer) or RemoveEffectByIdSafe
+	// (by id) — they're the load-bearing variants and won't go away.
+	UE_DEPRECATED(5.7, "EffectHandle is now an alias of EffectId; use RemoveEffectByIdSafe with the EffectId returned from ApplyAbilityEffectSafe.")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", meta=(DeprecatedFunction, DeprecationMessage="EffectHandle is an alias of EffectId. Use RemoveEffectByIdSafe with the EffectId returned by ApplyAbilityEffectSafe."))
 	void RemoveActiveAbilityEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Active Ability Effect (Safe)")
@@ -459,7 +466,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effects by Id (Safe)")
 	bool RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effect by Handle")
+	// The "handle" is a deprecated alias of the EffectId; this API just unwraps the id and
+	// forwards to RemoveEffectByIdSafe. New code should call RemoveEffectByIdSafe directly with
+	// the EffectId returned by ApplyAbilityEffectSafe.
+	UE_DEPRECATED(5.7, "EffectHandle is now an alias of EffectId; use RemoveEffectByIdSafe with the EffectId returned from ApplyAbilityEffectSafe.")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effect by Handle", meta=(DeprecatedFunction, DeprecationMessage="EffectHandle is an alias of EffectId. Use RemoveEffectByIdSafe with the EffectId returned by ApplyAbilityEffectSafe."))
 	bool RemoveEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType);
 	
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", DisplayName="Remove Effects by Definition Query")

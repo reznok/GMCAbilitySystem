@@ -156,10 +156,39 @@ void UGMCAbilityEffect::EndEffect()
 	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnEnd);
 	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
 	RemoveAbilitiesFromOwner();
-	
+
 	OwnerAbilityComponent->OnEffectRemoved.Broadcast(this);
 
 	EndEffectEvent();
+
+	// Chain hooks: apply / remove effects when this one ends. Same queue-type detection as
+	// FinishEndAbility — Predicted requires being inside a GMC tick or Standalone, otherwise
+	// PredictedQueued is used to defer until the next safe window.
+	if (OwnerAbilityComponent && (EffectData.ApplyEffectOnEnd.Num() > 0 || !EffectData.RemoveEffectOnEnd.IsEmpty()))
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType ChainQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+
+		for (const TSubclassOf<UGMCAbilityEffect>& EffectClass : EffectData.ApplyEffectOnEnd)
+		{
+			if (EffectClass)
+			{
+				OwnerAbilityComponent->ApplyAbilityEffectShort(EffectClass, ChainQueueType);
+			}
+		}
+
+		for (const FGameplayTag& EffectTag : EffectData.RemoveEffectOnEnd)
+		{
+			if (EffectTag.IsValid())
+			{
+				OwnerAbilityComponent->RemoveEffectByTagSafe(EffectTag, -1, ChainQueueType);
+			}
+		}
+	}
 }
 
 

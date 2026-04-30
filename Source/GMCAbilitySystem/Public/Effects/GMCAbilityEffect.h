@@ -161,6 +161,20 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer CancelAbilityOnEnd;
 
+	// Effect classes to apply when this effect ends. Each entry is applied via
+	// ApplyAbilityEffectShort using a queue type chosen at runtime: Predicted while inside
+	// a GMC tick (movement/ancillary) or Standalone, PredictedQueued otherwise. Applies on
+	// every side that runs EndEffect (server + owning client) so the GMAS predict/validate
+	// pipeline handles confirmation symmetrically.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	TArray<TSubclassOf<UGMCAbilityEffect>> ApplyEffectOnEnd;
+
+	// EffectTags to remove from the owner when this effect ends. Each tag matches active
+	// effects via RemoveEffectByTagSafe (NumToRemove = -1, removes all matching). Same
+	// queue type policy as ApplyEffectOnEnd.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain", meta = (Categories = "Effect"))
+	FGameplayTagContainer RemoveEffectOnEnd;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
 	

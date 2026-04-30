@@ -304,6 +304,35 @@ void UGMCAbility::FinishEndAbility() {
 		}
 	}
 
+	// Chain hooks: apply / remove effects when this ability ends. Same queue-type detection as
+	// the DeclaredEffect removal block above — Predicted requires being inside a GMC tick or
+	// Standalone, otherwise PredictedQueued is used to defer until the next safe window.
+	if (OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType ChainQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+
+		for (const TSubclassOf<UGMCAbilityEffect>& EffectClass : ApplyEffectOnEnd)
+		{
+			if (EffectClass)
+			{
+				OwnerAbilityComponent->ApplyAbilityEffectShort(EffectClass, ChainQueueType);
+			}
+		}
+
+		for (const FGameplayTag& EffectTag : RemoveEffectOnEnd)
+		{
+			if (EffectTag.IsValid())
+			{
+				OwnerAbilityComponent->RemoveEffectByTagSafe(EffectTag, -1, ChainQueueType);
+			}
+		}
+	}
+
 	AbilityState = EAbilityState::Ended;
 }
 

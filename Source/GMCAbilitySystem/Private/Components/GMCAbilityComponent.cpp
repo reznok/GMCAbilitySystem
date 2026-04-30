@@ -901,6 +901,7 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 			NewAttribute.Clamp = AttributeData.Clamp;
 			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
+			NewAttribute.bStartFull = AttributeData.bStartFull;
 			NewAttribute.Init();
 			
 			if(AttributeData.bGMCBound){
@@ -1942,7 +1943,10 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			// signal failure to the caller via bSuccess=false rather than crashing.
 			if (OutEffect == nullptr) { return false; }
 			OutEffectId = OutEffect->EffectData.EffectID;
-			// OutEffectHandle = HandleData.Handle;
+			// OutEffectHandle is a deprecated alias of OutEffectId — see RemoveEffectByHandle's
+			// deprecation note. Mirror the id here so the legacy handle-based lookups keep
+			// returning the same effect; new callers should use OutEffectId directly.
+			OutEffectHandle = OutEffectId;
 			return true;
 		}
 	case EGMCAbilityEffectQueueType::PredictedQueued:
@@ -1955,6 +1959,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 				if (OutEffect)
 				{
 					OutEffectId = OutEffect->EffectData.EffectID;
+					OutEffectHandle = OutEffectId;
 				}
 			}
 			else
@@ -2417,14 +2422,16 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 
 bool UGMC_AbilitySystemComponent::RemoveEffectByHandle(int EffectHandle, EGMCAbilityEffectQueueType QueueType)
 {
-	int32 EffectID;
-	UGMCAbilityEffect* Effect;
-	if (GetEffectFromHandle(EffectHandle, EffectID, Effect) && EffectID > 0)
+	// EffectHandle is now an alias of EffectId — see the deprecation note on the declaration.
+	// We bypass the legacy GetEffectFromHandle path, which scans the half-implemented
+	// EffectHandles registry (nothing populates it from the apply paths), and forward
+	// straight to the id-based remove. Existing callers thus keep working with a warning,
+	// rather than silently no-oping forever.
+	if (EffectHandle <= 0)
 	{
-		return RemoveEffectByIdSafe({ EffectID }, QueueType);
+		return false;
 	}
-	
-	return false;	
+	return RemoveEffectByIdSafe({ EffectHandle }, QueueType);
 }
 
 

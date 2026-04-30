@@ -216,6 +216,19 @@ public:
 	// If those ability are active, they will prevent this ability from activating
 	FGameplayTagContainer BlockedByOtherAbility;
 
+	// Effect classes to apply when this ability ends (whether via EndAbility or CancelAbility).
+	// Each entry is applied via ApplyAbilityEffectShort using a queue type chosen at runtime:
+	// Predicted while inside a GMC tick (movement/ancillary) or Standalone, PredictedQueued
+	// otherwise. Symmetric with the existing CancelAbilityOnEnd (effects-side equivalent).
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	TArray<TSubclassOf<UGMCAbilityEffect>> ApplyEffectOnEnd;
+
+	// EffectTags to remove from the owner when this ability ends. Each tag matches active
+	// effects via RemoveEffectByTagSafe (NumToRemove = -1, removes all matching). Same queue
+	// type policy as ApplyEffectOnEnd.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain", meta = (Categories = "Effect"))
+	FGameplayTagContainer RemoveEffectOnEnd;
+
 	/**
 	 * Cancels active abilities based on specific conditions.
 	 *

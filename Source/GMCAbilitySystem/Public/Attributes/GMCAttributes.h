@@ -67,6 +67,15 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	void Init() const
 	{
+		// When bStartFull is set, override InitialValue with the resolved upper clamp. ClampValue
+		// applied to TNumericLimits<float>::Max() returns the literal Clamp.Max or the value of
+		// Clamp.MaxAttributeTag, whichever applies. Two-pass init in UGMC_AbilitySystemComponent
+		// ensures MaxAttributeTag dependencies resolve correctly even if the source attribute is
+		// declared after this one.
+		if (bStartFull && Clamp.IsSet())
+		{
+			InitialValue = Clamp.ClampValue(TNumericLimits<float>::Max());
+		}
 		RawValue = Clamp.ClampValue(InitialValue);
 		CalculateValue();
 	}
@@ -105,6 +114,11 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	bool bIsGMCBound = false;
+
+	// Runtime mirror of FAttributeData::bStartFull. When set, Init() resolves InitialValue from
+	// the upper clamp instead of using the user-set value.
+	UPROPERTY()
+	bool bStartFull = false;
 
 	// Clamp the attribute to a certain range
 	// Clamping will only happen if this is modified

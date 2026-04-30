@@ -17,7 +17,14 @@ struct FAttributeData{
 	UPROPERTY(EditDefaultsOnly, meta=(Categories="Attribute"), Category = "GMCAbilitySystem")
 	FGameplayTag AttributeTag;
 
+	// When true, the attribute starts at its resolved upper clamp instead of DefaultValue.
+	// Requires Clamp.Max (literal) or Clamp.MaxAttributeTag to be set. When set, DefaultValue
+	// is ignored. Re-evaluated on each Init() — works with MaxAttributeTag-based clamps via
+	// the two-pass init in UGMC_AbilitySystemComponent.
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	bool bStartFull = false;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta = (EditCondition = "!bStartFull", EditConditionHides))
 	float DefaultValue = 0.f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
