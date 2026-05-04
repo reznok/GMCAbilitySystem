@@ -66,12 +66,12 @@ void UGMCAbilityEffect::StartEffect()
 	const FString DbgRole = (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT");
 	const double DbgTime = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
 	UE_LOGFMT(LogGMCAbilitySystem, Display,
-		"[GMAS-DBG][StartEffect] role={0} t={1} id={2} class={3} type={4} queue={5} grants={6} mods={7}",
+		"[GMAS-DBG][StartEffect] role={0} t={1} id={2} class={3} type={4} grants={5} mods={6} grace={7}",
 		DbgRole, DbgTime,
 		EffectData.EffectID, GetNameSafe(GetClass()),
 		static_cast<int32>(EffectData.EffectType),
-		static_cast<int32>(EffectData.QueueType),
-		EffectData.GrantedTags.ToString(), EffectData.Modifiers.Num());
+		EffectData.GrantedTags.ToString(), EffectData.Modifiers.Num(),
+		EffectData.ClientGraceTime);
 
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
