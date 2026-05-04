@@ -1036,17 +1036,30 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// predicts age out via the Pending+timeout reap below.
 	if (!HasAuthority() && !bIsReplaying)
 	{
-		for (auto& ProcessedPair : ProcessedEffectIDs)
+		// Snapshot the keys before iterating: EndEffect() below can re-enter this map via
+		// BP-side handlers and gameplay-tag listeners (RemoveTags / OnEffectEnded broadcasts
+		// that ultimately call back into the ASC). Iterating the live TMap while mutations
+		// land on its underlying TSparseArray invalidates the iterator — symptom is either
+		// an out-of-bounds crash, or silently skipped Pending→Validated promotions which
+		// then surface as attribute drift on reconnect (when a bound-state burst fills
+		// many Pending entries at once and several have PendingReplacements queued).
+		TArray<int32> KeysSnapshot;
+		ProcessedEffectIDs.GenerateKeyArray(KeysSnapshot);
+
+		for (const int32 Key : KeysSnapshot)
 		{
-			if (ProcessedPair.Value == EGMCEffectAnswerState::Pending
-				&& BoundActiveEffectIDs_Contains(ProcessedPair.Key))
+			EGMCEffectAnswerState* StatePtr = ProcessedEffectIDs.Find(Key);
+			if (!StatePtr) continue;  // entry was removed by a re-entrant callback — skip safely
+
+			if (*StatePtr == EGMCEffectAnswerState::Pending
+				&& BoundActiveEffectIDs_Contains(Key))
 			{
-				ProcessedPair.Value = EGMCEffectAnswerState::Validated;
+				*StatePtr = EGMCEffectAnswerState::Validated;
 
 				// Successor confirmed by server → finalize the suspended OLDs.
 				// Real EndEffect runs now (tag cleanup, modifier rollback, etc.) so the
 				// ability-cleanup pathways downstream see a properly-ended effect.
-				if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(ProcessedPair.Key))
+				if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Key))
 				{
 					for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
 					{
@@ -1060,7 +1073,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 							}
 						}
 					}
-					PendingReplacements.Remove(ProcessedPair.Key);
+					PendingReplacements.Remove(Key);
 				}
 			}
 		}
