@@ -409,12 +409,12 @@ bool UGMCAbility::PreBeginAbility()
 
 void UGMCAbility::BeginAbility()
 {
+	const FString DbgRole = (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT");
+	const double DbgTime = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
+	const FString DbgOwner = GetNameSafe(OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr);
 	UE_LOGFMT(LogGMCAbilitySystem, Display,
 		"[GMAS-DBG][BeginAbility] role={0} t={1} tag={2} owner={3}",
-		(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
-		OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
-		AbilityTag.ToString(),
-		GetNameSafe(OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr));
+		DbgRole, DbgTime, AbilityTag.ToString(), DbgOwner);
 
 	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
 
@@ -452,11 +452,11 @@ void UGMCAbility::BeginAbility()
 void UGMCAbility::EndAbility()
 {
 	if (AbilityState != EAbilityState::Ended) {
+		const FString DbgRole = (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT");
+		const double DbgTime = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
 		UE_LOGFMT(LogGMCAbilitySystem, Display,
 			"[GMAS-DBG][EndAbility] role={0} t={1} tag={2} state={3}",
-			(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
-			OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
-			AbilityTag.ToString(), static_cast<int32>(AbilityState));
+			DbgRole, DbgTime, AbilityTag.ToString(), static_cast<int32>(AbilityState));
 
 		FinishEndAbility();
 		EndAbilityEvent();
