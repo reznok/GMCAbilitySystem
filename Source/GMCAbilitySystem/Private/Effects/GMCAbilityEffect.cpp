@@ -63,6 +63,15 @@ void UGMCAbilityEffect::StartEffect()
 {
 	bHasStarted = true;
 
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][StartEffect] role={0} t={1} id={2} class={3} type={4} queue={5} grants={6} mods={7}",
+		(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
+		OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
+		EffectData.EffectID, GetNameSafe(GetClass()),
+		static_cast<int32>(EffectData.EffectType),
+		static_cast<int32>(EffectData.QueueType),
+		EffectData.GrantedTags.ToString(), EffectData.Modifiers.Num());
+
 	// Ensure tag requirements are met before applying the effect
 	if( ( EffectData.ApplicationMustHaveTags.Num() > 0 && !DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustHaveTags) ) ||
 	DoesOwnerHaveTagFromContainer(EffectData.ApplicationMustNotHaveTags) ||
@@ -129,7 +138,13 @@ void UGMCAbilityEffect::EndEffect()
 	// Prevent EndEffect from being called multiple times
 	if (bCompleted) return;
 
-	
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][EndEffect] role={0} t={1} id={2} class={3} hadStarted={4} hadApplied={5} grants={6}",
+		(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
+		OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
+		EffectData.EffectID, GetNameSafe(GetClass()),
+		bHasStarted, bHasAppliedEffect, EffectData.GrantedTags.ToString());
+
 	bCompleted = true;
 	if (CurrentState != EGMASEffectState::Ended)
 	{

@@ -409,7 +409,12 @@ bool UGMCAbility::PreBeginAbility()
 
 void UGMCAbility::BeginAbility()
 {
-
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][BeginAbility] role={0} t={1} tag={2} owner={3}",
+		(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
+		OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
+		AbilityTag.ToString(),
+		GetNameSafe(OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr));
 
 	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
 
@@ -447,6 +452,12 @@ void UGMCAbility::BeginAbility()
 void UGMCAbility::EndAbility()
 {
 	if (AbilityState != EAbilityState::Ended) {
+		UE_LOGFMT(LogGMCAbilitySystem, Display,
+			"[GMAS-DBG][EndAbility] role={0} t={1} tag={2} state={3}",
+			(OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority()) ? TEXT("AUTH") : TEXT("CLIENT"),
+			OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0,
+			AbilityTag.ToString(), static_cast<int32>(AbilityState));
+
 		FinishEndAbility();
 		EndAbilityEvent();
 		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);

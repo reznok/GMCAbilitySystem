@@ -337,11 +337,19 @@ bool UGMC_AbilitySystemComponent::HasGrantedAbilityTag(const FGameplayTag Gamepl
 
 void UGMC_AbilitySystemComponent::AddActiveTag(const FGameplayTag AbilityTag)
 {
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][AddActiveTag] role={0} t={1} tag={2} owner={3}",
+		HasAuthority() ? TEXT("AUTH") : TEXT("CLIENT"), ActionTimer,
+		AbilityTag.ToString(), GetNameSafe(GetOwner()));
 	ActiveTags.AddTag(AbilityTag);
 }
 
 void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 {
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][RemoveActiveTag] role={0} t={1} tag={2} owner={3}",
+		HasAuthority() ? TEXT("AUTH") : TEXT("CLIENT"), ActionTimer,
+		AbilityTag.ToString(), GetNameSafe(GetOwner()));
 	if (ActiveTags.HasTagExact(AbilityTag))
 	{
 		ActiveTags.RemoveTag(AbilityTag);
@@ -2186,6 +2194,14 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
 	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
+
+	UE_LOGFMT(LogGMCAbilitySystem, Display,
+		"[GMAS-DBG][RemoveEffect] role={0} t={1} id={2} class={3} type={4} grace={5} grants={6} owner={7}",
+		HasAuthority() ? TEXT("AUTH") : TEXT("CLIENT"), ActionTimer,
+		Effect->EffectData.EffectID, GetNameSafe(Effect->GetClass()),
+		static_cast<int32>(Effect->EffectData.EffectType),
+		Effect->EffectData.ClientGraceTime,
+		Effect->EffectData.GrantedTags.ToString(), GetNameSafe(GetOwner()));
 
 	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side that ends the
 	// effect later accumulates extra modifier applications. Affects both EffectTypes that drain over time:
