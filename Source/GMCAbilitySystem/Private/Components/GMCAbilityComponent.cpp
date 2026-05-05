@@ -885,9 +885,14 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 	// without local UGMCAbilityEffect instances. Server replies with all live
 	// effects; client skips IDs already present, so brand-new logins (where the
 	// standard apply RPC has already created the locals) are no-ops.
-	if (!HasAuthority() && GetOwnerRole() == ROLE_AutonomousProxy)
+	//
+	// Deferred via TryRequestActiveEffectsSnapshot because at component-BeginPlay
+	// the owner role / owning connection / locally-controlled state are racy
+	// against the actor channel open + Possess pipeline. Firing too early
+	// drops the Server RPC silently with no log.
+	if (!HasAuthority())
 	{
-		Server_RequestActiveEffectsSnapshot();
+		TryRequestActiveEffectsSnapshot();
 	}
 }
 
@@ -1311,6 +1316,55 @@ void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
 		}
 	}
 	bStartingEffectsApplied = true;
+}
+
+
+void UGMC_AbilitySystemComponent::TryRequestActiveEffectsSnapshot()
+{
+	if (HasAuthority() || bSnapshotRequestSent)
+	{
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+	const APawn* OwnerPawn = Cast<APawn>(Owner);
+
+	// Both gates required:
+	//  - IsLocallyControlled: filters out simulated-proxy ASCs (we'd never
+	//    succeed sending a Server RPC on someone else's pawn anyway).
+	//  - LocalRole == AutonomousProxy: ensures the role bit has propagated
+	//    server -> client AND the owning connection is registered, both of
+	//    which are prerequisites for the RPC to actually leave the wire.
+	const bool bReady = IsValid(OwnerPawn)
+		&& OwnerPawn->IsLocallyControlled()
+		&& Owner->GetLocalRole() == ROLE_AutonomousProxy;
+
+	if (!bReady)
+	{
+		// Bounded retry. Either the gate opens within a couple of seconds
+		// (race between BeginPlay and Possess→AcknowledgePossession) or
+		// this ASC belongs to a simulated proxy and will never qualify.
+		if (++SnapshotRequestRetryCount > MaxSnapshotRequestRetries)
+		{
+			return;
+		}
+
+		if (UWorld* World = GetWorld())
+		{
+			FTimerHandle UnusedHandle;
+			World->GetTimerManager().SetTimerForNextTick(
+				FTimerDelegate::CreateUObject(this, &UGMC_AbilitySystemComponent::TryRequestActiveEffectsSnapshot));
+		}
+		return;
+	}
+
+	UE_LOG(LogGMCAbilitySystem, Verbose,
+		TEXT("[ReconnectSnapshot] Sending Server_RequestActiveEffectsSnapshot retries=%d owner=%s"),
+		SnapshotRequestRetryCount,
+		*GetNameSafe(Owner));
+
+	Server_RequestActiveEffectsSnapshot();
+	bSnapshotRequestSent = true;
 }
 
 

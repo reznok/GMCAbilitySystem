@@ -758,7 +758,25 @@ protected:
 private:
 
 	bool bStartingEffectsApplied = false;
-	
+
+	// Reconnect-snapshot client-pull state. The Server RPC requires the actor to
+	// have an established owning connection AND the local role to be AutonomousProxy
+	// — neither is guaranteed at component-BeginPlay time on a freshly-replicated
+	// pawn. We defer with a bounded retry instead of firing optimistically and
+	// losing the request silently.
+	bool bSnapshotRequestSent = false;
+	int32 SnapshotRequestRetryCount = 0;
+	// ~2s @ 60fps. Bound exists so simulated-proxy ASCs (other players' pawns
+	// visible to us) eventually stop polling — they will never satisfy the
+	// IsLocallyControlled check.
+	static constexpr int32 MaxSnapshotRequestRetries = 120;
+
+	// Owning-client gate + retry. Fires Server_RequestActiveEffectsSnapshot when
+	// the pawn is locally controlled and ROLE_AutonomousProxy; otherwise schedules
+	// itself on the next tick until either the gate opens or the retry budget
+	// is exhausted.
+	void TryRequestActiveEffectsSnapshot();
+
 	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	TArray<TObjectPtr<UGMCAbilityMapData>> AbilityMaps;
