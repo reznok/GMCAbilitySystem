@@ -870,7 +870,7 @@ void UGMC_AbilitySystemComponent::OnServerOperationForced(FInstancedStruct Opera
 void UGMC_AbilitySystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	
+
 	InitializeStartingAbilities();
 	InitializeAbilityMap();
 	SetStartingTags();
@@ -878,6 +878,17 @@ void UGMC_AbilitySystemComponent::BeginPlay()
 	// Bind to Queue Events
 	BoundQueueV2.OnServerOperationAdded.AddDynamic(this, &UGMC_AbilitySystemComponent::RPCOnServerOperationAdded);
 	BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+
+	// Owning client pulls a snapshot of every server-tracked effect so a kept-pawn
+	// reconnect (server reuses Pawn -> ASC, bStartingEffectsApplied stays true,
+	// no per-effect RPC re-broadcast to the new connection) doesn't leave us
+	// without local UGMCAbilityEffect instances. Server replies with all live
+	// effects; client skips IDs already present, so brand-new logins (where the
+	// standard apply RPC has already created the locals) are no-ops.
+	if (!HasAuthority() && GetOwnerRole() == ROLE_AutonomousProxy)
+	{
+		Server_RequestActiveEffectsSnapshot();
+	}
 }
 
 void UGMC_AbilitySystemComponent::InstantiateAttributes()
@@ -1300,6 +1311,125 @@ void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
 		}
 	}
 	bStartingEffectsApplied = true;
+}
+
+
+bool UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Validate()
+{
+	// Owning-client request, no payload to validate. Always accept.
+	return true;
+}
+
+void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementation()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	TArray<FGMCEffectSnapshot> Snapshots;
+	BuildActiveEffectsSnapshot(Snapshots);
+	if (Snapshots.Num() > 0)
+	{
+		Client_ReceiveActiveEffectsSnapshot(Snapshots);
+	}
+}
+
+void UGMC_AbilitySystemComponent::Client_ReceiveActiveEffectsSnapshot_Implementation(const TArray<FGMCEffectSnapshot>& Snapshots)
+{
+	for (const FGMCEffectSnapshot& Snapshot : Snapshots)
+	{
+		if (ActiveEffects.Contains(Snapshot.EffectID))
+		{
+			// Already created locally (e.g. by the standard apply RPC for a brand-
+			// new login). Snapshot is informational only in that case.
+			continue;
+		}
+		RestoreEffectFromSnapshot(Snapshot);
+	}
+}
+
+void UGMC_AbilitySystemComponent::BuildActiveEffectsSnapshot(TArray<FGMCEffectSnapshot>& OutSnapshots) const
+{
+	OutSnapshots.Reset();
+	OutSnapshots.Reserve(ActiveEffects.Num());
+
+	for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffects)
+	{
+		UGMCAbilityEffect* Effect = Pair.Value;
+		if (!IsValid(Effect) || Effect->bCompleted)
+		{
+			continue;
+		}
+
+		FGMCEffectSnapshot Snapshot;
+		Snapshot.EffectClass = Effect->GetClass();
+		Snapshot.EffectID = Effect->EffectData.EffectID;
+		// StartTime is in server's ActionTimer space. Send the elapsed delta so
+		// the client can rebuild StartTime in its own local clock — preserves
+		// periodic-tick boundary alignment and remaining duration without
+		// exposing the server's absolute clock.
+		Snapshot.TimeSinceStart = ActionTimer - Effect->EffectData.StartTime;
+		Snapshot.Duration = Effect->EffectData.Duration;
+		Snapshot.bServerAuth = Effect->EffectData.bServerAuth;
+		Snapshot.EffectTag = Effect->EffectData.EffectTag;
+		OutSnapshots.Add(MoveTemp(Snapshot));
+	}
+}
+
+void UGMC_AbilitySystemComponent::RestoreEffectFromSnapshot(const FGMCEffectSnapshot& Snapshot)
+{
+	if (!Snapshot.EffectClass)
+	{
+		return;
+	}
+
+	UGMCAbilityEffect* Effect = DuplicateObject(
+		Snapshot.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+	if (!Effect)
+	{
+		return;
+	}
+
+	// Start from the CDO's data (recovered through DuplicateObject), then overlay
+	// snapshot fields. Mirrors what ApplyAbilityEffect does in the standard path,
+	// minus the bUniqueByEffectTag rejection (snapshot entries are pre-validated
+	// authoritatively on the server).
+	FGMCAbilityEffectData InitData = Effect->EffectData;
+	InitData.OwnerAbilityComponent = this;
+	InitData.SourceAbilityComponent = this;
+	InitData.EffectID = Snapshot.EffectID;
+	InitData.bServerAuth = Snapshot.bServerAuth;
+	InitData.EffectTag = Snapshot.EffectTag;
+	InitData.Duration = Snapshot.Duration;
+
+	// Remap server elapsed time to the client's local ActionTimer so periodic
+	// boundaries and remaining duration line up. InitializeEffect takes the
+	// (StartTime != 0) branch when StartTime is provided here, so 0.0 must be
+	// avoided at the exact frame boundary — extremely unlikely given ActionTimer
+	// is a continuously-advancing double, but bias toward a tiny epsilon if it
+	// ever lands on zero.
+	const double LocalStart = ActionTimer - Snapshot.TimeSinceStart;
+	InitData.StartTime = (LocalStart != 0.0) ? LocalStart : KINDA_SMALL_NUMBER;
+	InitData.EndTime = (InitData.Duration > 0.0)
+		? InitData.StartTime + InitData.Duration
+		: 0.0;
+
+	Effect->InitializeEffect(InitData);
+
+	ActiveEffects.Add(InitData.EffectID, Effect);
+	// Snapshot effects are already server-authoritative — skip the Pending state
+	// the standard client predict path uses; mark Validated directly so the
+	// Pending->Validated promotion machinery doesn't try to confirm them.
+	ProcessedEffectIDs.Add(InitData.EffectID, EGMCEffectAnswerState::Validated);
+
+	UE_LOG(LogGMCAbilitySystem, Verbose,
+		TEXT("[ReconnectSnapshot] Restored effect %s id=%d t_since_start=%.3f duration=%.3f local_start=%.3f"),
+		*GetNameSafe(Snapshot.EffectClass),
+		InitData.EffectID,
+		Snapshot.TimeSinceStart,
+		Snapshot.Duration,
+		InitData.StartTime);
 }
 
 

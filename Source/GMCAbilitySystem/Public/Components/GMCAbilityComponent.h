@@ -74,15 +74,54 @@ USTRUCT()
 struct FGMASQueueOperationHandle
 {
 	GENERATED_BODY()
-	
+
 	UPROPERTY()
 	int32 Handle { -1 };
 
 	UPROPERTY()
 	int32 OperationId { -1 };
-	
+
 	UPROPERTY()
 	int32 NetworkId { -1 };
+};
+
+// Snapshot of one active effect, sent server -> owning client on reconnect to
+// rehydrate a freshly-constructed client ASC. Required because the standard
+// per-effect apply RPC fires only at apply time; on a kept-pawn reconnect the
+// new client's connection has no record of effects applied during the previous
+// session, and ApplyStartingEffects on the server early-returns on its
+// bStartingEffectsApplied flag.
+//
+// Slim by design: most config (PeriodicInterval, Modifiers, tag containers,
+// chain rules) lives on the EffectClass CDO and is recovered locally via
+// DuplicateObject. Only fields that can diverge at runtime are wired:
+//   - EffectID    : preserved so EndEffect/cancel-by-id RPCs target the right instance
+//   - TimeSinceStart : remap to client clock (preserves periodic boundaries + remaining duration)
+//   - Duration    : runtime override of the CDO value
+//   - bServerAuth : drives the client's tick-vs-passive decision
+//   - EffectTag   : runtime override of the CDO value
+USTRUCT()
+struct FGMCEffectSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TSubclassOf<UGMCAbilityEffect> EffectClass;
+
+	UPROPERTY()
+	int32 EffectID = 0;
+
+	UPROPERTY()
+	double TimeSinceStart = 0.0;
+
+	UPROPERTY()
+	double Duration = 0.0;
+
+	UPROPERTY()
+	bool bServerAuth = false;
+
+	UPROPERTY()
+	FGameplayTag EffectTag;
 };
 
 UENUM(BlueprintType)
@@ -135,6 +174,30 @@ public:
 	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
 	// Must be called on the server only
 	virtual void ApplyStartingEffects(bool bForce = false);
+
+	// Reconnection rehydration. The owning client requests a snapshot of every
+	// active effect the server is tracking; the server replies with a slim wire
+	// format and the client recreates local UGMCAbilityEffect instances bypassing
+	// the apply pipeline (no bUniqueByEffectTag check, server EffectIDs preserved).
+	// Triggered automatically from BeginPlay on the autonomous-proxy side.
+	//
+	// Fixes the kept-pawn reconnect drift: AGameModeMaster::PostLogin_ReconnectingPlayer
+	// reuses the existing pawn (and its ASC), so bStartingEffectsApplied stays true and
+	// no per-effect RPC is broadcast to the brand-new owning connection. Without this,
+	// the new client never instantiates Recovery / Bleed / etc. locally and all bound
+	// attributes drift permanently.
+	UFUNCTION(Server, Reliable, WithValidation)
+	void Server_RequestActiveEffectsSnapshot();
+
+	UFUNCTION(Client, Reliable)
+	void Client_ReceiveActiveEffectsSnapshot(const TArray<FGMCEffectSnapshot>& Snapshots);
+
+	// Server-only: walk ActiveEffects and emit one snapshot entry per live effect.
+	void BuildActiveEffectsSnapshot(TArray<FGMCEffectSnapshot>& OutSnapshots) const;
+
+	// Client-only: recreate a UGMCAbilityEffect locally from a snapshot. Idempotent
+	// (no-op if EffectID already in ActiveEffects) and tag-uniqueness-bypass.
+	void RestoreEffectFromSnapshot(const FGMCEffectSnapshot& Snapshot);
 
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
