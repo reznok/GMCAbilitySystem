@@ -214,8 +214,26 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 			const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
 			ServerProcessOperation(ClientPayloadOperationData, false);
 		}
-		// Server owned pawns
-		BoundQueueV2.GenPreLocalMoveExecution();
+		// [EXPERIMENTAL] Removed second GenPreLocalMoveExecution() call here:
+		// PreLocalMoveExecution already drained ClientQueuedOperations earlier in
+		// this frame, leaving OperationData = AbilityActivationOp(opID) for ops
+		// that PredictionTick rejected (e.g. abilities with bActivateOnMovementTick=false
+		// running on listen server local pawn -- the gate at TryActivateAbilitiesByInputTag
+		// line 525 returns false when bActivateOnMovementTick != bFromMovementTick=true).
+		// The original re-drain stomped that payload back to an empty base struct
+		// (queue is empty by now), silently dropping the ability. Symmetric with
+		// the client else-branch below at line 223 which never re-drained.
+		//
+		// Safety analysis:
+		// - AI / dedicated-server-with-remote-client pawns: GenPreLocalMoveExecution
+		//   early-returns on non-locally-controlled server pawns (GMASBoundQueueV2.cpp:76-80),
+		//   so the call was a no-op there.
+		// - Listen server local pawn: empty queue → was setting OperationData to
+		//   empty base, destroying the deferred ability payload (the bug).
+		// - Server-side ClientQueuedOperations cannot be populated (all 4 callers
+		//   gated by !HasAuthority(), and RPCOnServerOperationAdded is Client-RPC).
+		//   CheckValidState (line 178 of GMASBoundQueueV2.cpp) already logs an
+		//   Error if it ever happens -- the drain was idempotent defensive code.
 		ProcessOperation(BoundQueueV2.OperationData, false);
 	}
 	else
