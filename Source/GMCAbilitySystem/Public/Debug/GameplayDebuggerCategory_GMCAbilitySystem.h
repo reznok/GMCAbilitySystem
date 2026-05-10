@@ -26,8 +26,13 @@ protected:
 		FString ActorName;
 		FString GrantedAbilities;
 		int NBGrantedAbilities;
-		FString ActiveTags;
-		int NBActiveTags;
+		// Split tag display: bound is GMC-validated (server vs client divergence = real bug),
+		// client-auth is locally maintained (eventually consistent, divergence is normal during
+		// BoundQueueV2 propagation).
+		FString BoundActiveTags;
+		int NBBoundActiveTags;
+		FString ClientAuthActiveTags;
+		int NBClientAuthActiveTags;
 		FString Attributes;
 		int NBAttributes;
 		FString ActiveEffects;

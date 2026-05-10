@@ -66,6 +66,14 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	uint8 bServerAuth : 1 {false}; // The server will never be acknowledge/predicted
 
+	// True iff this effect was applied via the EGMCAbilityEffectQueueType::ClientAuth path.
+	// Mutually exclusive with bServerAuth. Routes GrantedTags to the non-bound
+	// ClientAuthActiveTags container so they don't trigger GMC state divergence.
+	// Set automatically by ApplyAbilityEffect's case ClientAuth (client side) and by
+	// ServerProcessOperation's ClientAuthEffectOperation handler (server side).
+	UPROPERTY()
+	uint8 bClientAuth : 1 {false};
+
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
 	

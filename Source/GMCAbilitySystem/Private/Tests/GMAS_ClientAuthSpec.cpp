@@ -337,6 +337,165 @@ void FGMASClientAuthSpec::Define()
 
             AbilityComp->bForceAuthorityForTest = false;
         });
+
+        // ── Tag routing: GrantedTags from ClientAuth effects must NOT pollute the bound state ──
+
+        It("routes ClientAuth effect GrantedTags to ClientAuthActiveTags, not ActiveTags", [this]()
+        {
+            static FNativeGameplayTag SFooTag(
+                TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+                TEXT("GMAS.Test.ClientAuth.GrantedFoo"), TEXT("Granted tag for routing tests"),
+                ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+            const FGameplayTag FooTag = SFooTag.GetTag();
+
+            AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+
+            FGMCAbilityEffectData Data;
+            Data.EffectTag = FooTag;
+            Data.GrantedTags.AddTag(FooTag);
+            Data.EffectType = EGMASEffectType::Persistent;
+
+            bool bSuccess; int Handle, Id; UGMCAbilityEffect* Effect;
+            AbilityComp->ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), Data,
+                EGMCAbilityEffectQueueType::ClientAuth, bSuccess, Handle, Id, Effect, nullptr);
+            TestTrue(TEXT("Apply must succeed"), bSuccess);
+
+            TestFalse(TEXT("Bound container must NOT have the tag (no GMC divergence)"),
+                AbilityComp->HasBoundActiveTag(FooTag));
+            TestTrue(TEXT("Union query (HasActiveTag) sees the tag"),
+                AbilityComp->HasActiveTag(FooTag));
+            TestTrue(TEXT("ClientAuth getter exposes the tag"),
+                AbilityComp->GetClientAuthActiveTags().HasTag(FooTag));
+        });
+
+        // ── Symmetric remove ───────────────────────────────────────────────────────
+
+        It("removes the tag from ClientAuthActiveTags when the effect ends", [this]()
+        {
+            static FNativeGameplayTag SBarTag(
+                TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+                TEXT("GMAS.Test.ClientAuth.GrantedBar"), TEXT(""),
+                ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+            const FGameplayTag BarTag = SBarTag.GetTag();
+
+            AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+
+            FGMCAbilityEffectData Data;
+            Data.EffectTag = BarTag;
+            Data.GrantedTags.AddTag(BarTag);
+            Data.EffectType = EGMASEffectType::Persistent;
+
+            bool bSuccess; int Handle, Id; UGMCAbilityEffect* Effect;
+            AbilityComp->ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), Data,
+                EGMCAbilityEffectQueueType::ClientAuth, bSuccess, Handle, Id, Effect, nullptr);
+            TestTrue(TEXT("Pre-condition: apply succeeded"), bSuccess);
+            TestTrue(TEXT("Pre-condition: tag is present"), AbilityComp->HasActiveTag(BarTag));
+
+            AbilityComp->RemoveActiveAbilityEffect(Effect);
+
+            TestFalse(TEXT("Tag fully cleaned from union after remove"),
+                AbilityComp->HasActiveTag(BarTag));
+            TestFalse(TEXT("ClientAuth container no longer carries the tag"),
+                AbilityComp->GetClientAuthActiveTags().HasTag(BarTag));
+        });
+
+        // ── No GMC bound state mutation ────────────────────────────────────────────
+
+        It("apply via ClientAuth does not mutate the bound ActiveTags snapshot", [this]()
+        {
+            static FNativeGameplayTag SBazTag(
+                TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+                TEXT("GMAS.Test.ClientAuth.GrantedBaz"), TEXT(""),
+                ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+            const FGameplayTag BazTag = SBazTag.GetTag();
+
+            AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+
+            const FGameplayTagContainer SnapshotBefore = AbilityComp->GetBoundActiveTags();
+
+            FGMCAbilityEffectData Data;
+            Data.EffectTag = BazTag;
+            Data.GrantedTags.AddTag(BazTag);
+            Data.EffectType = EGMASEffectType::Persistent;
+
+            bool bSuccess; int Handle, Id; UGMCAbilityEffect* Effect;
+            AbilityComp->ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), Data,
+                EGMCAbilityEffectQueueType::ClientAuth, bSuccess, Handle, Id, Effect, nullptr);
+            TestTrue(TEXT("Pre-condition: apply succeeded"), bSuccess);
+
+            const FGameplayTagContainer SnapshotAfter = AbilityComp->GetBoundActiveTags();
+            TestTrue(TEXT("Bound ActiveTags container is byte-for-byte identical before/after apply"),
+                SnapshotBefore == SnapshotAfter);
+        });
+
+        // ── Change delegates can observe client-auth tag transitions ───────────────
+        // Note: OnActiveTagsChanged uses DECLARE_DYNAMIC_MULTICAST_DELEGATE (UObject-only
+        // binding); lambdas cannot bind directly in headless tests. Instead we validate
+        // the necessary condition for the delegate to fire: GetActiveTags() (the union
+        // queried by CheckActiveTagsChanged at runtime) must reflect the new tag. If this
+        // holds, the delegate path naturally observes the transition during the next tick.
+
+        It("GetActiveTags() reflects the client-auth tag so CheckActiveTagsChanged sees it", [this]()
+        {
+            static FNativeGameplayTag SQuxTag(
+                TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+                TEXT("GMAS.Test.ClientAuth.GrantedQux"), TEXT(""),
+                ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+            const FGameplayTag QuxTag = SQuxTag.GetTag();
+
+            AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+
+            FGMCAbilityEffectData Data;
+            Data.EffectTag = QuxTag;
+            Data.GrantedTags.AddTag(QuxTag);
+            Data.EffectType = EGMASEffectType::Persistent;
+
+            bool bSuccess; int Handle, Id; UGMCAbilityEffect* Effect;
+            AbilityComp->ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), Data,
+                EGMCAbilityEffectQueueType::ClientAuth, bSuccess, Handle, Id, Effect, nullptr);
+            TestTrue(TEXT("Pre-condition: apply succeeded"), bSuccess);
+
+            TestTrue(TEXT("GetActiveTags() (union) includes the client-auth tag"),
+                AbilityComp->GetActiveTags().HasTag(QuxTag));
+            TestFalse(TEXT("GetBoundActiveTags() does NOT include the client-auth tag"),
+                AbilityComp->GetBoundActiveTags().HasTag(QuxTag));
+        });
+
+        // ── Server-side mirror: dispatcher routes the tag identically ──────────────
+
+        It("server-side ClientAuthEffectOperation dispatch routes GrantedTags to ClientAuthActiveTags", [this]()
+        {
+            static FNativeGameplayTag SServerTag(
+                TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+                TEXT("GMAS.Test.ClientAuth.ServerGranted"), TEXT(""),
+                ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+            const FGameplayTag ServerTag = SServerTag.GetTag();
+
+            AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+
+            // Build the operation as if it arrived from the client.
+            FGMASBoundQueueV2ClientAuthEffectOperation Op;
+            Op.EffectClass = UGMCAbilityEffect::StaticClass();
+            Op.EffectID    = UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset + 200;
+            Op.EffectData.EffectTag = ServerTag;
+            Op.EffectData.GrantedTags.AddTag(ServerTag);
+            Op.EffectData.EffectType = EGMASEffectType::Persistent;
+            Op.OperationID = -1;
+
+            FInstancedStruct InstancedOp = FInstancedStruct::Make(Op);
+
+            AbilityComp->bForceAuthorityForTest = true;
+            AbilityComp->SeedBoundQueueOperationDataForTest(-1);
+
+            AbilityComp->ServerProcessOperationForTest(InstancedOp, false);
+
+            TestFalse(TEXT("Server bound container must remain untouched"),
+                AbilityComp->HasBoundActiveTag(ServerTag));
+            TestTrue(TEXT("Server client-auth container received the tag via dispatcher"),
+                AbilityComp->GetClientAuthActiveTags().HasTag(ServerTag));
+
+            AbilityComp->bForceAuthorityForTest = false;
+        });
     });
 }
 

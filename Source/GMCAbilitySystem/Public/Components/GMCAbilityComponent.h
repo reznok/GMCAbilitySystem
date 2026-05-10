@@ -222,9 +222,19 @@ public:
 	// Ability tags that the controller has 
 	FGameplayTagContainer GetGrantedAbilities() const { return GrantedAbilityTags; }
 
-	// Gameplay tags that the controller has
-	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
-	FGameplayTagContainer GetActiveTags() const { return ActiveTags; }
+	// Returns the union of bound (ActiveTags) and client-auth (ClientAuthActiveTags) tags.
+	// Concatenation cost is O(N+M) per call; not cached. For introspection limited to
+	// one source, see GetBoundActiveTags() / GetClientAuthActiveTags().
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Tags")
+	FGameplayTagContainer GetActiveTags() const;
+
+	// Bound-only view (validated server-side via GMC). Excludes client-auth tags.
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Tags")
+	const FGameplayTagContainer& GetBoundActiveTags() const { return ActiveTags; }
+
+	// Client-auth view (locally maintained, eventually consistent). Excludes bound tags.
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Tags")
+	const FGameplayTagContainer& GetClientAuthActiveTags() const { return ClientAuthActiveTags; }
 
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
@@ -290,7 +300,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveActiveTag(const FGameplayTag AbilityTag);
 
-	
+	// Add a tag to the non-bound ClientAuthActiveTags container. Used by ClientAuth effects
+	// to grant tags without triggering GMC validation divergence. Caller is responsible for
+	// symmetric removal via RemoveClientAuthActiveTag.
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	void AddClientAuthActiveTag(const FGameplayTag Tag);
+
+	// Symmetric removal for AddClientAuthActiveTag.
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	void RemoveClientAuthActiveTag(const FGameplayTag Tag);
+
+
 	/**
 	 * Will add a tag to the ActiveTag array on the server, and will replicate it nicely to the client
 	 * @param Tag Tag to add
@@ -338,6 +358,32 @@ public:
 	/** Get all active tags that match a given parent tag */
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
+
+	// ---- Bound-only query variants ---------------------------------------------------
+	// These bypass ClientAuthActiveTags and inspect only the GMC-bound state. Use when
+	// you specifically need the server-validated tag set (debug overlays, anti-cheat
+	// checks, internal GMC bookkeeping). Default callers should prefer the union helpers.
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasBoundActiveTag(const FGameplayTag GameplayTag) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasBoundActiveTagExact(const FGameplayTag GameplayTag) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasAnyBoundTag(const FGameplayTagContainer TagsToCheck) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasAnyBoundTagExact(const FGameplayTagContainer TagsToCheck) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasAllBoundTags(const FGameplayTagContainer TagsToCheck) const;
+
+	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
+	bool HasAllBoundTagsExact(const FGameplayTagContainer TagsToCheck) const;
+
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	TArray<FGameplayTag> GetBoundActiveTagsByParentTag(const FGameplayTag ParentTag);
 
 	// Whitelist queries — public so tests, Blueprint, and external systems can introspect.
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Client-Auth")
@@ -780,6 +826,13 @@ protected:
 
 	// Effect tags that are granted to the player (bound)
 	FGameplayTagContainer ActiveTags;
+
+	// Tags posed by ClientAuth effects. NOT bound to GMC -- never validated server-side.
+	// Eventually consistent: server populates its copy when it processes the
+	// ClientAuthEffectOperation; client populates immediately at apply time.
+	// Queried in union with ActiveTags by all HasActiveTag* helpers.
+	UPROPERTY()
+	FGameplayTagContainer ClientAuthActiveTags;
 
 	UPROPERTY(EditDefaultsOnly, Category="Ability")
 	FGameplayTagContainer StartingAbilities;

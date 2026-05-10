@@ -348,6 +348,19 @@ void UGMC_AbilitySystemComponent::RemoveActiveTag(const FGameplayTag AbilityTag)
 	}
 }
 
+void UGMC_AbilitySystemComponent::AddClientAuthActiveTag(const FGameplayTag Tag)
+{
+	ClientAuthActiveTags.AddTag(Tag);
+}
+
+void UGMC_AbilitySystemComponent::RemoveClientAuthActiveTag(const FGameplayTag Tag)
+{
+	if (ClientAuthActiveTags.HasTagExact(Tag))
+	{
+		ClientAuthActiveTags.RemoveTag(Tag);
+	}
+}
+
 void UGMC_AbilitySystemComponent::AddSynchronizedTag(const FGameplayTag& Tag, bool AllowMultipleInstance)
 {
 	ensureAlwaysMsgf(HasAuthority(), TEXT("Only the server can add a synchronized tag"));
@@ -387,34 +400,49 @@ void UGMC_AbilitySystemComponent::RemoveSynchronizedTag(const FGameplayTag& Tag,
 	RemoveActiveAbilityEffectByTag(Tag, EGMCAbilityEffectQueueType::ServerAuth, RemoveEveryInstance);
 }
 
+FGameplayTagContainer UGMC_AbilitySystemComponent::GetActiveTags() const
+{
+	// Concatenated union of bound (GMC-validated) and client-auth (locally maintained) tags.
+	// O(N+M) per call. Not cached -- containers mutate frequently and the merge cost is small.
+	FGameplayTagContainer Combined = ActiveTags;
+	Combined.AppendTags(ClientAuthActiveTags);
+	return Combined;
+}
+
 bool UGMC_AbilitySystemComponent::HasActiveTag(const FGameplayTag GameplayTag) const
 {
-	return ActiveTags.HasTag(GameplayTag);
+	return ActiveTags.HasTag(GameplayTag) || ClientAuthActiveTags.HasTag(GameplayTag);
 }
 
 bool UGMC_AbilitySystemComponent::HasActiveTagExact(const FGameplayTag GameplayTag) const
 {
-	return ActiveTags.HasTagExact(GameplayTag);
+	return ActiveTags.HasTagExact(GameplayTag) || ClientAuthActiveTags.HasTagExact(GameplayTag);
 }
 
 bool UGMC_AbilitySystemComponent::HasAnyTag(const FGameplayTagContainer TagsToCheck) const
 {
-	return ActiveTags.HasAny(TagsToCheck);
+	return ActiveTags.HasAny(TagsToCheck) || ClientAuthActiveTags.HasAny(TagsToCheck);
 }
 
 bool UGMC_AbilitySystemComponent::HasAnyTagExact(const FGameplayTagContainer TagsToCheck) const
 {
-	return ActiveTags.HasAnyExact(TagsToCheck);
+	return ActiveTags.HasAnyExact(TagsToCheck) || ClientAuthActiveTags.HasAnyExact(TagsToCheck);
 }
 
 bool UGMC_AbilitySystemComponent::HasAllTags(const FGameplayTagContainer TagsToCheck) const
 {
-	return ActiveTags.HasAll(TagsToCheck);
+	// HasAll is a conjunction over the union; cannot decompose into HasAll(A) || HasAll(B).
+	// Materialise the union once and run the predicate on the merged container.
+	FGameplayTagContainer Union = ActiveTags;
+	Union.AppendTags(ClientAuthActiveTags);
+	return Union.HasAll(TagsToCheck);
 }
 
 bool UGMC_AbilitySystemComponent::HasAllTagsExact(const FGameplayTagContainer TagsToCheck) const
 {
-	return ActiveTags.HasAllExact(TagsToCheck);
+	FGameplayTagContainer Union = ActiveTags;
+	Union.AppendTags(ClientAuthActiveTags);
+	return Union.HasAllExact(TagsToCheck);
 }
 
 TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const FGameplayTag ParentTag){
@@ -422,6 +450,57 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetActiveTagsByParentTag(const
 	if(!ParentTag.IsValid()) return MatchedTags;
 	for(FGameplayTag Tag : ActiveTags){
 		if(Tag.MatchesTag(ParentTag)){
+			MatchedTags.Add(Tag);
+		}
+	}
+	for(FGameplayTag Tag : ClientAuthActiveTags){
+		if(Tag.MatchesTag(ParentTag)){
+			MatchedTags.AddUnique(Tag);
+		}
+	}
+	return MatchedTags;
+}
+
+// ---- Bound-only query variants -------------------------------------------------------
+
+bool UGMC_AbilitySystemComponent::HasBoundActiveTag(const FGameplayTag GameplayTag) const
+{
+	return ActiveTags.HasTag(GameplayTag);
+}
+
+bool UGMC_AbilitySystemComponent::HasBoundActiveTagExact(const FGameplayTag GameplayTag) const
+{
+	return ActiveTags.HasTagExact(GameplayTag);
+}
+
+bool UGMC_AbilitySystemComponent::HasAnyBoundTag(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAny(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAnyBoundTagExact(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAnyExact(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAllBoundTags(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAll(TagsToCheck);
+}
+
+bool UGMC_AbilitySystemComponent::HasAllBoundTagsExact(const FGameplayTagContainer TagsToCheck) const
+{
+	return ActiveTags.HasAllExact(TagsToCheck);
+}
+
+TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetBoundActiveTagsByParentTag(const FGameplayTag ParentTag)
+{
+	TArray<FGameplayTag> MatchedTags;
+	if (!ParentTag.IsValid()) return MatchedTags;
+	for (FGameplayTag Tag : ActiveTags)
+	{
+		if (Tag.MatchesTag(ParentTag))
+		{
 			MatchedTags.Add(Tag);
 		}
 	}
@@ -2057,6 +2136,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			FGMCAbilityEffectData InitData = Op->EffectData;
 			InitData.EffectID = Op->EffectID;
 			InitData.bServerAuth = false;
+			InitData.bClientAuth = true;
 
 			UGMCAbilityEffect* DuplicatedEffect = DuplicateObject<UGMCAbilityEffect>(
 				Op->EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
@@ -2493,6 +2573,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			}
 
 			InitializationData.bServerAuth = false;
+			InitializationData.bClientAuth = true;
 			InitializationData.EffectID = ClientAuthEffectID;
 			OutEffect = ApplyAbilityEffect(DuplicatedEffect, InitializationData);
 			if (!OutEffect)

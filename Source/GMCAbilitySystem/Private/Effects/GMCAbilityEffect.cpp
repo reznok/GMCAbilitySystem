@@ -401,9 +401,18 @@ AActor* UGMCAbilityEffect::GetOwnerActor() const
 
 void UGMCAbilityEffect::AddTagsToOwner()
 {
+	// Route ClientAuth-applied tags to the non-bound container so they don't trigger
+	// GMC state-divergence detection. See plan_gmas_client_auth_tags_routing.md.
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
-		OwnerAbilityComponent->AddActiveTag(Tag);
+		if (EffectData.bClientAuth)
+		{
+			OwnerAbilityComponent->AddClientAuthActiveTag(Tag);
+		}
+		else
+		{
+			OwnerAbilityComponent->AddActiveTag(Tag);
+		}
 	}
 }
 
@@ -442,7 +451,14 @@ void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
-		OwnerAbilityComponent->RemoveActiveTag(Tag);
+		if (EffectData.bClientAuth)
+		{
+			OwnerAbilityComponent->RemoveClientAuthActiveTag(Tag);
+		}
+		else
+		{
+			OwnerAbilityComponent->RemoveActiveTag(Tag);
+		}
 	}
 }
 
