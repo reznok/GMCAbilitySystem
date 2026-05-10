@@ -465,7 +465,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	return true;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck)
 {
 	
 	if (ActivatedAbility == nullptr) return false;
@@ -486,7 +486,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	}
 
 	// Check Activation Tags
-	if (!CheckActivationTags(AbilityCDO)){
+	if (!bSkipActivationTagsCheck && !CheckActivationTags(AbilityCDO)){
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Tags"), *GetNameSafe(ActivatedAbility));
 		return false;
 	}
@@ -526,7 +526,9 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	// just cancelled, sets bServerConfirmed=true, and the Tick-time
 	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
 	// the predicted ability runs indefinitely on the client.
-	if (HasAuthority() && Ability->AbilityState != EAbilityState::Ended)
+	// Skip the confirm RPC when the activation came from the client-auth path
+	// (the client never expects confirmation for trust-based activations).
+	if (HasAuthority() && Ability->AbilityState != EAbilityState::Ended && !bSkipActivationTagsCheck)
 	{
 		RPCConfirmAbilityActivation(AbilityID);
 	}
@@ -538,6 +540,30 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
 
+	// Detect client-auth path before standard routing.
+	TArray<TSubclassOf<UGMCAbility>> Candidates = GetGrantedAbilitiesByTag(InputTag);
+	for (const TSubclassOf<UGMCAbility>& AbilityClass : Candidates)
+	{
+		if (!AbilityClass) continue;
+		if (!IsClientAuthorizedAbility(AbilityClass)) continue;
+
+		// Hard contract: client-auth abilities MUST NOT run on the movement tick.
+		const UGMCAbility* CDO = AbilityClass->GetDefaultObject<UGMCAbility>();
+		if (!ensureMsgf(!CDO->bActivateOnMovementTick,
+			TEXT("Client-auth ability %s has bActivateOnMovementTick=true -- replay incoherence guaranteed."),
+			*AbilityClass->GetName()))
+		{
+			continue;  // skip this candidate, fall through to standard path
+		}
+
+		if (TryActivateClientAuthAbility(AbilityClass, InputTag, InputAction))
+		{
+			return;  // handled through client-auth path
+		}
+		// else fall through to standard path
+	}
+
+	// Existing standard flow continues unchanged below.
 	FGMASBoundQueueV2AbilityActivationOperation ActivationData;
 	ActivationData.InputTag = InputTag;
 	ActivationData.InputAction = InputAction;
@@ -1097,20 +1123,35 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 
 	TArray<int> CompletedActiveEffects;
 
-	// Tick Effects
-	for (const TPair<int, UGMCAbilityEffect*>& Effect : ActiveEffects)
+	// Tick Effects.
+	// Snapshot keys before iterating: Effect.Tick / EndEffect can re-enter this map
+	// via BP-side handlers, OnEffectApplied/OnEffectRemoved broadcasts, or gameplay-tag
+	// listeners that ultimately call ApplyAbilityEffect/RemoveActiveAbilityEffect.
+	// Iterating the live TMap while mutations land on its underlying TSparseArray
+	// invalidates the iterator (ensures fire in SparseArray.h, then crash).
+	// Mirror the snapshot pattern used for ProcessedEffectIDs above.
+	TArray<int> ActiveEffectKeys;
+	ActiveEffects.GenerateKeyArray(ActiveEffectKeys);
+	for (const int Key : ActiveEffectKeys)
 	{
+		UGMCAbilityEffect** EffectPtr = ActiveEffects.Find(Key);
+		if (!EffectPtr || !*EffectPtr)
+		{
+			// Entry was removed by a re-entrant callback during a previous iteration.
+			continue;
+		}
+		UGMCAbilityEffect* EffectValue = *EffectPtr;
 
-		if (!Effect.Value->IsValidLowLevel()) {
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null or pending kill, removing from the list."), Effect.Key);
-			CompletedActiveEffects.Push(Effect.Key);
+		if (!EffectValue->IsValidLowLevel()) {
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Active Effect id %d is null or pending kill, removing from the list."), Key);
+			CompletedActiveEffects.Push(Key);
 			continue;
 		}
 
-		Effect.Value->Tick(DeltaTime);
-		if (Effect.Value->bCompleted)
+		EffectValue->Tick(DeltaTime);
+		if (EffectValue->bCompleted)
 		{
-			CompletedActiveEffects.Push(Effect.Key);
+			CompletedActiveEffects.Push(Key);
 		}
 
 		// Check for predicted effects that have not been server confirmed.
@@ -1118,18 +1159,18 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		// replay to mutate persistent state (ProcessedEffectIDs / ActiveEffects) based
 		// on transient rewound bound state. Reaps run on fresh post-replay state only.
 		if (!HasAuthority() && !bIsReplaying &&
-			!Effect.Value->EffectData.bServerAuth
-			&& ProcessedEffectIDs.Contains(Effect.Key)
-			&& ProcessedEffectIDs[Effect.Key] == EGMCEffectAnswerState::Pending
-			&& Effect.Value->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+			!EffectValue->EffectData.bServerAuth
+			&& ProcessedEffectIDs.Contains(Key)
+			&& ProcessedEffectIDs[Key] == EGMCEffectAnswerState::Pending
+			&& EffectValue->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
-			ProcessedEffectIDs[Effect.Key] = EGMCEffectAnswerState::Timeout;
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(Effect.Value), Effect.Key);
+			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);
 
 			// Successor rejected by server → revive the suspended OLDs. They resume
 			// ticking modifiers from the next tick onward; their natural EndAtActionTimer
 			// (still set, never cleared in the suspend path) will fire when due.
-			if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Effect.Key))
+			if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Key))
 			{
 				for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
 				{
@@ -1141,11 +1182,11 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 						}
 					}
 				}
-				PendingReplacements.Remove(Effect.Key);
+				PendingReplacements.Remove(Key);
 			}
 
-			Effect.Value->EndEffect();
-			CompletedActiveEffects.Push(Effect.Key);
+			EffectValue->EndEffect();
+			CompletedActiveEffects.Push(Key);
 		}
 	}
 
@@ -1561,6 +1602,67 @@ bool UGMC_AbilitySystemComponent::CheckActivationTags(const UGMCAbility* Ability
 	return true;
 }
 
+bool UGMC_AbilitySystemComponent::CheckActivationTagsForClientAuth(const UGMCAbility* Ability) const {
+	if (!Ability) return false;
+
+	// BlockedByOtherAbility — runtime coherence (NOT skipped).
+	for (const FGameplayTag& BlockTag : Ability->BlockedByOtherAbility)
+	{
+		if (IsAbilityTagBlocked(BlockTag))
+		{
+			return false;
+		}
+	}
+
+	// Cooldown — runtime coherence.
+	if (GetCooldownForAbility(Ability->AbilityTag) > 0.f)
+	{
+		return false;
+	}
+
+	// Skipped on purpose (client-auth opt-out):
+	//   - ActivationRequiredTags
+	//   - ActivationBlockedTags
+	return true;
+}
+
+bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
+	TSubclassOf<UGMCAbility> AbilityClass,
+	FGameplayTag InputTag,
+	const UInputAction* InputAction)
+{
+	if (!AbilityClass) return false;
+
+	UGMCAbility* CDO = AbilityClass->GetDefaultObject<UGMCAbility>();
+	if (!CheckActivationTagsForClientAuth(CDO))
+	{
+		return false;
+	}
+
+	// Local activation -- bSkipActivationTagsCheck=true because
+	// CheckActivationTagsForClientAuth already enforced the reduced gate set.
+	const bool bActivated = TryActivateAbility(AbilityClass, InputAction, InputTag,
+		/*bSkipActivationTagsCheck=*/true);
+	if (!bActivated)
+	{
+		return false;
+	}
+
+	// Server-owned pawn? no client->server payload to send.
+	if (HasAuthority())
+	{
+		return true;
+	}
+
+	FGMASBoundQueueV2ClientAuthAbilityActivationOperation Op;
+	Op.AbilityClass = AbilityClass;
+	Op.InputTag = InputTag;
+	Op.InputAction = InputAction;
+	const int OpID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ClientAuthAbilityActivationOperation>(Op);
+	BoundQueueV2.QueueClientOperation(OpID);
+	return true;
+}
+
 
 void UGMC_AbilitySystemComponent::ClearAbilityMap()
 {
@@ -1865,7 +1967,7 @@ void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FG
 
 void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct& OperationData, bool bFromMovementTick)
 {
-	if (!HasAuthority()) return;
+	if (!IsAuthorityForGMASLogic()) return;
 	if (!BoundQueueV2.IsValidGMASOperation(OperationData))
 	{
 		// Diagnostic: signal when an op arrived but the GMAS validation rejected it.
@@ -1916,6 +2018,124 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				OperationID,
 				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
 				bFromMovementTick ? 1 : 0);
+		}
+
+		// Client-auth effect application: the payload carries everything the server needs
+		// (EffectClass, EffectID, EffectData). ProcessOperation does not have a branch for
+		// this op type, so we handle it here, before handing off to the generic pipeline.
+		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2ClientAuthEffectOperation* Op =
+				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthEffectOperation>();
+			if (!Op || !Op->EffectClass)
+			{
+				return;
+			}
+
+			// Whitelist gate — only effects that the server explicitly trusts may be applied.
+			if (!IsClientAuthorizedEffect(Op->EffectClass))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerProcessOperation] Rejected ClientAuth effect %s -- not whitelisted (potential cheat attempt)."),
+					*Op->EffectClass->GetName());
+				return;
+			}
+
+			// Anti-cheat: verify EffectID is in the client-auth reserved range.
+			// Without this check, a malicious client could spoof an ID in the server-auth
+			// range and overwrite an existing Predicted/ServerAuth effect server-side.
+			if (Op->EffectID < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset)
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerProcessOperation] ClientAuth effect %s with non-client-auth ID range: %d "
+					     "(potential cheat attempt -- refusing)."),
+					*Op->EffectClass->GetName(), Op->EffectID);
+				return;
+			}
+
+			// Apply server-side using the client-supplied EffectID for cross-side coherence.
+			FGMCAbilityEffectData InitData = Op->EffectData;
+			InitData.EffectID = Op->EffectID;
+			InitData.bServerAuth = false;
+
+			UGMCAbilityEffect* DuplicatedEffect = DuplicateObject<UGMCAbilityEffect>(
+				Op->EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+			UGMCAbilityEffect* AppliedEffect = ApplyAbilityEffect(DuplicatedEffect, InitData);
+			if (AppliedEffect)
+			{
+				BoundActiveEffectIDs_Add(Op->EffectID);
+			}
+			return;
+		}
+
+		// Client-auth effect removal: the payload carries the EffectIDs the client wants
+		// removed. Server validates every ID is in the client-auth reserved range before
+		// applying, preventing a malicious client from removing standard-range effects.
+		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2ClientAuthRemoveEffectOperation* Op =
+				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthRemoveEffectOperation>();
+			if (!Op || Op->EffectIDs.IsEmpty())
+			{
+				return;
+			}
+
+			// Anti-cheat: every ID must be in the client-auth range.
+			for (const int Id : Op->EffectIDs)
+			{
+				if (Id < ClientAuthEffectIDOffset)
+				{
+					UE_LOG(LogGMCAbilitySystem, Warning,
+						TEXT("[ServerProcessOperation] ClientAuth remove rejected: ID %d not in client-auth range "
+						     "(potential cheat attempt)."), Id);
+					return;
+				}
+			}
+
+			// Apply removal locally on the server.
+			for (const int Id : Op->EffectIDs)
+			{
+				if (ActiveEffects.Contains(Id))
+				{
+					RemoveActiveAbilityEffect(ActiveEffects[Id]);
+				}
+			}
+			return;
+		}
+
+		// Client-auth ability activation: the payload carries everything the server needs
+		// (AbilityClass, InputTag, InputAction). No RPCConfirmAbilityActivation is issued —
+		// the client already trusts the activation by construction.
+		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2ClientAuthAbilityActivationOperation* Op =
+				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthAbilityActivationOperation>();
+			if (!Op || !Op->AbilityClass)
+			{
+				return;
+			}
+
+			// Whitelist gate — only abilities the server explicitly trusts may be activated.
+			if (!IsClientAuthorizedAbility(Op->AbilityClass))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerProcessOperation] Rejected ClientAuth ability %s -- not whitelisted (potential cheat attempt)."),
+					*Op->AbilityClass->GetName());
+				return;
+			}
+
+			// Mirror client behavior: reduced gate set, skip standard CheckActivationTags.
+			const UGMCAbility* CDO = Op->AbilityClass->GetDefaultObject<UGMCAbility>();
+			if (!CheckActivationTagsForClientAuth(CDO))
+			{
+				// Client already saw the same block; drop silently.
+				return;
+			}
+
+			TryActivateAbility(Op->AbilityClass, Op->InputAction, Op->InputTag,
+				/*bSkipActivationTagsCheck=*/true);
+			// No RPCConfirmAbilityActivation -- client trusts the activation by construction.
+			return;
 		}
 
 		ProcessOperation(OperationData, bFromMovementTick);
@@ -2027,12 +2247,51 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	}
 		
 	int NewEffectID = static_cast<int>(ActionTimer * 100);
+	if (NewEffectID >= ClientAuthEffectIDOffset)
+	{
+		// Session has been running long enough that the standard ID range overlaps
+		// with the client-auth reserved range. Fail-fast — silent overlap would corrupt
+		// the client-auth dispatch logic in ServerProcessOperation.
+		UE_LOG(LogGMCAbilitySystem, Fatal,
+			TEXT("[GetNextAvailableEffectID] ActionTimer overflow into client-auth range. "
+			     "ActionTimer=%f -> ID=%d >= Offset=%d. Session too long?"),
+			ActionTimer, NewEffectID, ClientAuthEffectIDOffset);
+	}
 	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
 	{
 		NewEffectID++;
 	}
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), NewEffectID);
-	
+
+	return NewEffectID;
+}
+
+int UGMC_AbilitySystemComponent::GetNextAvailableClientAuthEffectID() const
+{
+	if (ActionTimer == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("[GetNextAvailableClientAuthEffectID] ActionTimer is 0, cannot generate Effect ID."));
+		return -1;
+	}
+
+	int NewEffectID = static_cast<int>(ActionTimer * 100) + ClientAuthEffectIDOffset;
+	if (NewEffectID < ClientAuthEffectIDOffset)
+	{
+		// Wrap into negative (or back into the standard range) — session has been running
+		// beyond the client-auth ID capacity. Same fail-fast policy as the standard helper:
+		// silent overlap would corrupt the dispatcher logic.
+		UE_LOG(LogGMCAbilitySystem, Fatal,
+			TEXT("[GetNextAvailableClientAuthEffectID] EffectID overflow. "
+			     "ActionTimer=%f -> ID=%d wrapped below Offset=%d."),
+			ActionTimer, NewEffectID, ClientAuthEffectIDOffset);
+	}
+	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
+	{
+		NewEffectID++;
+	}
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose,
+		TEXT("[Server: %hhd] Generated ClientAuth Effect ID: %d"), HasAuthority(), NewEffectID);
 	return NewEffectID;
 }
 
@@ -2209,7 +2468,60 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		}
 
 	case EGMCAbilityEffectQueueType::ClientAuth:
-		return false;
+		{
+			if (!IsClientAuthorizedEffect(EffectClass))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("ClientAuth apply rejected: %s not in ClientAuthorizedAbilityEffects."),
+					EffectClass ? *EffectClass->GetName() : TEXT("(null)"));
+				return false;
+			}
+
+			// Allocate ID in the reserved high range BEFORE calling the inner Apply
+			// so the inner generator does not pick a standard-range ID.
+			const int ClientAuthEffectID = GetNextAvailableClientAuthEffectID();
+			if (ClientAuthEffectID == -1)
+			{
+				return false;  // ActionTimer == 0, error already logged
+			}
+
+			UGMCAbilityEffect* DuplicatedEffect = DuplicateObject<UGMCAbilityEffect>(
+				EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
+			if (!DuplicatedEffect)
+			{
+				return false;
+			}
+
+			InitializationData.bServerAuth = false;
+			InitializationData.EffectID = ClientAuthEffectID;
+			OutEffect = ApplyAbilityEffect(DuplicatedEffect, InitializationData);
+			if (!OutEffect)
+			{
+				return false;
+			}
+			OutEffectId = OutEffect->EffectData.EffectID;
+			OutEffectHandle = OutEffectId;
+
+			if (!HasAuthority())
+			{
+				// Owning client side: pre-validate the effect locally — the server will
+				// mirror the apply via the bound queue, no RPC confirmation expected.
+				ProcessedEffectIDs.Add(OutEffectId, EGMCEffectAnswerState::Validated);
+
+				FGMASBoundQueueV2ClientAuthEffectOperation Op;
+				Op.EffectClass = EffectClass;
+				Op.EffectID = OutEffectId;
+				Op.EffectData = InitializationData;
+				const int OpID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ClientAuthEffectOperation>(Op);
+				BoundQueueV2.QueueClientOperation(OpID);
+			}
+			else
+			{
+				// Server-owned pawn (e.g. AI): no client→server payload to send.
+				BoundActiveEffectIDs_Add(OutEffectId);
+			}
+			return true;
+		}
 
 	}
 
@@ -2607,7 +2919,38 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				return true;
 			}
 		case EGMCAbilityEffectQueueType::ClientAuth:
-			return false;
+		{
+			// Anti-cheat: every ID must be in the client-auth reserved range.
+			// The client cannot request removal of standard-range (Predicted/ServerAuth) effects.
+			for (const int Id : Ids)
+			{
+				if (Id < ClientAuthEffectIDOffset)
+				{
+					UE_LOG(LogGMCAbilitySystem, Warning,
+						TEXT("[RemoveEffectByIdSafe] ClientAuth remove rejected: ID %d not in client-auth range."), Id);
+					return false;
+				}
+			}
+
+			// Local removal first.
+			for (const int Id : Ids)
+			{
+				if (ActiveEffects.Contains(Id))
+				{
+					RemoveActiveAbilityEffect(ActiveEffects[Id]);
+				}
+			}
+
+			// Forward to the server (skip if we ARE the server).
+			if (!HasAuthority())
+			{
+				FGMASBoundQueueV2ClientAuthRemoveEffectOperation Op;
+				Op.EffectIDs = Ids;
+				const int OpID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ClientAuthRemoveEffectOperation>(Op);
+				BoundQueueV2.QueueClientOperation(OpID);
+			}
+			return true;
+		}
 
 		case EGMCAbilityEffectQueueType::ServerAuthMove:
 		case EGMCAbilityEffectQueueType::ServerAuth:
@@ -2669,7 +3012,7 @@ int32 UGMC_AbilitySystemComponent::GetNumEffectByTag(FGameplayTag InEffectTag){
 
 TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	TArray<const FAttribute*> AllAttributes;
-	
+
 	for (int32 i = 0; i < UnBoundAttributes.Items.Num(); i++){
 		AllAttributes.Add(&UnBoundAttributes.Items[i]);
 	}
@@ -2677,8 +3020,27 @@ TArray<const FAttribute*> UGMC_AbilitySystemComponent::GetAllAttributes() const{
 	for (int32 i = 0; i < BoundAttributes.Attributes.Num(); i++){
 		AllAttributes.Add(&BoundAttributes.Attributes[i]);
 	}
-	
+
 	return AllAttributes;
+}
+
+
+bool UGMC_AbilitySystemComponent::IsClientAuthorizedAbility(TSubclassOf<UGMCAbility> AbilityClass) const
+{
+	if (!AbilityClass)
+	{
+		return false;
+	}
+	return ClientAuthorizedAbilities.Contains(AbilityClass);
+}
+
+bool UGMC_AbilitySystemComponent::IsClientAuthorizedEffect(TSubclassOf<UGMCAbilityEffect> EffectClass) const
+{
+	if (!EffectClass)
+	{
+		return false;
+	}
+	return ClientAuthorizedAbilityEffects.Contains(EffectClass);
 }
 
 const FAttribute* UGMC_AbilitySystemComponent::GetAttributeByTag(FGameplayTag AttributeTag) const
@@ -2956,6 +3318,14 @@ bool UGMC_AbilitySystemComponent::IsReplayingForGMASLogic() const
 	if (bForceReplayingForTest) { return true; }
 #endif
 	return GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
+}
+
+bool UGMC_AbilitySystemComponent::IsAuthorityForGMASLogic() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceAuthorityForTest) { return true; }
+#endif
+	return HasAuthority();
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

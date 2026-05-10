@@ -170,6 +170,16 @@ public:
 	// Sets default values for this component's properties
 	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
+	// Client-auth EffectID namespace boundary. Effects applied via the ClientAuth
+	// queue type are allocated in the [ClientAuthEffectIDOffset, INT32_MAX[ range
+	// to avoid collision with Predicted / ServerAuth IDs (which are derived from
+	// ActionTimer * 100 and stay in [1, ClientAuthEffectIDOffset[).
+	//
+	// Capacity:
+	//   - Standard range : up to ~124 days of continuous ActionTimer
+	//   - Client-auth    : ~1B unique IDs per session
+	static constexpr int32 ClientAuthEffectIDOffset = 0x40000000;
+
 	// Will apply the starting effects and abilities to the component,
 	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
 	// Must be called on the server only
@@ -329,11 +339,38 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	TArray<FGameplayTag> GetActiveTagsByParentTag(const FGameplayTag ParentTag);
 
+	// Whitelist queries — public so tests, Blueprint, and external systems can introspect.
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Client-Auth")
+	bool IsClientAuthorizedAbility(TSubclassOf<UGMCAbility> AbilityClass) const;
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Client-Auth")
+	bool IsClientAuthorizedEffect(TSubclassOf<UGMCAbilityEffect> EffectClass) const;
+
+	// Abilities that the owning client is authoritatively allowed to activate without
+	// server-side ActivationRequiredTags / ActivationBlockedTags validation. The server
+	// still honors BlockedByOtherAbility and Cooldown for runtime coherence.
+	//
+	// All entries MUST have bActivateOnMovementTick = false (validated at runtime via
+	// ensure(); replay would be incoherent otherwise).
+	UPROPERTY(EditDefaultsOnly, Category="GMAS|Client-Auth", meta=(DisplayName="Client-Authorized Abilities"))
+	TArray<TSubclassOf<UGMCAbility>> ClientAuthorizedAbilities;
+
+	// Effect classes that the owning client is authoritatively allowed to apply via
+	// EGMCAbilityEffectQueueType::ClientAuth. The server still honors MustMaintainQuery
+	// and MustHaveTags / MustNotHaveTags during the effect's lifetime.
+	UPROPERTY(EditDefaultsOnly, Category="GMAS|Client-Auth", meta=(DisplayName="Client-Authorized Effects"))
+	TArray<TSubclassOf<UGMCAbilityEffect>> ClientAuthorizedAbilityEffects;
+
 	// Do not call directly on client, go through QueueAbility
 	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false);
 	
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
-	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction = nullptr, const FGameplayTag ActivationTag = FGameplayTag::EmptyTag);
+	// bSkipActivationTagsCheck=true bypasses CheckActivationTags(CDO). Used by the
+	// client-auth path; default false preserves all existing call sites.
+	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility,
+	                        const UInputAction* InputAction = nullptr,
+	                        const FGameplayTag ActivationTag = FGameplayTag::EmptyTag,
+	                        bool bSkipActivationTagsCheck = false);
 
 
 	/**
@@ -421,6 +458,9 @@ public:
 	void CheckUnBoundAttributeChanged();
 
 	int GetNextAvailableEffectID() const;
+	// Allocate an EffectID in the client-auth reserved range. Returns -1 if
+	// ActionTimer is zero (uninitialized component / smoothed listen-server pawn).
+	int GetNextAvailableClientAuthEffectID() const;
 	bool CheckIfEffectIDQueued(int EffectID) const;
 	// int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
 	// int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
@@ -731,6 +771,13 @@ protected:
 	// return true if the ability is allowed to be activated considering active tags
 	virtual bool CheckActivationTags(const UGMCAbility* Ability) const;
 
+	// Reduced activation check used only by the client-auth path. Skips
+	// ActivationRequiredTags, ActivationBlockedTags, and ActivationQuery
+	// (those are user-permission gates the client is allowed to bypass).
+	// Still honors BlockedByOtherAbility, IsAbilityTagBlocked, and active
+	// cooldowns for runtime coherence of the ASC state machine.
+	virtual bool CheckActivationTagsForClientAuth(const UGMCAbility* Ability) const;
+
 	// Effect tags that are granted to the player (bound)
 	FGameplayTagContainer ActiveTags;
 
@@ -742,7 +789,7 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category="Tags")
 	FGameplayTagContainer StartingTags;
-	
+
 	// Returns the matching abilities in the AbilityMap if they have been granted
 	TArray<TSubclassOf<UGMCAbility>> GetGrantedAbilitiesByTag(FGameplayTag AbilityTag);
 	
@@ -776,6 +823,13 @@ private:
 	// itself on the next tick until either the gate opens or the retry budget
 	// is exhausted.
 	void TryRequestActiveEffectsSnapshot();
+
+	// Activate a client-auth ability locally (and forward to server via BoundQueueV2 if
+	// running on a non-authoritative client). Returns true if successfully activated.
+	// Only called from QueueAbility -- direct invocation bypasses the whitelist gate.
+	bool TryActivateClientAuthAbility(TSubclassOf<UGMCAbility> AbilityClass,
+	                                  FGameplayTag InputTag,
+	                                  const UInputAction* InputAction);
 
 	// Array of data objects to initialize the component's ability map
 	UPROPERTY(EditDefaultsOnly, Category="Ability")
@@ -999,6 +1053,46 @@ public:
 	// IsReplayingForGMASLogic() to return true, exercising the production code
 	// path that skips polling/timeout reaping during replay.
 	bool bForceReplayingForTest = false;
+
+	// Test seam for ServerProcessOperation. The function is private so tests cannot
+	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
+	void ServerProcessOperationForTest(const FInstancedStruct& OperationData, bool bFromMovementTick)
+	{
+		ServerProcessOperation(OperationData, bFromMovementTick);
+	}
+
+	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
+	// in the headless harness always report HasAuthority()==false; setting this flag forces
+	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
+	bool bForceAuthorityForTest = false;
+
+	// Test seam: pre-seed BoundQueueV2.OperationData with a valid base struct so that
+	// IsValidGMASOperation() passes during headless-harness ServerProcessOperation calls.
+	// Must be called before ServerProcessOperationForTest when BindReplicationData() has
+	// not been invoked (i.e. in specs where the GMC move loop is not running).
+	void SeedBoundQueueOperationDataForTest(int OperationID)
+	{
+		BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(
+			FGMASBoundQueueV2OperationBaseData{OperationID});
+	}
+
+	// Test seam for TryActivateClientAuthAbility. The function is private so tests cannot
+	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
+	// Allows headless specs to validate the helper without going through QueueAbility's
+	// role gate (ROLE_AutonomousProxy / ROLE_Authority), which fails for orphan components.
+	bool TryActivateClientAuthAbilityForTest(TSubclassOf<UGMCAbility> AbilityClass,
+	                                         FGameplayTag InputTag,
+	                                         const UInputAction* InputAction)
+	{
+		return TryActivateClientAuthAbility(AbilityClass, InputTag, InputAction);
+	}
+
+	// Test seam for CheckActivationTagsForClientAuth. The function is protected so tests
+	// cannot call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
+	bool CheckActivationTagsForClientAuthForTest(const UGMCAbility* Ability) const
+	{
+		return CheckActivationTagsForClientAuth(Ability);
+	}
 private:
 #endif
 
@@ -1008,6 +1102,12 @@ public:
 	// (polling promotion, Pending+timeout reap). Production wraps the GMC's own
 	// CL_IsReplaying(); test builds layer a per-component override on top.
 	bool IsReplayingForGMASLogic() const;
+
+	// Centralized authority check for GMAS server-side dispatch. Production delegates to
+	// AActor::HasAuthority(); test builds layer bForceAuthorityForTest on top so that
+	// ServerProcessOperation can be exercised in the headless harness where orphan
+	// components always report HasAuthority()==false.
+	bool IsAuthorityForGMASLogic() const;
 
 	// Networked FX
 	// Is this ASC locally controlled?

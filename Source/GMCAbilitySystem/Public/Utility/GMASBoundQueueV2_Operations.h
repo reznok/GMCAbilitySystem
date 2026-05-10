@@ -5,6 +5,8 @@
 #include "InstancedStruct.h"
 #include "GMASBoundQueueV2_Operations.generated.h"
 
+class UGMCAbility;
+
 USTRUCT()
 struct GMCABILITYSYSTEM_API FGMASBoundQueueV2OperationBaseData
 {
@@ -44,6 +46,81 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueV2AbilityActivationOperation : public
 
 	UPROPERTY()
 	const UInputAction* InputAction;
+};
+
+// Client-auth ability activation. Sent by clients for abilities present in
+// UGMC_AbilitySystemComponent::ClientAuthorizedAbilities. Server trusts the
+// activation request without running ActivationRequiredTags / ActivationBlockedTags
+// gates, but still honors BlockedByOtherAbility and Cooldown for runtime coherence.
+//
+// UNTRUSTED — treat AbilityClass as untrusted client input. The server WILL verify
+// that the class is whitelisted before accepting. Without that check, a malicious
+// client could activate any granted ability.
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2ClientAuthAbilityActivationOperation : public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
+
+	FGMASBoundQueueV2ClientAuthAbilityActivationOperation()
+		: AbilityClass(nullptr)
+		, InputTag(FGameplayTag::EmptyTag)
+		, InputAction(nullptr)
+	{
+	}
+
+	UPROPERTY()
+	TSubclassOf<UGMCAbility> AbilityClass;
+
+	UPROPERTY()
+	FGameplayTag InputTag;
+
+	UPROPERTY()
+	const UInputAction* InputAction;
+};
+
+// Client-auth effect application. Sent by clients for effects present in
+// UGMC_AbilitySystemComponent::ClientAuthorizedAbilityEffects. Server trusts the
+// apply request without running ApplicationMustHaveTags / ActivationQuery gates,
+// but still honors MustMaintainQuery / MustHave/MustNotHaveTags during the
+// effect's lifetime.
+//
+// UNTRUSTED — server-side whitelist check + EffectID range check are mandatory
+// before apply.
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2ClientAuthEffectOperation : public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
+
+	FGMASBoundQueueV2ClientAuthEffectOperation()
+		: EffectClass(nullptr)
+		, EffectID(-1)
+	{
+	}
+
+	UPROPERTY()
+	TSubclassOf<UGMCAbilityEffect> EffectClass;
+
+	UPROPERTY()
+	int EffectID;
+
+	UPROPERTY()
+	FGMCAbilityEffectData EffectData;
+};
+
+// Client-auth effect removal. Mirror of FGMASBoundQueueV2ClientAuthEffectOperation
+// for the remove path. Server validates that all EffectIDs are in the client-auth
+// reserved range before applying the removal.
+//
+// UNTRUSTED — server MUST verify the IDs were originally allocated through the
+// client-auth path (i.e. >= ClientAuthEffectIDOffset). Without this check, a
+// malicious client could request removal of any active effect by spoofing IDs.
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2ClientAuthRemoveEffectOperation : public FGMASBoundQueueV2OperationBaseData
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TArray<int> EffectIDs;
 };
 
 // Operation sent by clients when they process server-auth events. Technically a client operation.

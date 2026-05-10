@@ -133,7 +133,10 @@ public:
 	// Treat these as unsafe client-supplied data
 	TArray<UScriptStruct*> ValidClientInputOperationTypes = {
 		FGMASBoundQueueV2AbilityActivationOperation::StaticStruct(),
-		FGMASBoundQueueV2AcknowledgeOperation::StaticStruct()
+		FGMASBoundQueueV2AcknowledgeOperation::StaticStruct(),
+		FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct(),
+		FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct(),
+		FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct()
 	};
 
 	bool IsValidGMASOperation(const FInstancedStruct& Data) const;
