@@ -1010,6 +1010,12 @@ void FGMASBugFixSpec::Define()
 
 		It("Replay-skip gate: polling and timeout reap are both no-ops during replay", [this]()
 		{
+			// Production code logs `Effect '...' Not Confirmed By Server (ID: '...'), Removing...`
+			// at Error severity (GMCAbilityComponent.cpp:1247) when the post-replay timeout
+			// reap fires on the Reapable effect. UE's automation framework auto-fails any
+			// test that produces an undeclared Error log, so we declare the expected one.
+			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+
 			// Production invariant: while CL_IsReplaying() is true (forced here via the
 			// WITH_AUTOMATION_WORKER test seam bForceReplayingForTest), TickActiveEffects
 			// must NOT mutate ProcessedEffectIDs (no Pending → Validated promotion) and must
@@ -1057,9 +1063,14 @@ void FGMASBugFixSpec::Define()
 			TestEqual("Post-replay: Pending promoted to Validated",
 				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied1->EffectData.EffectID)),
 				static_cast<int>(EGMCEffectAnswerState::Validated));
-			TestEqual("Post-replay: Reapable timed out",
-				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(Applied2->EffectData.EffectID)),
-				static_cast<int>(EGMCEffectAnswerState::Timeout));
+			// The Reapable effect transits Pending -> Timeout -> CompletedActiveEffects within
+			// a single TickActiveEffects call. The cleanup loop at GMCAbilityComponent.cpp:1296
+			// then removes its ProcessedEffectIDs entry in the same tick, so checking
+			// FindRef == Timeout would always observe 0 (Pending default for missing key).
+			// Validate the reap by asserting the entry is GONE rather than testing a transient
+			// Timeout state we never observe outside the production code's own scope.
+			TestFalse("Post-replay: Reapable removed from ProcessedEffectIDs (timed out + cleaned)",
+				AbilityComp->GetProcessedEffectIDsForTest().Contains(Applied2->EffectData.EffectID));
 			TestFalse("Post-replay: Reapable removed from ActiveEffects",
 				AbilityComp->GetActiveEffects().Contains(Applied2->EffectData.EffectID));
 
@@ -1417,6 +1428,12 @@ void FGMASBugFixSpec::Define()
 
 		It("Drift: predicted apply with no bound confirmation eventually times out", [this, RunPollingOnce]()
 		{
+			// Production code logs `Effect '...' Not Confirmed By Server (ID: '...'), Removing...`
+			// at Error severity (GMCAbilityComponent.cpp:1247) when the timeout reap fires --
+			// which is exactly what this test exercises. Declare the expected error so the
+			// automation framework doesn't auto-fail on the legitimate diagnostic log.
+			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+
 			// Apply a Predicted effect locally without ever adding the ID to the
 			// bound state — server scenario where the activation never reached the
 			// authoritative side. After ClientGraceTime + tick, the timeout in
@@ -1504,6 +1521,10 @@ void FGMASBugFixSpec::Define()
 
 		It("Partial stack: validated and pending IDs coexist; only validated survive timeout", [this, RunPollingOnce]()
 		{
+			// Production code logs the diagnostic Error when the unvalidated stack member
+			// is reaped -- see Drift test above for the rationale.
+			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+
 			// Two predicted instances (different IDs). Server confirms only one
 			// via the bound state. After timeout window passes, the unconfirmed
 			// one is reaped, the confirmed one stays.
