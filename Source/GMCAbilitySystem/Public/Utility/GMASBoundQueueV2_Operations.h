@@ -130,6 +130,36 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueV2AcknowledgeOperation: public FGMASB
 	GENERATED_BODY()
 };
 
+// Server-broadcasted batch wrapper. Carries N OperationIDs from the server's
+// QueueServerOperation calls in a single client move payload. Built by
+// GenPreLocalMoveExecution when ClientQueuedOperations holds 2+ entries.
+// Sub-payloads remain individually cached in OperationPayloads; the wrapper
+// itself carries no payload (OperationID stays 0).
+//
+// IMPORTANT: NOT in ValidClientInputOperationTypes. ServerProcessOperation
+// must reject this struct if it ever appears in a client move payload --
+// only the server populates this slot, never the client direction.
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2BatchOperation : public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<int32> SubOperationIDs;
+};
+
+// Client-sent batch ack. Confirms N ops the server previously broadcast via
+// FGMASBoundQueueV2BatchOperation. Server iterates AcknowledgedIDs and calls
+// ServerProcessAcknowledgedOperation per ID, removing each from the grace map.
+USTRUCT()
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2BatchAcknowledgeOperation : public FGMASBoundQueueV2OperationBaseData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TArray<int32> AcknowledgedIDs;
+};
+
 
 // Server Auth Operations
 // Operations generated on the server that need to be sync-executed on clients. They are RPC'd to clients.

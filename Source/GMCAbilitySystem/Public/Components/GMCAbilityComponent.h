@@ -1129,6 +1129,12 @@ public:
 			FGMASBoundQueueV2OperationBaseData{OperationID});
 	}
 
+	// Test-only mutable accessor to BoundQueueV2 internals. Lets specs seed
+	// ClientQueuedOperations / OperationPayloads and call drain helpers directly
+	// without exposing the queue to production callers. Returning a reference
+	// keeps the call sites symmetric with how internal functions touch it.
+	FGMASBoundQueueV2& GetBoundQueueV2ForTest() { return BoundQueueV2; }
+
 	// Test seam for TryActivateClientAuthAbility. The function is private so tests cannot
 	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
 	// Allows headless specs to validate the helper without going through QueueAbility's

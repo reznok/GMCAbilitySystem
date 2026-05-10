@@ -1845,6 +1845,49 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 {
 	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return false;
 
+	// Batched dispatch: server broadcast N ops in the same client move payload.
+	// Recurse into each sub-op via a synthetic base wrapper carrying only the
+	// sub-op's OperationID; the inner ProcessOperation looks up the actual
+	// payload from OperationPayloads cache. Per-sub-op AckOp writes to
+	// OperationData are suppressed via bInBatchDispatch (the slot would race);
+	// a single FGMASBoundQueueV2BatchAcknowledgeOperation is written at the end,
+	// carrying every successfully-processed sub-op ID.
+	//
+	// Handled BEFORE the OperationID==0 bail because the wrapper itself carries
+	// no OperationID (sub-IDs live in SubOperationIDs).
+	if (OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchOperation::StaticStruct())
+	{
+		const FGMASBoundQueueV2BatchOperation Batch = OperationData.Get<FGMASBoundQueueV2BatchOperation>();
+		TArray<int32> AckedIDs;
+		AckedIDs.Reserve(Batch.SubOperationIDs.Num());
+
+		BoundQueueV2.bInBatchDispatch = true;
+		for (const int32 SubID : Batch.SubOperationIDs)
+		{
+			if (!BoundQueueV2.HasPayloadByID(SubID)) continue;
+
+			FGMASBoundQueueV2OperationBaseData Wrapper;
+			Wrapper.OperationID = SubID;
+			const FInstancedStruct WrappedSub = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(Wrapper);
+
+			if (ProcessOperation(WrappedSub, bFromMovementTick, bForce))
+			{
+				AckedIDs.Add(SubID);
+			}
+		}
+		BoundQueueV2.bInBatchDispatch = false;
+
+		// Single batch ack on client; on authority no ack to send.
+		if (!HasAuthority() && AckedIDs.Num() > 0)
+		{
+			FGMASBoundQueueV2BatchAcknowledgeOperation Ack;
+			Ack.AcknowledgedIDs = MoveTemp(AckedIDs);
+			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2BatchAcknowledgeOperation>(Ack);
+			return true;
+		}
+		return AckedIDs.Num() > 0;
+	}
+
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 	const int OperationID = BaseData->OperationID;
 
@@ -1877,7 +1920,10 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		}
 
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
-		BoundQueueV2.OperationData  = PayloadData;
+		if (!BoundQueueV2.bInBatchDispatch)
+		{
+			BoundQueueV2.OperationData  = PayloadData;
+		}
 
 		// Diagnostic: log every ability activation that traverses ProcessOperation, including
 		// what the server side does with it. Pair with [ServerOpAccept]/[ServerOpDrop] to
@@ -1938,7 +1984,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		}
 
 		ProcessEffectApplicationFromOperation(Data);
-		if (!HasAuthority())
+		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the effect application
 			BoundQueueV2.OperationData  = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
@@ -1951,13 +1997,13 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2RemoveEffectOperation Data = PayloadData.Get<FGMASBoundQueueV2RemoveEffectOperation>();
 		RemoveEffectByIdSafe(Data.EffectIDs, EGMCAbilityEffectQueueType::Predicted);
-		
-		if (!HasAuthority())
+
+		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the effect application
 			BoundQueueV2.OperationData  = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
-		
+
 		return true;
 	}
 
@@ -1966,7 +2012,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2AddImpulseOperation KBData = PayloadData.Get<FGMASBoundQueueV2AddImpulseOperation>();
 		GMCMovementComponent->AddImpulse(KBData.Impulse, KBData.bVelocityChange);
-		if (!HasAuthority())
+		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the impulse application
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
@@ -1979,7 +2025,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	{
 		const FGMASBoundQueueV2SetActorLocationOperation LocationData = PayloadData.Get<FGMASBoundQueueV2SetActorLocationOperation>();
 		GetOwner()->SetActorLocation(LocationData.Location);
-		if (!HasAuthority())
+		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the location change
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
@@ -1988,7 +2034,10 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	}
 
 	// No valid event found, so nothing to ack. Send a blank.
-	BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(FGMASBoundQueueV2OperationBaseData{});
+	if (!BoundQueueV2.bInBatchDispatch)
+	{
+		BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(FGMASBoundQueueV2OperationBaseData{});
+	}
 	return false;
 }
 
@@ -2080,6 +2129,21 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2AcknowledgeOperation::StaticStruct())
 		{
 			ServerProcessAcknowledgedOperation(BaseData->OperationID, bFromMovementTick);
+			return;
+		}
+
+		// Batched ack: client confirms N server-auth ops in a single payload.
+		// Dispatched per-ID; each lookup runs through the same grace + cache
+		// cleanup path as the single-ack case.
+		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchAcknowledgeOperation::StaticStruct())
+		{
+			const FGMASBoundQueueV2BatchAcknowledgeOperation* BatchAck =
+				OperationData.GetPtr<FGMASBoundQueueV2BatchAcknowledgeOperation>();
+			if (!BatchAck) return;
+			for (const int32 AckID : BatchAck->AcknowledgedIDs)
+			{
+				ServerProcessAcknowledgedOperation(AckID, bFromMovementTick);
+			}
 			return;
 		}
 

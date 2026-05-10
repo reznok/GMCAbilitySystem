@@ -134,6 +134,7 @@ public:
 	TArray<UScriptStruct*> ValidClientInputOperationTypes = {
 		FGMASBoundQueueV2AbilityActivationOperation::StaticStruct(),
 		FGMASBoundQueueV2AcknowledgeOperation::StaticStruct(),
+		FGMASBoundQueueV2BatchAcknowledgeOperation::StaticStruct(),
 		FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct(),
 		FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct(),
 		FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct()
@@ -165,6 +166,13 @@ public:
 	// If the client doesn't acknowledge the operation in time, the server will force it
 	// Map: OperationId -> GracePeriod
 	TMap<int, float> ServerQueuedBoundOperationsGracePeriods;
+
+	// Transient flag set during batch dispatch in ProcessOperation. Suppresses
+	// per-sub-op AckOp writes to OperationData (which is a single bound slot
+	// that would race for the slot if N sub-ops each wrote their own ack).
+	// The final FGMASBoundQueueV2BatchAcknowledgeOperation is written once at
+	// the end of the batch, carrying every successfully-processed sub-op ID.
+	bool bInBatchDispatch = false;
 
 	// Runs checks on the current state of the queue and logs any issues found
 	void CheckValidState() const;

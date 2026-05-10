@@ -72,30 +72,81 @@ void FGMASBoundQueueV2::BindToGMC(UGMC_MovementUtilityCmp* MovementComponent)
 
 void FGMASBoundQueueV2::GenPreLocalMoveExecution()
 {
-	// UE_LOG(LogTemp, Warning, TEXT("OperationDataType: %s"), *OperationData.GetScriptStruct()->GetName());
 	// Client Logic
 	if (GMCMovementComponent->GetNetMode() == NM_Client ||
 		GMCMovementComponent->GetNetMode() == NM_Standalone ||
 		GMCMovementComponent->IsLocallyControlledListenServerPawn() ||
 		GMCMovementComponent->IsLocallyControlledDedicatedServerPawn())
 	{
-		// Get a pending operation
-		if (ClientQueuedOperations.Num() > 0)
-		{
-			const int OperationIDToProcess = ClientQueuedOperations.Pop();
-			if (OperationPayloads.Contains(OperationIDToProcess))
-			{
-				// Replicate the full derived payload (e.g. FGMASBoundQueueV2AbilityActivationOperation
-				// with InputTag) so that ServerProcessOperation->IsValidClientOperation passes
-				// on the receiving end. Sending only the base struct (just OperationID) causes
-				// IsValidClientOperation to return false and the ability is never run server-side.
-				OperationData = OperationPayloads[OperationIDToProcess];
-			}
-		}
-		else
+		if (ClientQueuedOperations.Num() == 0)
 		{
 			OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
+			return;
 		}
+
+		// Batching is only safe for SERVER-BROADCAST ops (positive IDs from
+		// QueueServerOperation/RPCOnServerOperationAdded). Their payloads are
+		// cached on BOTH sides; the client only needs to ack the ID and the
+		// server resolves the payload from its own cache via
+		// ServerProcessAcknowledgedOperation -> GetPayloadByID.
+		//
+		// CLIENT-INITIATED ops (negative IDs from QueueClientOperation: ability
+		// activations, client-auth effects) carry payloads that ONLY the client
+		// has cached. They must ship the FULL payload via OperationData so the
+		// server can dispatch them -- a batch wrapper carrying only IDs would
+		// silently drop them (server's IsValidClientOperation rejects the
+		// wrapper, or ServerProcessAcknowledgedOperation can't find the payload).
+		//
+		// Conservative rule: batch only when EVERY queued ID is positive. A
+		// single negative ID forces fallback to single-slot path, preserving
+		// the legacy one-op-per-move semantics for client-initiated payloads.
+		bool bAllServerBroadcast = true;
+		for (const int OpID : ClientQueuedOperations)
+		{
+			if (OpID <= 0)
+			{
+				bAllServerBroadcast = false;
+				break;
+			}
+		}
+
+		if (!bAllServerBroadcast || ClientQueuedOperations.Num() == 1)
+		{
+			// Single-op fast path (pre-batch behaviour). Replicate the full
+			// derived payload so ServerProcessOperation->IsValidClientOperation
+			// passes on the receiving end -- sending only the base struct
+			// causes the op to be silently dropped server-side.
+			const int OperationIDToProcess = ClientQueuedOperations.Pop();
+			OperationData = OperationPayloads.Contains(OperationIDToProcess)
+				? OperationPayloads[OperationIDToProcess]
+				: FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
+			return;
+		}
+
+		// Multi-op server-broadcast-only path. Drains every queued OperationID
+		// into a single FGMASBoundQueueV2BatchOperation wrapper. Sub-payloads
+		// stay individually cached in OperationPayloads; ProcessOperation looks
+		// them up by ID via the recursive batch dispatch. FIFO order preserves
+		// application ordering visible to the user (LIFO Pop in the single-op
+		// fast path is already an existing quirk, kept as-is for compat).
+		FGMASBoundQueueV2BatchOperation Batch;
+		Batch.SubOperationIDs.Reserve(ClientQueuedOperations.Num());
+		for (const int OpID : ClientQueuedOperations)
+		{
+			if (OperationPayloads.Contains(OpID))
+			{
+				Batch.SubOperationIDs.Add(OpID);
+			}
+		}
+		ClientQueuedOperations.Reset();
+
+		if (Batch.SubOperationIDs.IsEmpty())
+		{
+			OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>();
+			return;
+		}
+
+		OperationData = FInstancedStruct::Make<FGMASBoundQueueV2BatchOperation>(Batch);
 	}
 }
 

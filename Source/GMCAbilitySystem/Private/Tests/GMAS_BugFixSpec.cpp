@@ -1804,6 +1804,97 @@ void FGMASBugFixSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 	});
+
+	// ── Server-auth multi-op batch dispatch ───────────────────────────────────
+	// Validates the BoundQueueV2 batch wrapper path that fixes the multi-effect-
+	// same-frame race where N>1 ops were delayed ~1s via OnServerOperationForced.
+	// See plan_gmas_serverauth_batch.md (or commit message of this fix).
+
+	Describe("ServerAuth multi-op batch dispatch", [this]()
+	{
+		// BeforeEach/AfterEach inherited from the spec-level declarations above
+		// (SetupHarness / TeardownHarness). Re-declaring them here would double
+		// the setup+teardown, which crashes on the second AttrData->RemoveFromRoot()
+		// because the first teardown already nulled the pointer.
+
+		It("GenPreLocalMoveExecution wraps 3 queued ops into a single BatchOperation (FIFO order)", [this]()
+		{
+			FGMASBoundQueueV2ApplyEffectOperation Op;
+			Op.EffectClass = UGMCAbilityEffect::StaticClass();
+
+			Op.EffectID = 100;
+			const int OpID1 = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+			Op.EffectID = 101;
+			const int OpID2 = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+			Op.EffectID = 102;
+			const int OpID3 = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+
+			AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations = { OpID1, OpID2, OpID3 };
+
+			AbilityComp->GetBoundQueueV2ForTest().GenPreLocalMoveExecution();
+
+			TestTrue("OperationData wrapped as BatchOperation",
+				AbilityComp->GetBoundQueueV2ForTest().OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchOperation::StaticStruct());
+
+			const FGMASBoundQueueV2BatchOperation Batch = AbilityComp->GetBoundQueueV2ForTest().OperationData.Get<FGMASBoundQueueV2BatchOperation>();
+			TestEqual("Batch carries 3 sub-IDs", Batch.SubOperationIDs.Num(), 3);
+			TestEqual("FIFO order: first sub-ID is OpID1", Batch.SubOperationIDs[0], OpID1);
+			TestEqual("FIFO order: second sub-ID is OpID2", Batch.SubOperationIDs[1], OpID2);
+			TestEqual("FIFO order: third sub-ID is OpID3", Batch.SubOperationIDs[2], OpID3);
+			TestEqual("ClientQueuedOperations drained", AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Num(), 0);
+		});
+
+		It("GenPreLocalMoveExecution single-op fast path: no batch wrapping", [this]()
+		{
+			FGMASBoundQueueV2ApplyEffectOperation Op;
+			Op.EffectClass = UGMCAbilityEffect::StaticClass();
+			Op.EffectID = 200;
+			const int OpID = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+
+			AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations = { OpID };
+
+			AbilityComp->GetBoundQueueV2ForTest().GenPreLocalMoveExecution();
+
+			TestTrue("OperationData is the raw payload (single-op path preserved)",
+				AbilityComp->GetBoundQueueV2ForTest().OperationData.GetScriptStruct() == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct());
+		});
+
+		It("GenPreLocalMoveExecution empty queue resets OperationData to empty base", [this]()
+		{
+			AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Empty();
+
+			AbilityComp->GetBoundQueueV2ForTest().GenPreLocalMoveExecution();
+
+			TestTrue("OperationData is empty base struct",
+				AbilityComp->GetBoundQueueV2ForTest().OperationData.GetScriptStruct() == FGMASBoundQueueV2OperationBaseData::StaticStruct());
+		});
+
+		It("GenPreLocalMoveExecution with mixed positive+negative IDs falls back to single-slot path", [this]()
+		{
+			// Server-broadcast op (positive ID via MakeOperationData on non-client netmode).
+			FGMASBoundQueueV2ApplyEffectOperation Op;
+			Op.EffectClass = UGMCAbilityEffect::StaticClass();
+			Op.EffectID = 300;
+			const int PosOpID = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+
+			// Synthesize a client-initiated ID (negative). Bypasses MakeOperationData
+			// because we cannot force GetNextOperationID to return negative in test env
+			// (test MoveCmp's GetNetMode() != NM_Client). The fake ID has no cached
+			// payload -- intentional: the routing decision under test depends only on
+			// the queue's sign distribution, not on the popped payload's resolution.
+			const int NegOpID = -42;
+
+			// Queue both: presence of negative ID must force single-slot fallback.
+			AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations = { PosOpID, NegOpID };
+
+			AbilityComp->GetBoundQueueV2ForTest().GenPreLocalMoveExecution();
+
+			TestFalse("Mixed queue must NOT produce a BatchOperation",
+				AbilityComp->GetBoundQueueV2ForTest().OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchOperation::StaticStruct());
+			TestEqual("Single-slot fallback pops one op, leaves the other in queue",
+				AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Num(), 1);
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER
