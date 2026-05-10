@@ -1683,17 +1683,18 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	// Pull actual payload from operation cache
 	FInstancedStruct PayloadData = BoundQueueV2.GetPayloadByID(OperationID);
 
-	// Server only ever processes operations once so it doesn't need them cached
-	if (HasAuthority())
-	{
-		BoundQueueV2.RemovePayloadByID(OperationID);
-	}
-	
 	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
 
-	// Activate Ability
+	// Activate Ability — handled in any tick context (AncillaryTick or PredictionTick),
+	// so consume the cache entry here on the auth side.
 	if (StructType == FGMASBoundQueueV2AbilityActivationOperation::StaticStruct())
 	{
+		// Server only ever processes operations once so it doesn't need them cached
+		if (HasAuthority())
+		{
+			BoundQueueV2.RemovePayloadByID(OperationID);
+		}
+
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		BoundQueueV2.OperationData  = PayloadData;
 
@@ -1711,10 +1712,24 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce);
 	}
 
-	// Everything below happens only during the Prediction tick
+	// Everything below happens only during the Prediction tick (or via the forced
+	// timeout path with bForce=true). Bail BEFORE consuming the cache entry so the
+	// OnServerOperationForced fallback can still find the payload when grace expires —
+	// otherwise multiple ServerAuth ApplyEffect calls in the same frame are silently
+	// dropped: AncillaryTick pops them via GenPreLocalMoveExecution, lands here with
+	// bFromMovementTick=false, used to RemovePayloadByID then return — the grace
+	// timeout later finds an empty cache and skips the broadcast. Net effect: only
+	// one of N chained ServerAuth applies survives the race.
 	if (!bFromMovementTick && !bForce){
 		// BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(FGMASBoundQueueV2OperationBaseData{});
 		return false;
+	}
+
+	// Server only ever processes operations once so it doesn't need them cached.
+	// Done after the prediction-tick guard above to keep the timeout fallback viable.
+	if (HasAuthority())
+	{
+		BoundQueueV2.RemovePayloadByID(OperationID);
 	}
 
 	///////////// Server-Auth Events
