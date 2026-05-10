@@ -208,7 +208,8 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		// data" to itself, so SV_GetLastClientData().OutputState.InstancedStructs
 		// is empty on the first frame, causing an out-of-bounds crash when
 		// GetBoundInstancedStruct tries to access index BI_OperationData.
-		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledListenServerPawn())
+		// ruff: To fix crash when running standalone I changed IsLocallyControlledListenServerPawn to IsLocallyControlledServerPawn
+		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
 			const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
@@ -868,7 +869,8 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 
 	// Same listen-server guard as GenAncillaryTick: skip client payload processing
 	// for the locally-controlled host pawn (no client data submitted to itself).
-	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledListenServerPawn())
+	// ruff: To fix crash when running standalone I changed IsLocallyControlledListenServerPawn to IsLocallyControlledServerPawn
+	if (HasAuthority() && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 	{
 		// Server processes client output payloads
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
