@@ -12,6 +12,7 @@
 #include "Attributes/GMCAttributesData.h"
 #include "Diagnostics/GMASReplayBurstSettings.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Settings/GMASNetworkTimingSettings.h"
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformStackWalk.h"
@@ -39,6 +40,7 @@ namespace GMASApplyTrace {
 		TEXT("substring are stack-traced when GMAS.LogApplyTrace is enabled. Empty = match all."),
 		ECVF_Default);
 }
+
 
 
 // Sets default values for this component's properties
@@ -1261,7 +1263,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			!EffectValue->EffectData.bServerAuth
 			&& ProcessedEffectIDs.Contains(Key)
 			&& ProcessedEffectIDs[Key] == EGMCEffectAnswerState::Pending
-			&& EffectValue->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+			&& EffectValue->ClientEffectApplicationTime + GetDefault<UGMASNetworkTimingSettings>()->ClientEffectApplicationTimeout < ActionTimer)
 		{
 			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);
@@ -2136,6 +2138,15 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 	}
 
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+	if (!BaseData)
+	{
+		// Defense-in-depth: IsValidGMASOperation above should already filter this,
+		// but a future caller could bypass the validator. Drop silently and log.
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("[ServerOpDrop] BaseData cast failed despite IsValidGMASOperation pass (struct=%s)"),
+			OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+		return;
+	}
 	const int OperationID = BaseData->OperationID;
 
 	// Empty Operation, Ignore
@@ -2616,7 +2627,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 				return false;
 			}
 
-		
+
 			FGMASBoundQueueV2ApplyEffectOperation EffectActivationData;
 			EffectActivationData.EffectClass = EffectClass;
 			EffectActivationData.EffectData = InitializationData;
@@ -2628,6 +2639,55 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 			OutEffectHandle = OutEffectId;
 			BoundQueueV2.QueueServerOperation(OperationID);
+			return true;
+		}
+
+	case EGMCAbilityEffectQueueType::ServerTurbo:
+		{
+			// Server-only fast path. Apply in the current tick without queuing through BoundQueueV2.
+			// Attribute modifiers reach clients via the standard FAttribute bound binding.
+			// Misuse on a non-qualifying effect would corrupt the bound state, so guards below
+			// fall back to ServerAuth rather than proceeding silently.
+			if (!HasAuthority())
+			{
+				UE_LOG(LogGMCAbilitySystem, Error,
+					TEXT("ServerTurbo apply rejected: %s called on non-authority. ServerTurbo is server-only."),
+					*EffectClass->GetName());
+				return false;
+			}
+
+			const UGMCAbilityEffect* CDO = EffectClass->GetDefaultObject<UGMCAbilityEffect>();
+			const FGMCAbilityEffectData& CDOData = CDO->EffectData;
+
+			const bool bIsInstant         = CDOData.EffectType == EGMASEffectType::Instant;
+			const bool bHasGrantedTags    = !CDOData.GrantedTags.IsEmpty() || !InitializationData.GrantedTags.IsEmpty();
+			const bool bHasGrantedAbil    = !CDOData.GrantedAbilities.IsEmpty() || !InitializationData.GrantedAbilities.IsEmpty();
+
+			if (!bIsInstant || bHasGrantedTags || bHasGrantedAbil)
+			{
+				ensureMsgf(bIsInstant,
+					TEXT("ServerTurbo expects EffectType::Instant on %s — non-Instant effects need the GMC bound queue to tick correctly. Falling back to ServerAuth."),
+					*EffectClass->GetName());
+				ensureMsgf(!bHasGrantedTags,
+					TEXT("ServerTurbo cannot grant tags on %s — GrantedTags route through the bound ActiveTags container and must use ServerAuth. Falling back to ServerAuth."),
+					*EffectClass->GetName());
+				ensureMsgf(!bHasGrantedAbil,
+					TEXT("ServerTurbo cannot grant abilities on %s — relies on the bound ability map. Falling back to ServerAuth."),
+					*EffectClass->GetName());
+
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("ServerTurbo guards failed for %s (Instant=%d GrantedTags=%d GrantedAbil=%d) — falling back to ServerAuth."),
+					*EffectClass->GetName(), bIsInstant ? 1 : 0, bHasGrantedTags ? 1 : 0, bHasGrantedAbil ? 1 : 0);
+
+				return ApplyAbilityEffect(EffectClass, InitializationData,
+					EGMCAbilityEffectQueueType::ServerAuth, OutEffectHandle, OutEffectId, OutEffect);
+			}
+
+			UGMCAbilityEffect* Effect = DuplicateObject(CDO, this);
+			OutEffect = ApplyAbilityEffect(Effect, InitializationData);
+			if (OutEffect == nullptr) { return false; }
+			OutEffectId = OutEffect->EffectData.EffectID;
+			OutEffectHandle = OutEffectId;
 			return true;
 		}
 
@@ -2885,7 +2945,14 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	const bool bIsNetworked    = GetNetMode() != NM_Standalone;
 	const bool bIsTimeDriven   = Effect->EffectData.EffectType == EGMASEffectType::Ticking
 	                          || Effect->EffectData.EffectType == EGMASEffectType::Periodic;
-	const bool bHasGracePeriod = Effect->EffectData.ClientGraceTime > 0.f;
+
+	// Effective grace = per-effect override if explicitly set (>0), else server-wise project default
+	// from UGMASNetworkTimingSettings. Lets designers tune a slow drain effect per-instance while
+	// keeping the global RTT baseline configurable in Project Settings.
+	const float EffectiveGraceTime = Effect->EffectData.ClientGraceTime > 0.f
+		? Effect->EffectData.ClientGraceTime
+		: GetDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime;
+	const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
 
 	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{
@@ -2897,7 +2964,7 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 		// end timestamp, breaking bilateral symmetry.
 		if (Effect->EndAtActionTimer < 0.0)
 		{
-			Effect->EndAtActionTimer = ActionTimer + Effect->EffectData.ClientGraceTime;
+			Effect->EndAtActionTimer = ActionTimer + EffectiveGraceTime;
 		}
 		return;
 	}
@@ -3124,11 +3191,34 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				{
 					return false;
 				}
-				
+
 				FGMASBoundQueueV2RemoveEffectOperation EffectRemovalData;
 				EffectRemovalData.EffectIDs = Ids;
 				const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2RemoveEffectOperation>(EffectRemovalData);
 				BoundQueueV2.QueueServerOperation(OperationID);
+				return true;
+			}
+
+		case EGMCAbilityEffectQueueType::ServerTurbo:
+			{
+				// Symmetric to the ServerTurbo apply path: remove immediately on the server, no queue.
+				// Reached only if a caller explicitly requests it; the typical ServerTurbo apply target
+				// is EffectType::Instant which self-ends on the first Tick, so an external Remove is
+				// usually unnecessary. Kept for defense in depth.
+				if (!HasAuthority())
+				{
+					UE_LOG(LogGMCAbilitySystem, Error,
+						TEXT("ServerTurbo remove rejected on non-authority."));
+					return false;
+				}
+
+				for (const int Id : Ids)
+				{
+					if (ActiveEffects.Contains(Id))
+					{
+						RemoveActiveAbilityEffect(ActiveEffects[Id]);
+					}
+				}
 				return true;
 			}
 	}

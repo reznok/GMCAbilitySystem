@@ -106,9 +106,17 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	double Duration = 0;
 	
-	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
+	// Per-effect override for the bilateral defer window (seconds) applied when a Ticking/Periodic
+	// effect is removed: both client and server arm EndAtActionTimer = ActionTimer + this value so
+	// each side ends on the same logical move tick.
+	//
+	// Sentinel semantics: 0 means "use the project-wide default" from
+	// `UGMASNetworkTimingSettings::DefaultClientGraceTime` (Project Settings → GMC Ability System →
+	// Network Timing, default 0.5s — sized for typical RTT + jitter + one server tick at 30 Hz).
+	// Set this to >0 only when an individual effect needs a different window (e.g. a slow drain
+	// that needs more time for client/server convergence).
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
-	float ClientGraceTime = 1.f;
+	float ClientGraceTime = 0.f;
 
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")

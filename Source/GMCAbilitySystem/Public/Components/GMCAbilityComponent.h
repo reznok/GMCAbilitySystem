@@ -145,7 +145,21 @@ enum class EGMCAbilityEffectQueueType : uint8
 	/// Only valid on server; queued from server and recorded in the GMC move history. Valid even outside of the GMC
 	/// movement cycle. Slower than ServerAuth, only use this if you really need to preserve the effect application in
 	/// the movement history. you almost certainly don't want to use this, but it's here for the sake of completeness.
-	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]")
+	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]"),
+
+	/// Server-only fast path. The effect is applied immediately on the server, in the current tick, WITHOUT going through
+	/// BoundQueueV2. Attribute modifiers reach clients via the standard FAttribute bound binding — no per-effect RPC and
+	/// no client-side effect instance. Saves up to one server tick of latency compared to ServerAuth, which matters for
+	/// damage application at low server tick rates.
+	///
+	/// SAFE ONLY for stateless wrapper effects whose sole job is to push attribute modifiers in a single shot:
+	///   - EffectType must be Instant (no Ticking/Periodic/Persistent — those need the bound cycle to tick deterministically)
+	///   - No GrantedTags (the bound ActiveTags container desyncs if mutated outside the cycle)
+	///   - No GrantedAbilities (relies on the bound ability map)
+	/// If any guard fails at runtime, the apply falls back to ServerAuth and logs a warning rather than corrupting state.
+	///
+	/// Canonical use case: PlayerMaster::Server_AddHealthPoint applying EF_Damage as a one-shot Health modifier.
+	ServerTurbo UMETA(DisplayName="Server Turbo (Instant, Attribute-Only)")
 };
 
 UENUM(BlueprintType)
@@ -996,8 +1010,11 @@ private:
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);
 
-	// Max time a client will predict an effect without it being confirmed by the server before cancelling
-	float ClientEffectApplicationTimeout = 1.f;
+	// Legacy field — runtime reads `UGMASNetworkTimingSettings::ClientEffectApplicationTimeout`
+	// (Project Settings → GMC Ability System → Network Timing, default 0.5s). Kept here for
+	// back-compat with any external code that may still reference it; mutating it has no effect
+	// on the predicted-effect timeout check, which reads the project settings directly.
+	float ClientEffectApplicationTimeout = 0.5f;
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;

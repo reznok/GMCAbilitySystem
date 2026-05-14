@@ -8,13 +8,18 @@
 
 bool FGMASBoundQueueV2::IsValidGMASOperation(const FInstancedStruct& Data) const
 {
-	// Check if the operation is a valid type
-	if (!OperationData.IsValid()) return false;
+	// Validate the *incoming* Data, not this->OperationData (the bound replication slot).
+	// The previous implementation shadowed the parameter and always passed because the
+	// bound slot is permanently initialized in BindToGMC(), letting non-base structs
+	// reach ServerProcessOperation and null-deref on the typed cast.
+	if (!Data.IsValid()) return false;
 
-	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+	const FGMASBoundQueueV2OperationBaseData* BaseData = Data.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 	if (!BaseData)
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationData is not a valid type"));
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("OperationData is not a valid type (struct=%s)"),
+			Data.GetScriptStruct() ? *Data.GetScriptStruct()->GetName() : TEXT("null"));
 		return false;
 	}
 
