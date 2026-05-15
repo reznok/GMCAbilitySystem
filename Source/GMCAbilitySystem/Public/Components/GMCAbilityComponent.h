@@ -977,8 +977,17 @@ private:
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 	
+	// Active cooldowns keyed by ability tag. Value is the absolute expiry
+	// time in ActionTimer units (i.e. ActionTimer at which the cooldown
+	// ends). Storing as expiry-time rather than remaining-duration is
+	// required to be drift-free under GMC client prediction: combined
+	// client moves cause AncillaryTick to fire multiple times per real
+	// frame on the same move, and a remaining-duration model accumulates
+	// extra decrements (observed 2-2.6x faster than wall clock on a
+	// laggy client). Expiry-time is set once and only compared, so
+	// repeated tick fires are harmless.
 	UPROPERTY()
-	TMap<FGameplayTag, float> ActiveCooldowns;
+	TMap<FGameplayTag, double> ActiveCooldowns;
 
 	int GenerateAbilityID() const {return ActionTimer * 100;}
 	

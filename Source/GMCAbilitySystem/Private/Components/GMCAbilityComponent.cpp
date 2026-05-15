@@ -785,20 +785,19 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime)
 {
 	if (AbilityTag == FGameplayTag::EmptyTag) return;
-	
-	if (ActiveCooldowns.Contains(AbilityTag))
-	{
-		ActiveCooldowns[AbilityTag] = CooldownTime;
-		return;
-	}
-	ActiveCooldowns.Add(AbilityTag, CooldownTime);
+
+	// Store absolute expiry in ActionTimer units. See ActiveCooldowns
+	// declaration for why expiry-time (vs remaining-duration) is required.
+	const double ExpiryActionTime = ActionTimer + static_cast<double>(CooldownTime);
+	ActiveCooldowns.FindOrAdd(AbilityTag) = ExpiryActionTime;
 }
 
 float UGMC_AbilitySystemComponent::GetCooldownForAbility(const FGameplayTag AbilityTag) const
 {
-	if (ActiveCooldowns.Contains(AbilityTag))
+	if (const double* Expiry = ActiveCooldowns.Find(AbilityTag))
 	{
-		return ActiveCooldowns[AbilityTag];
+		const double Remaining = *Expiry - ActionTimer;
+		return Remaining > 0.0 ? static_cast<float>(Remaining) : 0.f;
 	}
 	return 0.f;
 }
@@ -1368,12 +1367,18 @@ void UGMC_AbilitySystemComponent::TickAncillaryActiveAbilities(float DeltaTime){
 	}
 }
 
-void UGMC_AbilitySystemComponent::TickActiveCooldowns(float DeltaTime)
+void UGMC_AbilitySystemComponent::TickActiveCooldowns(float /*DeltaTime*/)
 {
+	// Cooldowns store absolute expiry times (ActionTimer units), not
+	// remaining durations — see ActiveCooldowns declaration. This is
+	// purely a garbage-collection pass for entries whose expiry has
+	// passed. DeltaTime is intentionally ignored: ticking this multiple
+	// times per real frame (which GMC's combined-move re-execution does)
+	// no longer accumulates drift, because expiry is a fixed point in
+	// time, not a counter being decremented.
 	for (auto It = ActiveCooldowns.CreateIterator(); It; ++It)
 	{
-		It.Value() -= DeltaTime;
-		if (It.Value() <= 0)
+		if (It.Value() <= ActionTimer)
 		{
 			It.RemoveCurrent();
 		}
