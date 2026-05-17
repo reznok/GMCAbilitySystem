@@ -4,33 +4,37 @@
 
 bool FAttributeClamp::IsSet() const
 {
-	return Min != 0.f || Max != 0.f || MinAttributeTag != FGameplayTag::EmptyTag || MaxAttributeTag != FGameplayTag::EmptyTag;
+	return bClampMin || bClampMax;
 }
 
 float FAttributeClamp::ClampValue(float Value) const
 {
-	// Clamp not set, return Value
-	if (!IsSet()) {return Value;}
+	// Neither bound is active — return Value untouched.
+	if (!bClampMin && !bClampMax) { return Value; }
 
-	// No AbilityComponent, clamp to Min and Max
-	if (!AbilityComponent)
+	float Result = Value;
+
+	if (bClampMin)
 	{
-		return FMath::Clamp(Value, Min, Max);
+		// MinAttributeTag takes priority over the literal Min when an
+		// AbilityComponent is available to resolve it.
+		float MinBound = Min;
+		if (AbilityComponent && MinAttributeTag.IsValid())
+		{
+			MinBound = AbilityComponent->GetAttributeValueByTag(MinAttributeTag);
+		}
+		Result = FMath::Max(Result, MinBound);
 	}
 
-	float AttributeMin = Min;
-	float AttributeMax = Max;
-	
-	// Get MinAttributeTag value
-	if (MinAttributeTag.IsValid())
+	if (bClampMax)
 	{
-		AttributeMin = AbilityComponent->GetAttributeValueByTag(MinAttributeTag);
+		float MaxBound = Max;
+		if (AbilityComponent && MaxAttributeTag.IsValid())
+		{
+			MaxBound = AbilityComponent->GetAttributeValueByTag(MaxAttributeTag);
+		}
+		Result = FMath::Min(Result, MaxBound);
 	}
 
-	if (MaxAttributeTag.IsValid())
-	{
-		AttributeMax = AbilityComponent->GetAttributeValueByTag(MaxAttributeTag);
-	}
-	
-	return FMath::Clamp(Value, AttributeMin, AttributeMax);
+	return Result;
 }

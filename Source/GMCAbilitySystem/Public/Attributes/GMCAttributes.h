@@ -69,10 +69,11 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	{
 		// When bStartFull is set, override InitialValue with the resolved upper clamp. ClampValue
 		// applied to TNumericLimits<float>::Max() returns the literal Clamp.Max or the value of
-		// Clamp.MaxAttributeTag, whichever applies. Two-pass init in UGMC_AbilitySystemComponent
-		// ensures MaxAttributeTag dependencies resolve correctly even if the source attribute is
-		// declared after this one.
-		if (bStartFull && Clamp.IsSet())
+		// Clamp.MaxAttributeTag. This only makes sense when an upper bound actually exists, so it
+		// is gated on bClampMax — without it ClampValue would return TNumericLimits<float>::Max().
+		// Two-pass init in UGMC_AbilitySystemComponent ensures MaxAttributeTag dependencies
+		// resolve correctly even if the source attribute is declared after this one.
+		if (bStartFull && Clamp.bClampMax)
 		{
 			InitialValue = Clamp.ClampValue(TNumericLimits<float>::Max());
 		}

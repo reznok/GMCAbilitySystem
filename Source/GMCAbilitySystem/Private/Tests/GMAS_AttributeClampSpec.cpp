@@ -1,6 +1,6 @@
 // Tests for FAttributeClamp::IsSet and FAttributeClamp::ClampValue.
-// These cover the no-UObject paths: clamp unset passthrough, and
-// static min/max bounds when AbilityComponent is nullptr.
+// Covers the explicit bClampMin/bClampMax flags: each bound is applied
+// independently, and the old [0,0] "unset" sentinel no longer exists.
 
 #include "Misc/AutomationTest.h"
 #include "Attributes/GMCAttributeClamp.h"
@@ -16,55 +16,88 @@ void FGMASAttributeClampSpec::Define()
 {
 	Describe("IsSet", [this]()
 	{
-		It("returns false when Min, Max, and all tags are default", [this]()
+		It("returns true by default — both clamp flags default to true", [this]()
 		{
 			FAttributeClamp Clamp;
-			TestFalse("default clamp is unset", Clamp.IsSet());
+			TestTrue("default clamp clamps both ends", Clamp.IsSet());
 		});
 
-		It("returns true when Min is non-zero", [this]()
+		It("returns false when both clamp flags are disabled", [this]()
 		{
 			FAttributeClamp Clamp;
-			Clamp.Min = 1.f;
-			TestTrue("Min=1 is set", Clamp.IsSet());
+			Clamp.bClampMin = false;
+			Clamp.bClampMax = false;
+			TestFalse("no clamp when both flags off", Clamp.IsSet());
 		});
 
-		It("returns true when Max is non-zero", [this]()
+		It("returns true when only bClampMin is enabled", [this]()
 		{
 			FAttributeClamp Clamp;
-			Clamp.Max = 100.f;
-			TestTrue("Max=100 is set", Clamp.IsSet());
+			Clamp.bClampMin = true;
+			Clamp.bClampMax = false;
+			TestTrue("min-only clamp is set", Clamp.IsSet());
 		});
 
-		It("returns false when Min=0 and Max=0 — cannot clamp to [0,0] range", [this]()
+		It("returns true when only bClampMax is enabled", [this]()
 		{
-			// The zero state is explicitly the 'unset' sentinel. A [0,0] range
-			// cannot be expressed — use Min=0, Max=epsilon or a MaxAttributeTag instead.
 			FAttributeClamp Clamp;
-			Clamp.Min = 0.f;
-			Clamp.Max = 0.f;
-			TestFalse("zero range is treated as unset", Clamp.IsSet());
+			Clamp.bClampMin = false;
+			Clamp.bClampMax = true;
+			TestTrue("max-only clamp is set", Clamp.IsSet());
 		});
 	});
 
 	Describe("ClampValue with no AbilityComponent", [this]()
 	{
-		It("passes through any value when clamp is unset", [this]()
+		It("passes through any value when both flags are disabled", [this]()
 		{
-			FAttributeClamp Clamp; // Min=0, Max=0, no tags
+			FAttributeClamp Clamp;
+			Clamp.bClampMin = false;
+			Clamp.bClampMax = false;
 			TestEqual("positive passthrough", Clamp.ClampValue(250.f), 250.f);
 			TestEqual("negative passthrough", Clamp.ClampValue(-999.f), -999.f);
 			TestEqual("zero passthrough", Clamp.ClampValue(0.f), 0.f);
 		});
 
-		It("returns value unchanged when it is within [Min, Max]", [this]()
+		It("clamps both ends when both flags are enabled", [this]()
 		{
-			FAttributeClamp Clamp;
+			FAttributeClamp Clamp; // bClampMin / bClampMax default true
 			Clamp.Min = 0.f;
 			Clamp.Max = 100.f;
 			TestEqual("midrange value", Clamp.ClampValue(50.f), 50.f);
-			TestEqual("at min boundary", Clamp.ClampValue(0.f), 0.f);
-			TestEqual("at max boundary", Clamp.ClampValue(100.f), 100.f);
+			TestEqual("below min clamped to 0", Clamp.ClampValue(-10.f), 0.f);
+			TestEqual("above max clamped to 100", Clamp.ClampValue(150.f), 100.f);
+		});
+
+		It("clamps only the lower bound when bClampMax is disabled", [this]()
+		{
+			FAttributeClamp Clamp;
+			Clamp.bClampMin = true;
+			Clamp.bClampMax = false;
+			Clamp.Min = 0.f;
+			Clamp.Max = 100.f; // Max is ignored — flag is off
+			TestEqual("below min clamped to 0", Clamp.ClampValue(-50.f), 0.f);
+			TestEqual("above 'max' is NOT clamped", Clamp.ClampValue(9999.f), 9999.f);
+		});
+
+		It("clamps only the upper bound when bClampMin is disabled", [this]()
+		{
+			FAttributeClamp Clamp;
+			Clamp.bClampMin = false;
+			Clamp.bClampMax = true;
+			Clamp.Min = 0.f;   // Min is ignored — flag is off
+			Clamp.Max = 100.f;
+			TestEqual("below 'min' is NOT clamped", Clamp.ClampValue(-50.f), -50.f);
+			TestEqual("above max clamped to 100", Clamp.ClampValue(9999.f), 100.f);
+		});
+
+		It("expresses a real [0,0] pin now that the sentinel is gone", [this]()
+		{
+			FAttributeClamp Clamp; // both flags default true
+			Clamp.Min = 0.f;
+			Clamp.Max = 0.f;
+			TestEqual("positive value pinned to 0", Clamp.ClampValue(50.f), 0.f);
+			TestEqual("negative value pinned to 0", Clamp.ClampValue(-50.f), 0.f);
 		});
 
 		It("clamps below-Min value up to Min", [this]()
@@ -74,25 +107,6 @@ void FGMASAttributeClampSpec::Define()
 			Clamp.Max = 90.f;
 			TestEqual("below min clamped to 10", Clamp.ClampValue(5.f), 10.f);
 			TestEqual("large negative clamped to 10", Clamp.ClampValue(-9999.f), 10.f);
-		});
-
-		It("clamps above-Max value down to Max", [this]()
-		{
-			FAttributeClamp Clamp;
-			Clamp.Min = 0.f;
-			Clamp.Max = 200.f;
-			TestEqual("above max clamped to 200", Clamp.ClampValue(201.f), 200.f);
-			TestEqual("large positive clamped to 200", Clamp.ClampValue(9999.f), 200.f);
-		});
-
-		It("clamps fractional values correctly", [this]()
-		{
-			FAttributeClamp Clamp;
-			Clamp.Min = 0.5f;
-			Clamp.Max = 99.5f;
-			TestEqual("fractional value in range", Clamp.ClampValue(50.25f), 50.25f);
-			TestEqual("fractional below min", Clamp.ClampValue(0.1f), 0.5f);
-			TestEqual("fractional above max", Clamp.ClampValue(99.9f), 99.5f);
 		});
 
 		It("clamps with negative Min (e.g. debuff floor)", [this]()

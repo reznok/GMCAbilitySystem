@@ -14,14 +14,19 @@ BEGIN_DEFINE_SPEC(FGMASAttributeClampStressSpec,
 	"GMAS.Stress.Clamp",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-	FAttribute MakeClamped(float Init, float Min, float Max) const;
+	FAttribute MakeClamped(float Init, float Min, float Max,
+		bool bClampMin = true, bool bClampMax = true) const;
 	UGMCAbilityEffect* SpawnEffect();
 
 END_DEFINE_SPEC(FGMASAttributeClampStressSpec)
 
-FAttribute FGMASAttributeClampStressSpec::MakeClamped(float Init, float Min, float Max) const
+FAttribute FGMASAttributeClampStressSpec::MakeClamped(float Init, float Min, float Max,
+	bool bClampMin, bool bClampMax) const
 {
-	FAttribute A; A.InitialValue = Init; A.Clamp.Min = Min; A.Clamp.Max = Max; A.Init(); return A;
+	FAttribute A; A.InitialValue = Init;
+	A.Clamp.Min = Min; A.Clamp.Max = Max;
+	A.Clamp.bClampMin = bClampMin; A.Clamp.bClampMax = bClampMax;
+	A.Init(); return A;
 }
 UGMCAbilityEffect* FGMASAttributeClampStressSpec::SpawnEffect()
 {
@@ -182,15 +187,20 @@ void FGMASAttributeClampStressSpec::Define()
 			// With Min>Max, behavior is degenerate; we just ensure it doesn't crash.
 			TestTrue("Does not crash; Value is finite", FMath::IsFinite(A.Value));
 		});
-		It("Both Min and Max = 0 disables clamp (IsSet returns false)", [this]()
+		It("Both flags off disables clamp — value preserved", [this]()
 		{
-			FAttribute A = MakeClamped(50.f, 0.f, 0.f);
+			FAttribute A = MakeClamped(50.f, 0.f, 0.f, /*bClampMin*/ false, /*bClampMax*/ false);
 			TestEqual("Clamp disabled, value preserved", A.Value, 50.f);
 		});
-		It("Min=0 Max=0 with Init=-50: value preserved (clamp inactive)", [this]()
+		It("Both flags off with Init=-50: negative value preserved", [this]()
 		{
-			FAttribute A = MakeClamped(-50.f, 0.f, 0.f);
-			TestEqual("Negative survives because clamp not set", A.Value, -50.f);
+			FAttribute A = MakeClamped(-50.f, 0.f, 0.f, /*bClampMin*/ false, /*bClampMax*/ false);
+			TestEqual("Negative survives because clamp disabled", A.Value, -50.f);
+		});
+		It("Both flags on with Min=Max=0 pins value to 0", [this]()
+		{
+			FAttribute A = MakeClamped(50.f, 0.f, 0.f); // flags default true
+			TestEqual("Real [0,0] pin is now expressible", A.Value, 0.f);
 		});
 		It("Min=0 Max=positive only: IsSet=true, clamp active", [this]()
 		{
@@ -389,24 +399,29 @@ void FGMASAttributeClampStressSpec::Define()
 	// ─── ClampValue called on FAttributeClamp directly ─────────────────────
 	Describe("FAttributeClamp::ClampValue direct calls", [this]()
 	{
-		It("IsSet false when both 0 and no tags", [this]()
+		It("IsSet false when both flags disabled", [this]()
+		{
+			FAttributeClamp C; C.bClampMin = false; C.bClampMax = false;
+			TestFalse("Clamp disabled when both flags off", C.IsSet());
+		});
+		It("IsSet true by default (both flags default true)", [this]()
 		{
 			FAttributeClamp C;
-			TestFalse("Default clamp not set", C.IsSet());
+			TestTrue("Default clamp is active", C.IsSet());
 		});
-		It("IsSet true when Min set", [this]()
+		It("IsSet true when only bClampMin enabled", [this]()
 		{
-			FAttributeClamp C; C.Min = 10.f;
-			TestTrue("Min activates clamp", C.IsSet());
+			FAttributeClamp C; C.bClampMin = true; C.bClampMax = false;
+			TestTrue("Min-only clamp is active", C.IsSet());
 		});
-		It("IsSet true when Max set", [this]()
+		It("IsSet true when only bClampMax enabled", [this]()
 		{
-			FAttributeClamp C; C.Max = 100.f;
-			TestTrue("Max activates clamp", C.IsSet());
+			FAttributeClamp C; C.bClampMin = false; C.bClampMax = true;
+			TestTrue("Max-only clamp is active", C.IsSet());
 		});
-		It("ClampValue returns input verbatim when not set", [this]()
+		It("ClampValue returns input verbatim when both flags disabled", [this]()
 		{
-			FAttributeClamp C;
+			FAttributeClamp C; C.bClampMin = false; C.bClampMax = false;
 			TestEqual("Pass-through 42", C.ClampValue(42.f), 42.f);
 			TestEqual("Pass-through -1e9", C.ClampValue(-1e9f), -1e9f);
 			TestEqual("Pass-through FLT_MAX", C.ClampValue(FLT_MAX), FLT_MAX);
