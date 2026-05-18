@@ -249,7 +249,7 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 public:
 	EGMASEffectState CurrentState = EGMASEffectState::Initialized;
 
-	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
@@ -290,6 +290,25 @@ public:
 	// Return the effect data struct of targeted effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
+
+	/**
+	 * Static helper: copy the EffectData struct off the given effect class's CDO.
+	 * Returns an empty struct if EffectClass is null (caller's Apply will fall
+	 * back to CDO via FGMCAbilityEffectData::IsValid()==false).
+	 *
+	 * Intended for the "start from CDO + layer per-cast overrides" pattern:
+	 *
+	 *   Get Default Effect Data: GE_Slow
+	 *     → Set Members in Struct (Duration: 5.0)
+	 *       → Apply Ability Effect (InitializationData = struct)
+	 *
+	 * One-node convenience vs the two-step Get Class Defaults + struct field
+	 * extraction. The Apply call's IsValid() check still passes (CDO content
+	 * present), so the modified struct is used — not the CDO again.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects",
+	          meta=(DisplayName="Get Default Effect Data"))
+	static FGMCAbilityEffectData GetDefaultEffectData(TSubclassOf<UGMCAbilityEffect> EffectClass);
 
 	// Return the total duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
