@@ -17,6 +17,16 @@ void UGMCAbilityEffect::PostEditChangeProperty(struct FPropertyChangedEvent& Pro
 }
 #endif
 
+FGMCAbilityEffectData UGMCAbilityEffect::GetDefaultEffectData(TSubclassOf<UGMCAbilityEffect> EffectClass)
+{
+	if (!EffectClass)
+	{
+		return FGMCAbilityEffectData{};
+	}
+	const UGMCAbilityEffect* CDO = EffectClass.GetDefaultObject();
+	return CDO ? CDO->EffectData : FGMCAbilityEffectData{};
+}
+
 void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationData)
 {
 	EffectData = InitializationData;
