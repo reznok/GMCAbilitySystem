@@ -951,6 +951,12 @@ public:
 	// (which overwrites ActionTimer from GMCMovementComponent->GetMoveTimestamp()).
 	void TickActiveEffects(float DeltaTime);
 
+	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
+	void AddImpulse(FVector Impulse, bool bVelChange = false);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
+	void SetActorLocation(FVector Location);
+
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
@@ -990,13 +996,7 @@ private:
 	// Execute an event that is created by the server where execution is synced between server and client
 	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
-	
-	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
-	void AddImpulse(FVector Impulse, bool bVelChange = false);
 
-	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
-	void SetActorLocation(FVector Location);
-	
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 	
