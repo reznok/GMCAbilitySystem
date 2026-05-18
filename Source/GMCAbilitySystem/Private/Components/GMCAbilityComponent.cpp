@@ -963,7 +963,15 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 {
 	if (QueuedTaskData.Num() > 0)
 	{
-		TaskData = QueuedTaskData.Pop();
+		// FIFO. Tasks chained inside a single BP graph push payloads in the
+		// order their tasks were created. The receiving side needs them in
+		// the same order so the dependent task's RunningTasks entry exists
+		// by the time its payload arrives. LIFO (TArray::Pop) reverses the
+		// order, causing the dependent task's payload to arrive before its
+		// own RegisterTask call has run on the remote side → silent dispatch
+		// failure in HandleTaskData (TaskID lookup miss).
+		TaskData = QueuedTaskData[0];
+		QueuedTaskData.RemoveAt(0);
 	}
 	BoundQueueV2.GenPreLocalMoveExecution();
 }
