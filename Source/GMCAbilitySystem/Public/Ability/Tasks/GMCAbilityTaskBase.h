@@ -78,15 +78,25 @@ protected:
 	bool IsClientOrRemoteListenServerPawn() const;
 
 private:
-	// How often client sends heartbeats to server
-	float HeartbeatInterval = 1.f;
+	// How often the client sends heartbeats to the server, in real seconds.
+	double HeartbeatInterval = 1.0;
 
-	// Max time between heartbeats before server cancels task
-	// Aherys: previous value was 0.3f it's maybe a bit too low for harsh network conditions
-	float HeartbeatMaxInterval = 3.f;
-	
-	float ClientLastHeartbeatSentTime = 0.f;
-	float LastHeartbeatReceivedTime = 0.f;
+	// Max real-time gap between heartbeats before the server cancels the task.
+	// Measured against a monotonic real-time clock (FPlatformTime::Seconds), NOT the GMC
+	// ActionTimer: the liveness watchdog must not be distorted by replay rewinds, time
+	// dilation or game-thread hitches — those make the gameplay clock a poor proxy for the
+	// wall-clock liveness this check actually wants. 3s tuned for harsh network conditions
+	// (was 0.3f originally).
+	double HeartbeatMaxInterval = 3.0;
+
+	// Count of heartbeats the server has accepted for this task. Lets the timeout log
+	// distinguish "client never sent one" (0) from "client sent then stalled" (>0).
+	int32 HeartbeatReceivedCount = 0;
+
+	// Real-time clock stamps (FPlatformTime::Seconds) — monotonic and replay-immune.
+	// Client and server each compare only against their own clock, never across machines.
+	double ClientLastHeartbeatSentTime = 0.0;
+	double LastHeartbeatReceivedTime = 0.0;
 
 
 };
