@@ -184,15 +184,23 @@ public:
 	// Sets default values for this component's properties
 	UGMC_AbilitySystemComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	// Client-auth EffectID namespace boundary. Effects applied via the ClientAuth
-	// queue type are allocated in the [ClientAuthEffectIDOffset, INT32_MAX[ range
-	// to avoid collision with Predicted / ServerAuth IDs (which are derived from
-	// ActionTimer * 100 and stay in [1, ClientAuthEffectIDOffset[).
+	// EffectID namespace boundaries. The 31-bit positive ID space is split into THREE disjoint
+	// ranges so the three allocators never collide — critical because Predicted IDs are
+	// client-authoritative (the client predicts, the server adopts the same ActionTimer-derived ID)
+	// while ServerAuth IDs are server-authoritative. Before the split, Predicted and ServerAuth
+	// shared the standard range and could allocate the SAME id within ~1 RTT (same ActionTimer,
+	// independent client/server allocation, local-only dedup) → client/server effect desync.
 	//
-	// Capacity:
-	//   - Standard range : up to ~124 days of continuous ActionTimer
-	//   - Client-auth    : ~1B unique IDs per session
-	static constexpr int32 ClientAuthEffectIDOffset = 0x40000000;
+	//   Predicted/standard : [1,                       ServerAuthEffectIDOffset)   ActionTimer*100
+	//   ServerAuth          : [ServerAuthEffectIDOffset, ClientAuthEffectIDOffset)  ActionTimer*100 + ServerAuthEffectIDOffset
+	//   ClientAuth          : [ClientAuthEffectIDOffset, INT32_MAX]                 ActionTimer*100 + ClientAuthEffectIDOffset
+	//
+	// All ids are ActionTimer*100 (centiseconds), so each range's capacity is time-bound: it is
+	// exhausted only after (range_size / 100) seconds of continuous ActionTimer, independent of
+	// effect count. The positive int32 space is split into three EQUAL thirds → each branch holds
+	// ~715.8M ids ≈ 82.8 days of continuous ActionTimer. A match uses ~0.1%.
+	static constexpr int32 ServerAuthEffectIDOffset = 0x2AAAAAAA; // 715827882   (~ INT32_MAX / 3)
+	static constexpr int32 ClientAuthEffectIDOffset = 0x55555554; // 1431655764  (~ 2 * INT32_MAX / 3)
 
 	// Will apply the starting effects and abilities to the component,
 	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
@@ -518,6 +526,10 @@ public:
 	void CheckUnBoundAttributeChanged();
 
 	int GetNextAvailableEffectID() const;
+	// Allocate an EffectID in the server-auth reserved range [ServerAuthEffectIDOffset,
+	// ClientAuthEffectIDOffset). Keeps server-allocated ServerAuth ids disjoint from the
+	// client-predicted standard range so the two can't collide within an RTT window.
+	int GetNextAvailableServerAuthEffectID() const;
 	// Allocate an EffectID in the client-auth reserved range. Returns -1 if
 	// ActionTimer is zero (uninitialized component / smoothed listen-server pawn).
 	int GetNextAvailableClientAuthEffectID() const;

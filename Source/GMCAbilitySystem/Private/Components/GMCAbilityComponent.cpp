@@ -989,7 +989,7 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 	{
 		FGMASBoundQueueV2ApplyEffectOperation EffectActivationData;
 		EffectActivationData.EffectClass = Effect;
-		EffectActivationData.EffectID = GetNextAvailableEffectID();
+		EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
 		int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 		BoundQueueV2.QueueServerOperation(OperationID);
 	}
@@ -2162,6 +2162,28 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 	}
 	const int OperationID = BaseData->OperationID;
 
+	// Batched ack carries its ids in AcknowledgedIDs and intentionally leaves the base OperationID at
+	// 0, so it MUST be handled before the OperationID==0 bail below. Otherwise every batched
+	// server-auth acknowledgement is silently dropped at that guard, the grace map is never cleared,
+	// and those effects only ever land via the grace-timeout forced drain (~1s late, reverse order).
+	// This mirrors how ProcessOperation handles FGMASBoundQueueV2BatchOperation before its own
+	// OperationID==0 guard. The single-ack path needs no such hoist: it carries a real OperationID.
+	if (OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchAcknowledgeOperation::StaticStruct())
+	{
+		if (BoundQueueV2.IsValidClientOperation(OperationData))
+		{
+			if (const FGMASBoundQueueV2BatchAcknowledgeOperation* BatchAck =
+					OperationData.GetPtr<FGMASBoundQueueV2BatchAcknowledgeOperation>())
+			{
+				for (const int32 AckID : BatchAck->AcknowledgedIDs)
+				{
+					ServerProcessAcknowledgedOperation(AckID, bFromMovementTick);
+				}
+			}
+		}
+		return;
+	}
+
 	// Empty Operation, Ignore
 	if (OperationID == 0) return;
 
@@ -2176,20 +2198,8 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			return;
 		}
 
-		// Batched ack: client confirms N server-auth ops in a single payload.
-		// Dispatched per-ID; each lookup runs through the same grace + cache
-		// cleanup path as the single-ack case.
-		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2BatchAcknowledgeOperation::StaticStruct())
-		{
-			const FGMASBoundQueueV2BatchAcknowledgeOperation* BatchAck =
-				OperationData.GetPtr<FGMASBoundQueueV2BatchAcknowledgeOperation>();
-			if (!BatchAck) return;
-			for (const int32 AckID : BatchAck->AcknowledgedIDs)
-			{
-				ServerProcessAcknowledgedOperation(AckID, bFromMovementTick);
-			}
-			return;
-		}
+		// (Batched ack is handled earlier, before the OperationID==0 guard, since it carries
+		//  OperationID==0 — see the hoisted block above.)
 
 		if (!BoundQueueV2.HasPayloadByID(OperationID))
 		{
@@ -2354,10 +2364,10 @@ void UGMC_AbilitySystemComponent::ServerProcessAcknowledgedOperation(int Operati
 	{
 		return;
 	}
-	
+
 
 	FInstancedStruct PayloadData = BoundQueueV2.GetPayloadByID(OperationID);
-	
+
 	if (ProcessOperation(PayloadData, bFromMovementTick))
 	{
 		BoundQueueV2.ServerAcknowledgeOperation(OperationID);
@@ -2435,13 +2445,41 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	}
 		
 	int NewEffectID = static_cast<int>(ActionTimer * 100);
+	if (NewEffectID >= ServerAuthEffectIDOffset)
+	{
+		// Session has been running long enough that the standard (Predicted) ID range overlaps
+		// with the server-auth reserved range. Fail-fast — silent overlap would let a predicted
+		// id collide with a server-auth id and corrupt dispatch in ServerProcessOperation.
+		UE_LOG(LogGMCAbilitySystem, Fatal,
+			TEXT("[GetNextAvailableEffectID] ActionTimer overflow into server-auth range. "
+			     "ActionTimer=%f -> ID=%d >= Offset=%d. Session too long?"),
+			ActionTimer, NewEffectID, ServerAuthEffectIDOffset);
+	}
+	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
+	{
+		NewEffectID++;
+	}
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), NewEffectID);
+
+	return NewEffectID;
+}
+
+int UGMC_AbilitySystemComponent::GetNextAvailableServerAuthEffectID() const
+{
+	if (ActionTimer == 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("[GetNextAvailableServerAuthEffectID] ActionTimer is 0, cannot generate Effect ID."));
+		return -1;
+	}
+
+	int NewEffectID = static_cast<int>(ActionTimer * 100) + ServerAuthEffectIDOffset;
 	if (NewEffectID >= ClientAuthEffectIDOffset)
 	{
-		// Session has been running long enough that the standard ID range overlaps
-		// with the client-auth reserved range. Fail-fast — silent overlap would corrupt
-		// the client-auth dispatch logic in ServerProcessOperation.
+		// Server-auth range exhausted — would overflow up into the client-auth range. Same
+		// fail-fast policy as the other helpers: a silent overlap corrupts the dispatcher logic.
 		UE_LOG(LogGMCAbilitySystem, Fatal,
-			TEXT("[GetNextAvailableEffectID] ActionTimer overflow into client-auth range. "
+			TEXT("[GetNextAvailableServerAuthEffectID] EffectID overflow into client-auth range. "
 			     "ActionTimer=%f -> ID=%d >= Offset=%d. Session too long?"),
 			ActionTimer, NewEffectID, ClientAuthEffectIDOffset);
 	}
@@ -2449,7 +2487,8 @@ int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
 	{
 		NewEffectID++;
 	}
-	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), NewEffectID);
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose,
+		TEXT("[Server: %hhd] Generated ServerAuth Effect ID: %d"), HasAuthority(), NewEffectID);
 
 	return NewEffectID;
 }
@@ -2644,7 +2683,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			FGMASBoundQueueV2ApplyEffectOperation EffectActivationData;
 			EffectActivationData.EffectClass = EffectClass;
 			EffectActivationData.EffectData = InitializationData;
-			EffectActivationData.EffectID = GetNextAvailableEffectID();
+			EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
 			ReservedEffectIDs.Add(EffectActivationData.EffectID);
 
 			// We return back the Operation ID instead of the Effect ID which isn't great
