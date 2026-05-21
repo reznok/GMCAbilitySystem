@@ -35,7 +35,17 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		// On a dedicated server / remote pawn, PC->GetLocalPlayer() is null, the magnitude check
 		// silently sees 0, and we'd queue a Progress payload server-side that ends the task before
 		// the client's release ever arrives — the task would never be "confirmed" by the server.
-		if (bShouldCheckForReleaseDuringActivation && IsClientOrRemoteListenServerPawn())
+		//
+		// Replay-safety: during a GMC replay the ability re-activates from move history, but the
+		// EnhancedInput read below reflects the LIVE key state (now released), not the state at the
+		// replayed timestamp. Running the EndOnStart path here would end the task — and drop any
+		// persistent effect the ability holds (e.g. a Set on the Speed attribute) — on the client
+		// only, while the server keeps it, yielding a bound-attribute/location divergence and a
+		// replay cascade. The legitimate end is already captured: the original activation queued a
+		// Progress via ClientProgressTask (QueueTaskData), which replays deterministically. So skip
+		// the live poll while replaying.
+		if (bShouldCheckForReleaseDuringActivation && IsClientOrRemoteListenServerPawn()
+			&& !AbilitySystemComponent->IsReplayingForGMASLogic())
 		{
 			FInputActionValue ActionValue = FInputActionValue();
 			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
