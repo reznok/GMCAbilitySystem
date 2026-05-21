@@ -392,7 +392,7 @@ bool UGMCAbility::PreBeginAbility()
 			return false;
 		}
 	}
-	
+
 
 	if (OwnerAbilityComponent->IsAbilityTagBlocked(AbilityTag)) {
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped because Blocked By Other Ability"), *AbilityTag.ToString());

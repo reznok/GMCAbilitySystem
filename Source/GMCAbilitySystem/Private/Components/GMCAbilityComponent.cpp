@@ -1931,16 +1931,29 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		return false; // Empty/Default Operation, Ignore
 	}
 	
-	// Payload data should be in the cache
-	// Possible if it isn't with abilities being double processed anc/movement tick until that's checked later
-	if (!BoundQueueV2.HasPayloadByID(OperationID))
+	// Payload data is normally in the cache. During a client replay (CL_ReplayMoves) the OperationPayloads
+	// cache is empty (cleared on ack) AND it is NOT rewound — but the bound OperationData carries the full
+	// payload for client-initiated ops (single-op path replicates the derived struct; cf. the line below
+	// where OperationData is re-set to PayloadData). Without this fallback the activation is SKIPPED on
+	// replay and its effect is never re-applied -> bound attribute/location divergence -> sustained replay
+	// storm under rapid activate/end spam. Use the carried payload, scoped tightly (replay + client op +
+	// real payload) so the original run, the server, server-broadcast ops (ID>0), acks and batches are
+	// untouched.
+	const bool bCacheHit = BoundQueueV2.HasPayloadByID(OperationID);
+	if (!bCacheHit)
 	{
-		// UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
-		return false;
+		const bool bIsReplaying    = GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
+		const bool bCarriesPayload = OperationData.GetScriptStruct()
+			&& OperationData.GetScriptStruct() != FGMASBoundQueueV2OperationBaseData::StaticStruct();
+		if (!(bIsReplaying && bCarriesPayload && OperationID < 0))
+		{
+			// UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
+			return false;
+		}
 	}
 
-	// Pull actual payload from operation cache
-	FInstancedStruct PayloadData = BoundQueueV2.GetPayloadByID(OperationID);
+	// Pull the payload from the cache, or fall back to the carried bound OperationData on replay.
+	FInstancedStruct PayloadData = bCacheHit ? BoundQueueV2.GetPayloadByID(OperationID) : OperationData;
 
 	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
 
