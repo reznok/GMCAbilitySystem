@@ -2092,15 +2092,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
 
 	// Activate Ability — handled in any tick context (AncillaryTick or PredictionTick),
-	// so consume the cache entry here on the auth side.
+	// so consume the cache entry here on the auth side, but only if ability activation succeeds. 
 	if (StructType == FGMASBoundQueueV2AbilityActivationOperation::StaticStruct())
 	{
-		// Server only ever processes operations once so it doesn't need them cached
-		if (HasAuthority())
-		{
-			BoundQueueV2.RemovePayloadByID(OperationID);
-		}
-
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		if (!BoundQueueV2.bInBatchDispatch)
 		{
@@ -2120,7 +2114,14 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 
 		// Thread the operation ID through so AbilityIDs are operation-derived and identical
 		// on client and server (Data.OperationID was stamped once by the queueing side).
-		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+		bool bSuccess = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+
+		if (HasAuthority() && bSuccess)
+		{
+			BoundQueueV2.RemovePayloadByID(OperationID);
+		}
+
+		return bSuccess;
 	}
 
 	// Everything below happens only during the Prediction tick (or via the forced
