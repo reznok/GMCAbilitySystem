@@ -2111,17 +2111,22 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				OperationID, *Data.InputTag.ToString(),
 				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
 		}
-
+		
 		// Thread the operation ID through so AbilityIDs are operation-derived and identical
 		// on client and server (Data.OperationID was stamped once by the queueing side).
-		bool bSuccess = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+		const bool bActivated = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
 
-		if (HasAuthority() && bSuccess)
+		// The ability can fail if it is running on the irrelevant tick, hence we preserve the payload when necessary.
+		if (HasAuthority())
 		{
-			BoundQueueV2.RemovePayloadByID(OperationID);
+			const bool bPreserveForAncillaryTick = !bActivated && bFromMovementTick;
+			if (!bPreserveForAncillaryTick)
+			{
+				BoundQueueV2.RemovePayloadByID(OperationID);
+			}
 		}
 
-		return bSuccess;
+		return bActivated;
 	}
 
 	// Everything below happens only during the Prediction tick (or via the forced
