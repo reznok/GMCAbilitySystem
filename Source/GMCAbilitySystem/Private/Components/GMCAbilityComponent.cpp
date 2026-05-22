@@ -3020,7 +3020,11 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	const float EffectiveGraceTime = Effect->EffectData.ClientGraceTime > 0.f
 		? Effect->EffectData.ClientGraceTime
 		: GetDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime;
-	const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
+	// TEMP TEST (2026-05-22): grace-time removal defer DISABLED to observe Ticking/Periodic disappear instantly.
+	// RESTORE with: const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
+	// WARNING: while off, a Predicted Remove of a time-driven effect can drift client vs server by ~RTT
+	//          (different tick counts before EndEffect) → "was not valid" chain-replay on bound attributes (Bug #3).
+	const bool bHasGracePeriod = false;
 
 	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{
