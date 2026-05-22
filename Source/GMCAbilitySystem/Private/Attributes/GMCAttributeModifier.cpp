@@ -117,6 +117,34 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 	return 0.f;
 }
 
+bool FGMCAttributeModifier::ResolveConditions(const UGMC_AbilitySystemComponent* ASC)
+{
+	if (Conditions.Num() == 0 || ASC == nullptr) return true;
+
+	// Bound-only view: ActiveTags is GMC-bound (rollback + replayed), so a condition evaluated
+	// here resolves identically on every replayed move. ClientAuthActiveTags is intentionally
+	// excluded — it isn't bound and would make the application non-deterministic under replay.
+	const FGameplayTagContainer& BoundTags = ASC->GetBoundActiveTags();
+	for (const FGMCModifierCondition& Rule : Conditions)
+	{
+		if (Rule.Condition.IsEmpty() || !Rule.Condition.Matches(BoundTags)) continue;
+
+		switch (Rule.Action)
+		{
+		case EGMCModifierConditionAction::Skip:
+			return false; // first match wins -> abort this application
+
+		case EGMCModifierConditionAction::OverrideValue:
+			ValueType           = Rule.ValueType;
+			ModifierValue       = Rule.ModifierValue;
+			ValueAsAttribute    = Rule.ValueAsAttribute;
+			CustomModifierClass = Rule.CustomModifierClass;
+			return true; // first match wins -> apply with the overridden value source
+		}
+	}
+	return true; // no rule matched -> apply with the default value source
+}
+
 void FGMCAttributeModifier::InitModifier(UGMCAbilityEffect* Effect, double InActionTimer, int InApplicationIdx, bool bInRegisterInHistory, float InDeltaTime)
 {
 	if (!Effect)

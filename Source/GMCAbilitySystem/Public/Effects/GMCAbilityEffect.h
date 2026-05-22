@@ -90,6 +90,13 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	bool bNegateEffectAtEnd = false;
 
+	// Persistent only: re-evaluate each modifier's Conditions every tick and refresh its contribution
+	// (a constant buff/debuff that toggles on/off, or swaps its value source, with a tag — without
+	// re-applying the effect). Requires bNegateEffectAtEnd: the modifiers must be temporal/removable,
+	// not baked into RawValue. No effect on Instant/Ticking/Periodic.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Persistent && bNegateEffectAtEnd", EditConditionHides))
+	bool bReevaluateConditionsWhilePersistent = false;
+
 	// Delay before the effect starts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	double Delay = 0;

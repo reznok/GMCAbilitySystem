@@ -105,6 +105,7 @@ bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
 		if (Attribute == nullptr) continue;
 
 		AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
+		if (!AttributeModifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
 		if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
 		{
 			return false;

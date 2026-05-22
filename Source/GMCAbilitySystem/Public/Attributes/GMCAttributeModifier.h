@@ -47,6 +47,48 @@ enum class EGMCAttributeModifierType : uint8
 	AMT_Custom UMETA(DisplayName = "Custom", ToolTip = "Custom modifier class that will be used to calculate the value"),
 };
 
+UENUM(BlueprintType)
+enum class EGMCModifierConditionAction : uint8
+{
+	// Don't apply the modifier for this application (this tick / this instant).
+	Skip          UMETA(DisplayName = "Skip (don't apply)"),
+	// Replace the value SOURCE (Value / Attribute / Custom MMC) for this application.
+	OverrideValue UMETA(DisplayName = "Override value source"),
+};
+
+// A single tag-driven rule attached to a modifier. Evaluated in array order at application
+// time; the first rule whose Condition matches the owner's bound active tags wins.
+USTRUCT(BlueprintType)
+struct FGMCModifierCondition
+{
+	GENERATED_BODY()
+
+	// Evaluated against the owner's BOUND active tags (replay-safe). An empty query never
+	// matches (a conditionless rule is a config error; "always apply" is already the default).
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition")
+	FGameplayTagQuery Condition;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition")
+	EGMCModifierConditionAction Action {EGMCModifierConditionAction::Skip};
+
+	// ---- Payload for OverrideValue (mirrors the modifier's own value-source fields) ----
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition",
+		meta=(EditCondition = "Action == EGMCModifierConditionAction::OverrideValue", EditConditionHides))
+	EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition",
+		meta=(EditCondition = "Action == EGMCModifierConditionAction::OverrideValue && ValueType == EGMCAttributeModifierType::AMT_Value", EditConditionHides))
+	float ModifierValue {0.f};
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition", meta=(Categories="Attribute",
+		EditCondition = "Action == EGMCModifierConditionAction::OverrideValue && ValueType == EGMCAttributeModifierType::AMT_Attribute", EditConditionHides))
+	FGameplayTag ValueAsAttribute;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Condition",
+		meta=(EditCondition = "Action == EGMCModifierConditionAction::OverrideValue && ValueType == EGMCAttributeModifierType::AMT_Custom", EditConditionHides))
+	TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass {nullptr};
+};
+
 USTRUCT(BlueprintType)
 struct FGMCAttributeModifier
 {
@@ -59,6 +101,10 @@ struct FGMCAttributeModifier
 
 		// Return the value to apply to an attribute on calculation.
 		float CalculateModifierValue(const FAttribute& Attribute) const;
+
+		// Returns false when the modifier must be SKIPPED for this application. On a matching
+		// OverrideValue rule, mutates *this in place (value source only). Call AFTER InitModifier.
+		bool ResolveConditions(const UGMC_AbilitySystemComponent* ASC);
 
 		// If isn't ticking, set DeltaTime to 1.f !
 		void InitModifier(UGMCAbilityEffect* Effect, double InActionTimer, int InApplicationIdx, bool bInRegisterInHistory = false, float
@@ -98,6 +144,12 @@ struct FGMCAttributeModifier
 		// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
 		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 		FGameplayTagContainer MetaTags;
+
+		// Ordered conditional rules. Evaluated at application time against the owner's bound active
+		// tags (replay-safe). First rule whose Condition matches wins: Skip aborts the application,
+		// OverrideValue swaps the value source. If no rule matches, the modifier applies as-is.
+		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Conditions")
+		TArray<FGMCModifierCondition> Conditions;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
 		meta=(EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Value", EditConditionHides, DisplayAfter = "ValueType"))

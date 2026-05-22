@@ -109,6 +109,7 @@ void UGMCAbilityEffect::StartEffect()
 		{
 			FGMCAttributeModifier ModCpy = EffectData.Modifiers[i];
 			ModCpy.InitModifier(this, OwnerAbilityComponent->ActionTimer, i, IsEffectModifiersRegisterInHistory(), 1.f);
+			if (!ModCpy.ResolveConditions(OwnerAbilityComponent)) continue; // conditional skip / override
 			OwnerAbilityComponent->ApplyAbilityAttributeModifier(ModCpy);
 			OnAttributeModifierApplication(ModCpy);
 		}
@@ -279,12 +280,36 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 			for (int i = 0; i < EffectData.Modifiers.Num(); i++) {
 				FGMCAttributeModifier Modifier = EffectData.Modifiers[i];
 				Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, i, IsEffectModifiersRegisterInHistory(), DeltaTime);
+				if (!Modifier.ResolveConditions(OwnerAbilityComponent)) continue; // conditional skip / override
 				OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
 				OnAttributeModifierApplication(Modifier);
 			} // End for each modifier
 
 			
 		} // End Ticking
+		else if (EffectData.EffectType == EGMASEffectType::Persistent
+			&& EffectData.bReevaluateConditionsWhilePersistent
+			&& IsEffectModifiersRegisterInHistory())
+		{
+			// Re-evaluate each modifier's Conditions every tick: drop this index's temporal entry
+			// from the previous tick, then re-resolve. Keeps a SINGLE maintained entry — a constant
+			// buff/debuff that toggles on/off (or swaps its value source) with a tag, WITHOUT
+			// accumulating like a Ticking effect. Gated on IsEffectModifiersRegisterInHistory() so we
+			// only ever touch temporal modifiers, never bake into RawValue. The temporal list is
+			// local + non-replicated, so this churn never hits the wire — only the resolved Value does.
+			for (int i = 0; i < EffectData.Modifiers.Num(); i++)
+			{
+				if (const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(EffectData.Modifiers[i].AttributeTag))
+				{
+					Attribute->RemoveTemporalModifier(i, this);
+				}
+				FGMCAttributeModifier Modifier = EffectData.Modifiers[i];
+				Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, i, IsEffectModifiersRegisterInHistory(), 1.f);
+				if (!Modifier.ResolveConditions(OwnerAbilityComponent)) continue; // skip -> contribution stays removed this tick
+				OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
+				OnAttributeModifierApplication(Modifier);
+			}
+		}
 		else if (EffectData.EffectType == EGMASEffectType::Periodic)
 		{
 			
@@ -302,6 +327,7 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 					for (int y = 0; y < EffectData.Modifiers.Num(); y++) {
 						FGMCAttributeModifier Modifier = EffectData.Modifiers[y];
 						Modifier.InitModifier(this, OwnerAbilityComponent->ActionTimer, y, IsEffectModifiersRegisterInHistory(), 1.f);
+						if (!Modifier.ResolveConditions(OwnerAbilityComponent)) continue; // conditional skip / override
 						OwnerAbilityComponent->ApplyAbilityAttributeModifier(Modifier);
 						OnAttributeModifierApplication(Modifier);
 					}
