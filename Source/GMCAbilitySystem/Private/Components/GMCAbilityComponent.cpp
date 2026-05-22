@@ -1934,11 +1934,14 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	// Payload data is normally in the cache. During a client replay (CL_ReplayMoves) the OperationPayloads
 	// cache is empty (cleared on ack) AND it is NOT rewound — but the bound OperationData carries the full
 	// payload for client-initiated ops (single-op path replicates the derived struct; cf. the line below
-	// where OperationData is re-set to PayloadData). Without this fallback the activation is SKIPPED on
-	// replay and its effect is never re-applied -> bound attribute/location divergence -> sustained replay
-	// storm under rapid activate/end spam. Use the carried payload, scoped tightly (replay + client op +
-	// real payload) so the original run, the server, server-broadcast ops (ID>0), acks and batches are
-	// untouched.
+	// where PayloadData falls back to OperationData). Without this fallback a client-op activation is
+	// SKIPPED on replay and its effect is never re-applied -> the replayed move's bound attributes diverge
+	// from the server. This is general replay-correctness for any client-op ability (anything that must
+	// survive replay has to be a self-contained bound var, not a bound-slot + a non-rewound cache lookup);
+	// it is NOT the fix for the walk/sprint-spam replay storm -- that one is move-combine vs server tickrate,
+	// fixed in HumanoidMovementComponent::UpdateSpeed via CL_DoNotCombineNextMove. Use the carried payload,
+	// scoped tightly (replay + client op + real payload) so the original run, the server, server-broadcast
+	// ops (ID>0), acks and batches are untouched.
 	const bool bCacheHit = BoundQueueV2.HasPayloadByID(OperationID);
 	if (!bCacheHit)
 	{
