@@ -241,12 +241,13 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 {
 	GENERATED_BODY()
 
+public:
+	// Public on purpose: GENERATED_BODY() resets access to private, which silently made this
+	// override private and broke Super::PostEditChangeProperty() calls in derived classes
+	// (C2248). UObject declares it public — keep the same visibility.
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
-	
-
-public:
 	EGMASEffectState CurrentState = EGMASEffectState::Initialized;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GMCAbilitySystem")

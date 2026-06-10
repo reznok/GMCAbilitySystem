@@ -287,17 +287,24 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 		} // End Ticking
 		else if (EffectData.EffectType == EGMASEffectType::Periodic)
 		{
-			
+			// STATELESS period detection on purpose: the crossing test is a pure function of
+			// (ActionTimer, StartTime, DeltaTime). Per-move windows tile exactly (move N's end
+			// is move N+1's start), so boundaries are counted once and exactly once — and a
+			// client replay re-executes the same moves with the same stored DeltaTimes, so it
+			// recomputes the SAME boundary crossings (bound attributes were rolled back, so
+			// re-applying is the prediction model working as intended). Do NOT introduce
+			// per-effect accumulators here (e.g. pause-time shifting): they would mutate
+			// during replayed ticks without being rolled back and desync client from server.
 			const float CurrentElapsedTime = OwnerAbilityComponent->ActionTimer -  EffectData.StartTime;
 			float PreviousElapsedTime = CurrentElapsedTime - DeltaTime;
 			PreviousElapsedTime = FMath::Max(PreviousElapsedTime, 0.f); // Ensure we don't go negative
 
 			int32 PreviousPeriod = FMath::TruncToInt(PreviousElapsedTime / EffectData.PeriodicInterval);
 			int32 CurrentPeriod =	FMath::TruncToInt(CurrentElapsedTime / EffectData.PeriodicInterval);
-			
+
 			if (CurrentPeriod > PreviousPeriod) {
 				int32 NumTickToApply = CurrentPeriod - PreviousPeriod;
-				
+
 				for (int i = 0; i < NumTickToApply; i++) {
 					for (int y = 0; y < EffectData.Modifiers.Num(); y++) {
 						FGMCAttributeModifier Modifier = EffectData.Modifiers[y];
@@ -312,7 +319,28 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 					PeriodTick();
 				}
 			}
-			
+
+		}
+	}
+	else if (CurrentState == EGMASEffectState::Started
+		&& EffectData.EffectType == EGMASEffectType::Periodic
+		&& (IsPaused() || !AttributeDynamicCondition()))
+	{
+		// Period boundaries crossed while paused (or while the dynamic condition is false)
+		// are DROPPED, not deferred — the schedule stays anchored on StartTime, so the next
+		// application happens at the next absolute boundary after resume. This is a design
+		// constraint, not an oversight: deferring would need a paused-time accumulator,
+		// which cannot be made replay-safe (see the stateless-detection comment above).
+		// Log the drops so balance-affecting pauses are visible instead of silent.
+		const float CurrentElapsedTime = OwnerAbilityComponent->ActionTimer - EffectData.StartTime;
+		const float PreviousElapsedTime = FMath::Max(CurrentElapsedTime - DeltaTime, 0.f);
+		const int32 SkippedTicks = FMath::TruncToInt(CurrentElapsedTime / EffectData.PeriodicInterval)
+			- FMath::TruncToInt(PreviousElapsedTime / EffectData.PeriodicInterval);
+		if (SkippedTicks > 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose,
+				TEXT("Periodic effect %s dropped %d tick(s) while %s (by design — boundaries are not deferred)."),
+				*GetName(), SkippedTicks, IsPaused() ? TEXT("paused") : TEXT("dynamic condition false"));
 		}
 	}
 
