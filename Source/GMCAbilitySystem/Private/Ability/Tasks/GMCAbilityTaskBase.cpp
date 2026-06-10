@@ -13,6 +13,18 @@ void UGMCAbilityTaskBase::Activate()
 	// Seed with a real-time stamp plus one full interval of grace, so a task that activates
 	// just before its first heartbeat round-trip completes is not cancelled prematurely.
 	LastHeartbeatReceivedTime = FPlatformTime::Seconds() + HeartbeatMaxInterval;
+
+	// [TaskDiag] probe: a task registered DURING a client replay is created on the client
+	// ONLY (the server never replays), so the per-ability TaskIDCounter diverges from here
+	// on — every later task on this ability gets mismatched IDs, Progress payloads dispatch
+	// to the wrong/missing task and heartbeats starve the server twin until its watchdog
+	// cancels the ability. This is the smoking gun for replay-induced cuts.
+	if (AbilitySystemComponent.IsValid() && AbilitySystemComponent->IsReplayingForGMASLogic())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("[TaskDiag] Task %s registered DURING replay (TaskID=%d) — client/server TaskID divergence from this point. %s"),
+			*GetClass()->GetName(), TaskID, Ability ? *Ability->GetAbilityCutDiagnostics() : TEXT("<no ability>"));
+	}
 }
 
 void UGMCAbilityTaskBase::EndTaskGMAS()
@@ -37,6 +49,10 @@ void UGMCAbilityTaskBase::Tick(float DeltaTime)
 }
 
 void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
+	// AbilitySystemComponent is a TWeakObjectPtr: during pawn teardown / possession change the
+	// component can die while this task is still registered, and a stale dereference crashes.
+	if (!AbilitySystemComponent.IsValid() || !AbilitySystemComponent->GMCMovementComponent) return;
+
 	// Locally controlled server pawns don't need to send heartbeats
 	if (AbilitySystemComponent->GMCMovementComponent->IsLocallyControlledServerPawn()) return;
 
@@ -63,9 +79,15 @@ void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
 		// Mirror onto LogTemp: the dedicated-server GS log export only ships a fixed category
 		// allowlist (LogTemp included, LogGMCReplication not), so a LogGMCReplication-only line
 		// is invisible in server log dumps. This watchdog is what silently cancels heal-consume.
-		UE_LOG(LogTemp, Error, TEXT("[TaskHeartbeat] Timeout: cancelling ability '%s' (tag '%s') - task %s (TaskID %d), %.2fs since last heartbeat (max %.2f), %d heartbeats received"),
+		// Full task dump appended: the timed-out task is merely the FIRST one to starve —
+		// when the client stops heartbeating, every task starves at once, so what matters is
+		// the whole-ability picture (which tasks had completed, which never progressed,
+		// heartbeat counts per task) plus whether the timed-out task was even still pending.
+		UE_LOG(LogTemp, Error, TEXT("[TaskHeartbeat] Timeout: cancelling ability '%s' (tag '%s') - task %s (TaskID %d, Completed=%d), %.2fs since last heartbeat (max %.2f), %d heartbeats received. %s"),
 		  *Ability->GetName(), *Ability->AbilityTag.ToString(), *GetClass()->GetName(), TaskID,
-		  TimeSinceLastHeartbeat, HeartbeatMaxInterval, HeartbeatReceivedCount);
+		  bTaskCompleted ? 1 : 0,
+		  TimeSinceLastHeartbeat, HeartbeatMaxInterval, HeartbeatReceivedCount,
+		  *Ability->GetAbilityCutDiagnostics());
 		AbilitySystemComponent->OnTaskTimeout.Broadcast(Ability->AbilityTag);
 		Ability->EndAbility();
 		EndTask();
