@@ -430,15 +430,20 @@ public:
 	TArray<TSubclassOf<UGMCAbilityEffect>> ClientAuthorizedAbilityEffects;
 
 	// Do not call directly on client, go through QueueAbility
-	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false);
-	
+	// SourceOperationID: BoundQueueV2 operation that carried this activation (0 = none).
+	// When set, AbilityIDs are derived from it so client and server agree by construction.
+	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false, const int SourceOperationID = 0);
+
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
 	// bSkipActivationTagsCheck=true bypasses CheckActivationTags(CDO). Used by the
 	// client-auth path; default false preserves all existing call sites.
+	// ForcedAbilityID: operation-derived ID shared by client and server (0 = generate
+	// locally from ActionTimer — only safe for activations with no remote twin, e.g. AI).
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility,
 	                        const UInputAction* InputAction = nullptr,
 	                        const FGameplayTag ActivationTag = FGameplayTag::EmptyTag,
-	                        bool bSkipActivationTagsCheck = false);
+	                        bool bSkipActivationTagsCheck = false,
+	                        const int ForcedAbilityID = 0);
 
 
 	/**
@@ -1002,7 +1007,24 @@ private:
 	TMap<FGameplayTag, double> ActiveCooldowns;
 
 	int GenerateAbilityID() const {return ActionTimer * 100;}
-	
+
+	// Derive a client/server-identical AbilityID from a BoundQueueV2 operation. The
+	// OperationID is generated once by the queueing side and travels inside the operation
+	// payload, so both sides read the same value — unlike GenerateAbilityID + the local
+	// collision bump (`while (Contains) ID += 1`), whose result depends on each side's
+	// ActiveAbilities content and diverges under rapid re-activation (observed as paired
+	// confirm-timeout + heartbeat-watchdog kills).
+	// 16 slots per operation: one activation op may activate several granted ability
+	// classes; both sides iterate the granted list in the same order. Slot layout keeps
+	// client (negative) and server (positive) operations in disjoint ranges:
+	// op 1 -> [16..31], op 2 -> [32..47] ; op -1 -> [-16..-31], op -2 -> [-32..-47].
+	// 0 is the "no source operation" sentinel (local ActionTimer generation).
+	static int DeriveAbilityIDFromOperation(const int OperationID, const int ActivationIndex)
+	{
+		return OperationID * 16 + (OperationID < 0 ? -ActivationIndex : ActivationIndex);
+	}
+
+
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
 	void InstantiateAttributes();

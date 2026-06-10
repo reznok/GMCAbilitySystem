@@ -46,8 +46,10 @@ void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 		if (bShouldCheckForPressDuringActivation && IsClientOrRemoteListenServerPawn())
 		{
 			FInputActionValue ActionValue = FInputActionValue();
+			// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
+			// guard the chain instead of dereferencing blindly.
 			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
-			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer())) {
+			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
 				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
 			}
 
@@ -107,6 +109,11 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyPress::GetEnhancedInputC
 
 void UGMCAbilityTask_WaitForInputKeyPress::OnTaskCompleted()
 {
+	// Completion latch BEFORE the broadcast: a re-entrant Completed handler (or a replayed
+	// Progress payload) must see the task as already done, not run the completion twice.
+	if (bTaskCompleted) return;
+	bTaskCompleted = true;
+
 	EndTask();
 	Duration = AbilitySystemComponent->ActionTimer - StartTime;
 	if (!bTimedOut)
@@ -117,7 +124,6 @@ void UGMCAbilityTask_WaitForInputKeyPress::OnTaskCompleted()
 	{
 		TimedOut.Broadcast(Duration);
 	}
-	bTaskCompleted = true;
 }
 
 void UGMCAbilityTask_WaitForInputKeyPress::OnDestroy(bool bInOwnerFinished)

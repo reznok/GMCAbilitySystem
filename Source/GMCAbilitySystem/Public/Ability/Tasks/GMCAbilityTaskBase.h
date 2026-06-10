@@ -61,12 +61,20 @@ public:
 
 	// Called when client requests to progress task. Task must make sure this is handled properly/securely
 	virtual void ProgressTask(FInstancedStruct& TaskData){};
-	
+
 	// Client calling to progress the task forward
 	// Task must make sure this is handled properly
 	virtual void ClientProgressTask();
-	
+
 	virtual void Heartbeat();
+
+	// Diagnostic accessors for the ability-cut instrumentation ([AbilityCut]/[TaskDiag] logs).
+	// Expose internal liveness state so UGMCAbility can dump every task when an ability dies
+	// abnormally. Read-only; no behavior impact.
+	bool IsTaskCompleted() const { return bTaskCompleted; }
+	int32 GetHeartbeatReceivedCount() const { return HeartbeatReceivedCount; }
+	double GetLastHeartbeatReceivedTime() const { return LastHeartbeatReceivedTime; }
+	double GetClientLastHeartbeatSentTime() const { return ClientLastHeartbeatSentTime; }
 
 protected:
 	bool bTaskCompleted;

@@ -529,7 +529,7 @@ TArray<FGameplayTag> UGMC_AbilitySystemComponent::GetBoundActiveTagsByParentTag(
 }
 
 bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction,
-	const bool bFromMovementTick, const bool bForce)
+	const bool bFromMovementTick, const bool bForce, const int SourceOperationID)
 {
 
 	auto GrantedAbilities = GetGrantedAbilitiesByTag(InputTag);
@@ -557,23 +557,48 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 		}
 	}
 	
-	for (const TSubclassOf<UGMCAbility>& ActivatedAbility : GrantedAbilities)
+	// Operation-derived AbilityIDs: both sides iterate the same granted list (bound
+	// replicated tags) in the same order, so (SourceOperationID, index) names the same
+	// logical activation on client and server.
+	for (int ActivationIndex = 0; ActivationIndex < GrantedAbilities.Num(); ActivationIndex++)
 	{
-		TryActivateAbility(ActivatedAbility, InputAction, InputTag);
+		const int ForcedAbilityID = SourceOperationID != 0
+			? DeriveAbilityIDFromOperation(SourceOperationID, ActivationIndex)
+			: 0;
+		TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID);
 	}
 
 	return true;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID)
 {
-	
+
 	if (ActivatedAbility == nullptr) return false;
-	
-	
-	// Generated ID is based on ActionTimer so it always lines up on client/server
-	// Also helps when dealing with replays
-	int AbilityID = GenerateAbilityID();
+
+	int AbilityID;
+	if (ForcedAbilityID != 0)
+	{
+		// Operation-derived ID: shared with the remote side by construction (it travels in
+		// the activation payload). If it's already live, this exact logical activation has
+		// already run here — e.g. a client replay re-delivering the same activation op —
+		// so re-running it would create a duplicate instance the other side doesn't have.
+		AbilityID = ForcedAbilityID;
+		if (ActiveAbilities.Contains(AbilityID))
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s skipped: operation-derived ID %d already active (duplicate delivery/replay)."),
+				*GetNameSafe(ActivatedAbility), AbilityID);
+			return false;
+		}
+	}
+	else
+	{
+		// Fallback for activations with no source operation (server-local: AI, debug).
+		// Generated ID is based on ActionTimer so it tends to line up on client/server,
+		// but it is NOT guaranteed to — paired activations must go through the
+		// operation-derived path above.
+		AbilityID = GenerateAbilityID();
+	}
 
 	const UGMCAbility* AbilityCDO = ActivatedAbility->GetDefaultObject<UGMCAbility>();
 	if (!AbilityCDO->bAllowMultipleInstances)
@@ -591,12 +616,16 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 		return false;
 	}
 
-	// If multiple abilities are activated on the same frame, add 1 to the ID
-	// This should never actually happen as abilities get queued
-	while (ActiveAbilities.Contains(AbilityID)){
-		AbilityID += 1;
+	// Collision bump for the FALLBACK path only. Never for operation-derived IDs: bumping
+	// would silently rename the activation on one side only, desyncing it from its twin
+	// (the historical root cause of paired confirm-timeout + heartbeat-watchdog kills).
+	if (ForcedAbilityID == 0)
+	{
+		while (ActiveAbilities.Contains(AbilityID)){
+			AbilityID += 1;
+		}
 	}
-	
+
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Ability Activation ID: %d"), HasAuthority(), AbilityID);
 	
 	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
@@ -1421,12 +1450,37 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	{
 		ActiveAbilities[AbilityID]->HandleTaskHeartbeat(TaskID);
 	}
+	else
+	{
+		// [TaskDiag] probe: the client is still heartbeating an AbilityID the server no longer
+		// (or never) has. Means the SERVER side ended/diverged first while the client instance
+		// is alive — the reverse of the watchdog scenario. List our live IDs for comparison.
+		// Throttled naturally by the 1/s per-task client send rate.
+		FString LiveIDs;
+		for (const auto& Pair : ActiveAbilities)
+		{
+			LiveIDs += FString::Printf(TEXT("%d(%s) "), Pair.Key, Pair.Value ? *Pair.Value->AbilityTag.ToString() : TEXT("null"));
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("[TaskDiag] Heartbeat for unknown AbilityID=%d (TaskID=%d) — client ability alive but server has no such instance. Server live abilities: %s"),
+			AbilityID, TaskID, *LiveIDs);
+	}
 }
 
 void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int AbilityID)
 {
 	if (ActiveAbilities.Contains(AbilityID))
 	{
+		// [AbilityCut] probe: the server force-ends an ability that is still ACTIVE on this
+		// client — the player-visible "it cut by itself" moment (e.g. server watchdog kill).
+		// An RPC for an already-Ended local instance is routine cleanup and stays quiet.
+		UGMCAbility* LocalAbility = ActiveAbilities[AbilityID];
+		if (LocalAbility && LocalAbility->AbilityState != EAbilityState::Ended)
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[AbilityCut] Server force-ended ability that was still active locally. %s"),
+				*LocalAbility->GetAbilityCutDiagnostics());
+		}
 		ActiveAbilities[AbilityID]->EndAbility();
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Ability: %d"), AbilityID);
 	}
@@ -1668,13 +1722,49 @@ void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 
 
 void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
-	
+
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.IsValid() ? TaskData.Get<FGMCAbilityTaskData>() : FGMCAbilityTaskData{};
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
 		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID) && ActiveAbilities[TaskDataFromInstance.AbilityID]->bActivateOnMovementTick == bFromMovement)
 		{
+			// [TaskDiag] probe: TaskData is GMC-bound as ClientAuth_Input, so a client replay
+			// restores the historical payload of every replayed move and re-enters this
+			// dispatch — ProgressTask has no replay guard and tasks have no completion guard,
+			// so a replay crossing a Progress-carrying move RE-RUNS the BP continuation
+			// (double Completed broadcast). Log every replayed dispatch to catch it in the act.
+			if (IsReplayingForGMASLogic())
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[TaskDiag] Progress payload RE-dispatched during replay (AbilityID=%d TaskID=%d fromMovement=%d). %s"),
+					TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, bFromMovement ? 1 : 0,
+					*ActiveAbilities[TaskDataFromInstance.AbilityID]->GetAbilityCutDiagnostics());
+			}
 			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+		}
+		else if (!ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
+		{
+			// [TaskDiag] probe: a valid Progress payload addressed an AbilityID this side does
+			// not have — the payload is silently lost and the addressed task (on the sender's
+			// side or on our twin instance) will never progress. Fires from both the movement
+			// and ancillary dispatch points, so expect up to two lines per lost payload.
+			// During replay this can also be a historical payload for an already-cleaned
+			// ability — the Replaying flag in the message separates the two cases.
+			FString LiveIDs;
+			for (const auto& Pair : ActiveAbilities)
+			{
+				LiveIDs += FString::Printf(TEXT("%d(%s) "), Pair.Key, Pair.Value ? *Pair.Value->AbilityTag.ToString() : TEXT("null"));
+			}
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[TaskDiag] Progress payload lost: AbilityID=%d (TaskID=%d) not in ActiveAbilities (fromMovement=%d Authority=%d Replaying=%d). Live abilities: %s"),
+				TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, bFromMovement ? 1 : 0,
+				HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0, *LiveIDs);
+			if (HasAuthority())
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("[TaskDiag] Progress payload lost: AbilityID=%d (TaskID=%d) not in ActiveAbilities (fromMovement=%d). Live abilities: %s"),
+					TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, bFromMovement ? 1 : 0, *LiveIDs);
+			}
 		}
 	}
 }
@@ -1753,26 +1843,36 @@ bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
 		return false;
 	}
 
-	// Local activation -- bSkipActivationTagsCheck=true because
-	// CheckActivationTagsForClientAuth already enforced the reduced gate set.
-	const bool bActivated = TryActivateAbility(AbilityClass, InputAction, InputTag,
-		/*bSkipActivationTagsCheck=*/true);
-	if (!bActivated)
-	{
-		return false;
-	}
-
-	// Server-owned pawn? no client->server payload to send.
+	// Server-owned pawn? no client->server payload to send, and no remote twin to pair
+	// with — local ActionTimer-based ID generation is fine.
 	if (HasAuthority())
 	{
-		return true;
+		return TryActivateAbility(AbilityClass, InputAction, InputTag,
+			/*bSkipActivationTagsCheck=*/true);
 	}
 
+	// Build the operation FIRST so the local activation can use the operation-derived
+	// AbilityID — the server's handler derives the same ID from Op.OperationID, which is
+	// what pairs the two instances (heartbeats and task payloads address by AbilityID;
+	// client-auth has no RPCConfirmAbilityActivation to paper over a mismatch).
 	FGMASBoundQueueV2ClientAuthAbilityActivationOperation Op;
 	Op.AbilityClass = AbilityClass;
 	Op.InputTag = InputTag;
 	Op.InputAction = InputAction;
 	const int OpID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ClientAuthAbilityActivationOperation>(Op);
+
+	// Local activation -- bSkipActivationTagsCheck=true because
+	// CheckActivationTagsForClientAuth already enforced the reduced gate set.
+	const bool bActivated = TryActivateAbility(AbilityClass, InputAction, InputTag,
+		/*bSkipActivationTagsCheck=*/true,
+		DeriveAbilityIDFromOperation(OpID, 0));
+	if (!bActivated)
+	{
+		// Don't ship an operation whose local activation failed; drop its cached payload.
+		BoundQueueV2.RemovePayloadByID(OpID);
+		return false;
+	}
+
 	BoundQueueV2.QueueClientOperation(OpID);
 	return true;
 }
@@ -1899,7 +1999,25 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		BoundQueueV2.bInBatchDispatch = true;
 		for (const int32 SubID : Batch.SubOperationIDs)
 		{
-			if (!BoundQueueV2.HasPayloadByID(SubID)) continue;
+			if (!BoundQueueV2.HasPayloadByID(SubID))
+			{
+				// A sub-operation whose payload is missing from the cache (expired, never
+				// delivered) cannot be applied on this side. This used to be a SILENT skip:
+				// the batch still reported success, the op landed on the other side only,
+				// and the resulting state divergence had no trace anywhere. Keep skipping
+				// (nothing to apply) and keep it OUT of the ack list — so the server's
+				// grace-timeout drain still has a chance to force it — but log it loudly.
+				UE_LOG(LogGMCAbilitySystem, Error,
+					TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops, Authority=%d, Replaying=%d)."),
+					SubID, Batch.SubOperationIDs.Num(), HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0);
+				if (HasAuthority())
+				{
+					UE_LOG(LogTemp, Error,
+						TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops)."),
+						SubID, Batch.SubOperationIDs.Num());
+				}
+				continue;
+			}
 
 			FGMASBoundQueueV2OperationBaseData Wrapper;
 			Wrapper.OperationID = SubID;
@@ -1987,7 +2105,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
 		}
 
-		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce);
+		// Thread the operation ID through so AbilityIDs are operation-derived and identical
+		// on client and server (Data.OperationID was stamped once by the queueing side).
+		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
 	}
 
 	// Everything below happens only during the Prediction tick (or via the forced
@@ -2266,6 +2386,24 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				return;
 			}
 
+			// Anti-cheat + idempotency: the client-supplied EffectID must be UNIQUE.
+			// ApplyAbilityEffect ends with ActiveEffects.Add(ID, Effect), which silently
+			// OVERWRITES an existing entry — the old instance is orphaned (its modifiers
+			// never rolled back) while the new one ticks. A malicious client replaying the
+			// same ID could stack orphaned modifiers at will; a duplicate delivery of the
+			// same op would corrupt state the same way by accident.
+			if (ActiveEffects.Contains(Op->EffectID))
+			{
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[ServerProcessOperation] ClientAuth effect %s rejected: EffectID %d already active "
+					     "(duplicate delivery or potential cheat attempt)."),
+					*Op->EffectClass->GetName(), Op->EffectID);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[ServerProcessOperation] ClientAuth effect %s rejected: EffectID %d already active."),
+					*Op->EffectClass->GetName(), Op->EffectID);
+				return;
+			}
+
 			// Apply server-side using the client-supplied EffectID for cross-side coherence.
 			FGMCAbilityEffectData InitData = Op->EffectData;
 			InitData.EffectID = Op->EffectID;
@@ -2346,8 +2484,11 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				return;
 			}
 
+			// Operation-derived ID so the server instance pairs with the client's local
+			// activation (heartbeats and task payloads address abilities by this ID).
 			TryActivateAbility(Op->AbilityClass, Op->InputAction, Op->InputTag,
-				/*bSkipActivationTagsCheck=*/true);
+				/*bSkipActivationTagsCheck=*/true,
+				DeriveAbilityIDFromOperation(Op->OperationID, 0));
 			// No RPCConfirmAbilityActivation -- client trusts the activation by construction.
 			return;
 		}
@@ -2433,22 +2574,34 @@ void UGMC_AbilitySystemComponent::CheckUnBoundAttributeChanged()
 	TArray<FAttribute>& OldAttributes = OldUnBoundAttributes.Items;
 	const TArray<FAttribute>& CurrentAttributes = UnBoundAttributes.Items;
 
-	TMap<FGameplayTag, float*> OldValues;
+	// Two-phase by VALUE: collect changes and sync the old set FIRST, broadcast LAST.
+	// The previous implementation held float* into OldAttributes across the delegate
+	// broadcasts — any handler mutating the unbound attribute set (add/remove) reallocates
+	// the TArray and every remaining pointer dangles. It also iterated the live
+	// CurrentAttributes array while broadcasting, with the same re-entrancy hazard.
+	struct FAttributeChange { FGameplayTag Tag; float OldValue; float NewValue; };
+	TArray<FAttributeChange> Changes;
 
-	// If this mitchmatch, that mean we need to reset the number of attributes
-	
-	for (FAttribute& Attribute : OldAttributes){
-		OldValues.Add(Attribute.Tag, &Attribute.Value);
-	}
-	
-	for (const FAttribute& Attribute : CurrentAttributes){
-		if (OldValues.Contains(Attribute.Tag) && *OldValues[Attribute.Tag] != Attribute.Value){
-			NativeAttributeChangeDelegate.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
-			OnAttributeChanged.Broadcast(Attribute.Tag, *OldValues[Attribute.Tag], Attribute.Value);
-
-			// Update Old Value
-			*OldValues[Attribute.Tag] = Attribute.Value;
+	for (const FAttribute& Attribute : CurrentAttributes)
+	{
+		for (FAttribute& OldAttribute : OldAttributes)
+		{
+			if (OldAttribute.Tag == Attribute.Tag)
+			{
+				if (OldAttribute.Value != Attribute.Value)
+				{
+					Changes.Add({ Attribute.Tag, OldAttribute.Value, Attribute.Value });
+					OldAttribute.Value = Attribute.Value;
+				}
+				break;
+			}
 		}
+	}
+
+	for (const FAttributeChange& Change : Changes)
+	{
+		NativeAttributeChangeDelegate.Broadcast(Change.Tag, Change.OldValue, Change.NewValue);
+		OnAttributeChanged.Broadcast(Change.Tag, Change.OldValue, Change.NewValue);
 	}
 }
 
@@ -3074,17 +3227,26 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByTag(const FGameplay
 
 	if (!Tag.IsValid()) return;
 
-	for (auto& [EffectId, Effect] : ActiveEffects)
+	// Snapshot matching IDs before removing: RemoveEffectByIdSafe can run EndEffect
+	// synchronously, and an OnEffectEnded handler that applies a new effect re-enters
+	// ActiveEffects.Add mid-iteration — mutating the TMap invalidates this loop's iterator.
+	// Same snapshot pattern as RemoveEffectByTagSafe / EffectsMatchingTag.
+	TArray<int> MatchingIds;
+	for (const auto& [EffectId, Effect] : ActiveEffects)
 	{
 		if (IsValid(Effect) && Effect->EffectData.EffectTag.MatchesTag(Tag))
 		{
-			RemoveEffectByIdSafe({ EffectId }, QueueType);
+			MatchingIds.Add(EffectId);
 			if (!bAllInstance) {
-				return;
+				break;
 			}
 		}
 	}
-	
+
+	if (MatchingIds.Num() > 0)
+	{
+		RemoveEffectByIdSafe(MatchingIds, QueueType);
+	}
 }
 
 TArray<int> UGMC_AbilitySystemComponent::EffectsMatchingTag(const FGameplayTag& Tag, int32 NumToRemove) const

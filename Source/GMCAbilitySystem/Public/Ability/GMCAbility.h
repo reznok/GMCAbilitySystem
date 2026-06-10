@@ -59,6 +59,12 @@ public:
 	void RegisterTask(int Id, UGMCAbilityTaskBase* Task) {RunningTasks.Add(Id, Task);}
 	void TickTasks(float DeltaTime);
 	void AncillaryTickTasks(float DeltaTime);
+
+	// Multi-line diagnostic snapshot of this ability and every registered task (state,
+	// completion, heartbeat counters/ages). Built for the [AbilityCut]/[TaskDiag] logs that
+	// fire when an ability dies abnormally — answers "what was still running, what had the
+	// server/client seen, and were we replaying" without needing a debugger attached.
+	FString GetAbilityCutDiagnostics() const;
 	
 	void Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int InAbilityID, const UInputAction* InputAction = nullptr);
 	
