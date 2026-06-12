@@ -681,6 +681,25 @@ void UGMCAbility::BeginAbility()
 		}
 	}
 
+	// Chain: consume the window(s) that admitted this stage. Same queue-type
+	// detection as the FinishEndAbility chain hooks.
+	if (OwnerAbilityComponent && !ChainConsumeWindowTags.IsEmpty())
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType ConsumeQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+		for (const FGameplayTag& WindowTag : ChainConsumeWindowTags)
+		{
+			if (WindowTag.IsValid())
+			{
+				OwnerAbilityComponent->RemoveEffectByTagSafe(WindowTag, -1, ConsumeQueueType);
+			}
+		}
+	}
+
 	if (bApplyCooldownAtAbilityBegin)
 	{
 		CommitAbilityCooldown();
@@ -703,6 +722,32 @@ void UGMCAbility::BeginAbilityEvent_Implementation()
 void UGMCAbility::EndAbility()
 {
 	if (AbilityState != EAbilityState::Ended) {
+		// Chain: grant the next stage's window on NATURAL end only —
+		// CancelAbility skips this on purpose (interrupted swings don't
+		// advance a combo).
+		if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
+		{
+			const bool bInsideGMCTick =
+				(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+				|| OwnerAbilityComponent->IsInAncillaryTick()
+				|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+			const EGMCAbilityEffectQueueType WindowQueueType =
+				bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+
+			FGMCAbilityEffectData WindowData;
+			WindowData.EffectTag = ChainWindowTag;
+			WindowData.GrantedTags.AddTag(ChainWindowTag);
+			// Persistent (not the default Instant — that ends the same frame
+			// and the tag never survives) with a finite Duration.
+			WindowData.EffectType = EGMASEffectType::Persistent;
+			WindowData.Duration = ChainWindowDuration;
+			WindowData.bUniqueByEffectTag = true; // re-grant refreshes, never stacks
+
+			int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
+			OwnerAbilityComponent->ApplyAbilityEffect(
+				UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
+		}
+
 		FinishEndAbility();
 		EndAbilityEvent();
 		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);

@@ -640,15 +640,26 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	// Operation-derived AbilityIDs: both sides iterate the same granted list (bound
 	// replicated tags) in the same order, so (SourceOperationID, index) names the same
 	// logical activation on client and server.
+	//
+	// First-passing-wins: one input press activates exactly one ability.
+	// TryActivateAbility returns false when CheckActivationTags rejects
+	// (required/blocked tags, query) — those fall through to the next
+	// candidate, which is how chain stages share one InputTag. It returns
+	// true once an ability gets past the tag gates (even if PreBeginAbility
+	// later cancels it, e.g. out-of-range PreExecuteCheck) — stop there:
+	// the press was consumed by that ability.
 	for (int ActivationIndex = 0; ActivationIndex < GrantedAbilities.Num(); ActivationIndex++)
 	{
 		const int ForcedAbilityID = SourceOperationID != 0
 			? DeriveAbilityIDFromOperation(SourceOperationID, ActivationIndex)
 			: 0;
-		TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID);
+		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID))
+		{
+			return true;
+		}
 	}
 
-	return true;
+	return false;
 }
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID)
@@ -724,6 +735,9 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	Ability->BlockOtherAbility      = AbilityCDO->BlockOtherAbility;
 	Ability->bBlockAllOtherAbilities = AbilityCDO->bBlockAllOtherAbilities;
 	Ability->BlockAllAllowedTags    = AbilityCDO->BlockAllAllowedTags;
+	Ability->ChainWindowTag         = AbilityCDO->ChainWindowTag;
+	Ability->ChainWindowDuration    = AbilityCDO->ChainWindowDuration;
+	Ability->ChainConsumeWindowTags = AbilityCDO->ChainConsumeWindowTags;
 	Ability->CancelAbilitiesWithTag = AbilityCDO->CancelAbilitiesWithTag;
 	Ability->AbilityDefinition      = AbilityCDO->AbilityDefinition;
 

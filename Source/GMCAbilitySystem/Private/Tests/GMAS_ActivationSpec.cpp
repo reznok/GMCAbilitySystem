@@ -107,6 +107,9 @@ void FGMASActivationSpec::TeardownHarness()
 		CDO->CancelAbilitiesWithTag  = FGameplayTagContainer();
 		CDO->bBlockAllOtherAbilities = false;
 		CDO->BlockAllAllowedTags     = FGameplayTagContainer();
+		CDO->ChainWindowTag          = FGameplayTag();
+		CDO->ChainWindowDuration     = 0.f;
+		CDO->ChainConsumeWindowTags  = FGameplayTagContainer();
 	};
 
 	ResetCDO(GetMutableDefault<UGMAS_TestAbility>());
