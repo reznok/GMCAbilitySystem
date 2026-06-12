@@ -11,10 +11,12 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "Utility/GMASBoundQueueV2.h"
+#include "Utility/GMASNiagaraParams.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
 
 
+class UCameraShakeBase;
 class UNiagaraComponent;
 struct FFXSystemSpawnParameters;
 class UNiagaraSystem;
@@ -29,6 +31,8 @@ DECLARE_MULTICAST_DELEGATE_ThreeParams(FGameplayAttributeChangedNative, const FG
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCustomEvent, FGameplayTag, EventTag, FInstancedStruct, Payload);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
@@ -954,6 +958,29 @@ public:
 	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
 	void AddImpulse(FVector Impulse, bool bVelChange = false);
 
+	/**
+	 * Fire a custom synced event with a tag + arbitrary FInstancedStruct payload.
+	 * Mirrors the AddImpulse path: queues a FGMASBoundQueueV2CustomEventOperation
+	 * via BoundQueueV2, server RPCs to client, both sides apply via the same
+	 * ProcessOperation path and OnCustomEvent delegate, then client acks via
+	 * the standard ack flow. Both sides receive the same EventTag + Payload
+	 * at the same logical GMC move — use for deterministic cross-pawn driven
+	 * motion (knockup, displacement, teleport) where one event with full
+	 * spec data lets both sides simulate the closed-form trajectory locally.
+	 *
+	 * Server-only. Use OnCustomEvent on the receiving ASC to handle.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	void FireCustomEvent(FGameplayTag EventTag, FInstancedStruct Payload);
+
+	/**
+	 * Broadcast on both server and client (owning client) when a CustomEvent
+	 * fires via FireCustomEvent. Subscribers receive the same EventTag +
+	 * Payload at the same logical GMC move on each side.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "GMCAbilitySystem")
+	FOnCustomEvent OnCustomEvent;
+
 	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
 	void SetActorLocation(FVector Location);
 
@@ -1259,16 +1286,28 @@ public:
 	void MC_SpawnParticleSystemAttached(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
 
 		
-	// Spawn a Niagara system at a world location
-	// IsClientPredicted: If true, the system will be spawned on the client immediately. False, the local client will spawn it when the multicast is received
-	// bDelayByGMCSmoothing: If true, the system will be spawned with a delay for SimProxies to match the smoothing delay
+	// Spawn a Niagara system at a world location.
+	// IsClientPredicted: If true, the system spawns on the client immediately.
+	//   False = local client waits for multicast.
+	// bDelayByGMCSmoothing: SimProxies delay spawn by smoothing time to line up.
+	// UserParams: optional array of typed Niagara user-var overrides applied
+	//   on every receiver after spawn (carried through the multicast, so all
+	//   sides apply identical values). Leave empty for the unparameterized
+	//   spawn. Param Name is the user-var leaf name (e.g. "SizeScale").
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
-	UNiagaraComponent* SpawnParticleSystemAtLocation(FFXSystemSpawnParameters SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
+	UNiagaraComponent* SpawnParticleSystemAtLocation(
+		FFXSystemSpawnParameters SpawnParams,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MC_SpawnParticleSystemAtLocation(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
+	void MC_SpawnParticleSystemAtLocation(
+		const FFXSystemSpawnParameters& SpawnParams,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
 
-	
 	// Spawn a Sound at the given location
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
 	void SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
@@ -1276,6 +1315,32 @@ public:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
+
+
+	// Play a world-space camera shake centered at Epicenter. Each receiver
+	// runs UGameplayStatics::PlayWorldCameraShake locally — only viewers
+	// within OuterRadius feel it, scaled by Falloff between Inner and Outer.
+	// Camera shake is cosmetic-only so the multicast just triggers the
+	// local play; no replicated state.
+	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
+	void PlayCameraShakeAtLocation(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		FVector Epicenter,
+		float InnerRadius,
+		float OuterRadius,
+		float Falloff = 1.f,
+		bool bOrientShakeTowardsEpicenter = false,
+		bool bIsClientPredicted = false);
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MC_PlayCameraShakeAtLocation(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		FVector Epicenter,
+		float InnerRadius,
+		float OuterRadius,
+		float Falloff = 1.f,
+		bool bOrientShakeTowardsEpicenter = false,
+		bool bIsClientPredicted = false);
 
 	friend class FGameplayDebuggerCategory_GMCAbilitySystem;
 };

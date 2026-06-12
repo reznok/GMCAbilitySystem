@@ -105,6 +105,8 @@ void FGMASActivationSpec::TeardownHarness()
 		CDO->BlockOtherAbility       = FGameplayTagContainer();
 		CDO->BlockedByOtherAbility   = FGameplayTagContainer();
 		CDO->CancelAbilitiesWithTag  = FGameplayTagContainer();
+		CDO->bBlockAllOtherAbilities = false;
+		CDO->BlockAllAllowedTags     = FGameplayTagContainer();
 	};
 
 	ResetCDO(GetMutableDefault<UGMAS_TestAbility>());
@@ -263,6 +265,93 @@ void FGMASActivationSpec::Define()
 			const bool bResult = AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
 			TestTrue("B activates with no blocker", bResult);
 			TestEqual("B active", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
+		});
+	});
+
+	// ── BlockAllOtherAbilities ────────────────────────────────────────────────
+	// An active ability with bBlockAllOtherAbilities denies every activation
+	// whose AbilityTag does not match BlockAllAllowedTags.  Enforced inside
+	// IsAbilityTagBlocked, so candidates are cancelled in PreBeginAbility
+	// (TryActivateAbility returns true, instance ends up Ended).
+	Describe("BlockAllOtherAbilities", [this]()
+	{
+		It("active block-all ability denies ability B", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+			GetMutableDefault<UGMAS_TestAbilityB>()->bAllowMultipleInstances = true;
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			TestEqual("A is active", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 1);
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B denied by block-all", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 0);
+		});
+
+		It("block-all also denies re-activation of the blocker's own tag family", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+			GetMutableDefault<UGMAS_TestAbility>()->bAllowMultipleInstances = true;
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			TestEqual("second A denied by first A's block-all",
+				AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 1);
+		});
+
+		It("allowlisted tag still activates while block-all is active", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+			GetMutableDefault<UGMAS_TestAbility>()->BlockAllAllowedTags.AddTag(AbilityTagB);
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B admitted via allowlist", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
+		});
+
+		It("allowlist matching is hierarchical (parent tag admits child)", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+			// Parent of GMAS.Test.Ability.Defend admits it via MatchesAny.
+			GetMutableDefault<UGMAS_TestAbility>()->BlockAllAllowedTags.AddTag(
+				FGameplayTag::RequestGameplayTag(TEXT("GMAS.Test.Ability")));
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B admitted via parent tag", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
+		});
+
+		It("B activates again after the block-all ability ends", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+			AbilityComp->EndAbilitiesByTag(AbilityTagA);
+			AbilityComp->GenPredictionTick(0.f); // remove Ended entry from map
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B active after blocker ended", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
+		});
+
+		It("SetBlockAllOtherAbilities(false) opens the gate at runtime", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bBlockAllOtherAbilities = true;
+			GetMutableDefault<UGMAS_TestAbilityB>()->bAllowMultipleInstances = true;
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B denied while gate closed", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 0);
+
+			for (const auto& Pair : AbilityComp->GetActiveAbilities())
+			{
+				if (Pair.Value && Pair.Value->AbilityTag == AbilityTagA)
+				{
+					Pair.Value->SetBlockAllOtherAbilities(false);
+				}
+			}
+
+			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
+			TestEqual("B admitted after runtime toggle", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
 		});
 	});
 
