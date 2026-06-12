@@ -752,6 +752,12 @@ void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 	OwnerAbilityComponent->bJustTeleported = bValue;
 }
 
+void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)
+{
+	bBlockAllOtherAbilities = bBlockAll;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("BlockAllOtherAbilities set to %d on %s"), bBlockAll, *AbilityTag.ToString());
+}
+
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
 {
 	BlockOtherAbilitiesQuery = NewQuery;

@@ -179,6 +179,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void ResetBlockOtherAbility();
 
+	// Live toggle for bBlockAllOtherAbilities, e.g. to open the gate during a
+	// recovery phase after blocking through a windup.
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	virtual void SetBlockAllOtherAbilities(bool bBlockAll);
+
 	// GMC_AbilitySystemComponent that owns this ability
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
@@ -221,6 +226,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
 	// If those ability are active, they will prevent this ability from activating
 	FGameplayTagContainer BlockedByOtherAbility;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
+	// While this ability is active, no other ability may activate unless its
+	// AbilityTag matches BlockAllAllowedTags. Checked in IsAbilityTagBlocked,
+	// so it gates every activation path (normal, client-auth, queue replay).
+	bool bBlockAllOtherAbilities = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
+	// Exceptions to bBlockAllOtherAbilities: candidates whose AbilityTag matches
+	// any of these (hierarchical) may still activate while this ability runs.
+	FGameplayTagContainer BlockAllAllowedTags;
 
 	// Effect classes to apply when this ability ends (whether via EndAbility or CancelAbility).
 	// Each entry is applied via ApplyAbilityEffectShort using a queue type chosen at runtime:
