@@ -1301,6 +1301,19 @@ public:
 		bool bIsClientPredicted = false,
 		bool bDelayByGMCSmoothing = false);
 
+	// Loose-pin convenience over SpawnParticleSystemAtLocation: builds the
+	// FFXSystemSpawnParameters internally (world position, auto-destroy) so
+	// graphs don't need a MakeStruct node for the common location-spawn case.
+	UFUNCTION(BlueprintCallable, Category="GMAS|FX", meta=(AutoCreateRefTerm="UserParams"))
+	UNiagaraComponent* SpawnParticleAtPoint(
+		UFXSystemAsset* SystemTemplate,
+		FVector Location,
+		FRotator Rotation,
+		FVector Scale,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
+
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnParticleSystemAtLocation(
 		const FFXSystemSpawnParameters& SpawnParams,
