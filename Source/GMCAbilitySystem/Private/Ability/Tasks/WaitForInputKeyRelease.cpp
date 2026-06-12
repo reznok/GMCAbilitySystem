@@ -81,7 +81,15 @@ void UGMCAbilityTask_WaitForInputKeyRelease::AncillaryTick(float DeltaTime)
 
 	if (MaxDuration > 0 && Duration >= MaxDuration)
 	{
-		ClientProgressTask();
+		// Progress push only where a queue drain exists (owning client / listen host): on a
+		// dedicated server this re-queued every ancillary tick into QueuedTaskData, which is
+		// never drained for remote pawns — unbounded growth for the remaining ability life.
+		// bTimedOut must still latch server-side so the payload-driven OnTaskCompleted picks
+		// the TimedOut broadcast on both machines.
+		if (IsClientOrRemoteListenServerPawn())
+		{
+			ClientProgressTask();
+		}
 		bTimedOut = true;
 	}
 }
@@ -115,6 +123,16 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 
 	EndTask();
 	Duration = AbilitySystemComponent->ActionTimer - StartTime;
+	// Deterministic timeout decision: the ancillary-tick latch races the payload dispatch
+	// across machines (the server's latch runs AFTER the payload dispatch point, so when the
+	// threshold-crossing move and the payload-carrying move batch into the same server frame,
+	// the server would read a stale bTimedOut=false while the client latched true). Re-derive
+	// from the payload-move ActionTimer, which both machines share, so Completed vs TimedOut
+	// never diverges.
+	if (!bTimedOut && MaxDuration > 0 && Duration >= MaxDuration)
+	{
+		bTimedOut = true;
+	}
 	if (!bTimedOut)
 	{
 		Completed.Broadcast(Duration);
@@ -127,9 +145,8 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
 {
-	Super::OnDestroy(bInOwnerFinished);
-
-	// If the handle is still valid somehow, unbind it.
+	// If the handle is still valid somehow, unbind it. Done BEFORE Super per the engine
+	// contract ("call Super::OnDestroy(bOwnerFinished) as the last thing").
 	if (InputBindingHandle != -1)
 	{
 		if (UInputComponent* const InputComponent = GetValid(GetEnhancedInputComponent()))
@@ -139,6 +156,8 @@ void UGMCAbilityTask_WaitForInputKeyRelease::OnDestroy(bool bInOwnerFinished)
 
 		InputBindingHandle = -1;
 	}
+
+	Super::OnDestroy(bInOwnerFinished);
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& TaskData)

@@ -32,6 +32,19 @@ void UGMCAbilityTaskBase::EndTaskGMAS()
 	EndTask();
 }
 
+void UGMCAbilityTaskBase::OnDestroy(bool bInOwnerFinished)
+{
+	// Unregister BEFORE Super (which marks this object garbage). The value check is mandatory:
+	// a never-activated task still carries the zero-init TaskID of 0, which aliases the first
+	// real registered task — a bare Remove(TaskID) would evict that live task and silence its
+	// heartbeats, recreating the very starvation bug this purge exists to fix.
+	if (Ability && Ability->RunningTasks.FindRef(TaskID) == this)
+	{
+		Ability->RunningTasks.Remove(TaskID);
+	}
+	Super::OnDestroy(bInOwnerFinished);
+}
+
 void UGMCAbilityTaskBase::SetAbilitySystemComponent(UGMC_AbilitySystemComponent* InAbilitySystemComponent)
 {
 	this->AbilitySystemComponent = InAbilitySystemComponent;
@@ -52,6 +65,12 @@ void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
 	// AbilitySystemComponent is a TWeakObjectPtr: during pawn teardown / possession change the
 	// component can die while this task is still registered, and a stale dereference crashes.
 	if (!AbilitySystemComponent.IsValid() || !AbilitySystemComponent->GMCMovementComponent) return;
+
+	// A task that already ended must neither heartbeat nor watchdog: its twin's lifetime is no
+	// longer tied to ours. Without this, a Finished-but-still-registered server task keeps its
+	// watchdog armed while the destroyed client twin no longer heartbeats — the watchdog then
+	// kills a healthy ability on a pure GC-timing race (proven heal-cut bug, 2026-06-12).
+	if (GetState() == EGameplayTaskState::Finished || bTaskCompleted) return;
 
 	// Locally controlled server pawns don't need to send heartbeats
 	if (AbilitySystemComponent->GMCMovementComponent->IsLocallyControlledServerPawn()) return;
@@ -115,6 +134,10 @@ void UGMCAbilityTaskBase::Heartbeat()
 
 bool UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn() const
 {
+	// Null-safe: derived AncillaryTick bodies keep executing after the base early-returns on a
+	// dead component, so this helper must not assume the weak-ptr guard already passed.
+	if (!AbilitySystemComponent.IsValid() || !AbilitySystemComponent->GMCMovementComponent) return false;
+
 	return (AbilitySystemComponent->GetNetMode() != NM_DedicatedServer &&
 		AbilitySystemComponent->GetNetMode() != NM_ListenServer) ||
 		AbilitySystemComponent->GMCMovementComponent->IsLocallyControlledServerPawn();

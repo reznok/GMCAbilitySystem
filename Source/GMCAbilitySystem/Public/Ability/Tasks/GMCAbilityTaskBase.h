@@ -79,6 +79,12 @@ public:
 protected:
 	bool bTaskCompleted;
 
+	// Every end path (EndTask, EndTaskGMAS, watchdog kill, TaskOwnerEnded, ExternalCancel)
+	// funnels through OnDestroy exactly once — the single safe place to unregister from the
+	// owning ability's RunningTasks so a finished task never lingers there as a ghost that
+	// still ticks, heartbeats or watchdogs.
+	virtual void OnDestroy(bool bInOwnerFinished) override;
+
 	/** Task Owner that created us */
 	TWeakObjectPtr<AActor> TaskOwner;
 

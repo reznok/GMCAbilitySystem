@@ -117,6 +117,9 @@ void UGMCAbility::Tick(float DeltaTime)
 	}
 
 	TickTasks(DeltaTime);
+	// A task ending itself mid-pass (or its Completed BP) can have ended the whole ability;
+	// don't fire the BP tick on a dead ability.
+	if (AbilityState == EAbilityState::Ended) return;
 	TickEvent(DeltaTime);
 }
 
@@ -124,22 +127,84 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
+	// [TaskDiag] census: with finished tasks unregistering themselves from RunningTasks, a
+	// server ability whose tasks ALL ended but whose graph never calls EndAbility has zero
+	// task-level liveness coverage left (the old ghost-task watchdog reaped it by accident).
+	// Don't auto-kill — the false-kill cure must not become a new kill path — but make the
+	// leak visible: one line once the ability has been task-less for two watchdog periods.
+	// Server net modes only, remote pawns only (local server pawns never ran the watchdog).
+	if (!bTasklessCensusLogged && TaskIDCounter >= 0 && OwnerAbilityComponent
+		&& (OwnerAbilityComponent->GetNetMode() == NM_DedicatedServer || OwnerAbilityComponent->GetNetMode() == NM_ListenServer)
+		&& OwnerAbilityComponent->GMCMovementComponent
+		&& !OwnerAbilityComponent->GMCMovementComponent->IsLocallyControlledServerPawn())
+	{
+		bool bHasLiveTask = false;
+		for (const TPair<int, UGMCAbilityTaskBase*>& TaskPair : RunningTasks)
+		{
+			if (TaskPair.Value && TaskPair.Value->GetState() != EGameplayTaskState::Finished)
+			{
+				bHasLiveTask = true;
+				break;
+			}
+		}
+		if (bHasLiveTask)
+		{
+			TasklessSinceTime = 0.0;
+		}
+		else
+		{
+			const double Now = FPlatformTime::Seconds();
+			if (TasklessSinceTime == 0.0)
+			{
+				TasklessSinceTime = Now;
+			}
+			else if (Now - TasklessSinceTime > 6.0) // 2x the task watchdog interval
+			{
+				// Neutral wording on purpose: abilities ended externally (cancel-by-tag, effect
+				// removal) legitimately idle task-less — this is coverage info, not an accusation.
+				const FString Diag = GetAbilityCutDiagnostics();
+				UE_LOG(LogGMCAbilitySystem, Warning,
+					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
+					Now - TasklessSinceTime, *Diag);
+				UE_LOG(LogTemp, Warning,
+					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
+					Now - TasklessSinceTime, *Diag);
+				bTasklessCensusLogged = true;
+			}
+		}
+	}
+
 	AncillaryTickTasks(DeltaTime);
+	// The heartbeat watchdog inside AncillaryTickTasks can have ended the whole ability;
+	// don't fire the BP tick on a dead ability.
+	if (AbilityState == EAbilityState::Ended) return;
 	AncillaryTickEvent(DeltaTime);
 }
 
 void UGMCAbility::TickTasks(float DeltaTime)
 {
-	for (auto& [Id, Task] : RunningTasks)
+	// Iterate a snapshot, never the live map: tasks end themselves mid-tick (WaitDelay & co)
+	// and unregister from RunningTasks in OnDestroy, and Completed broadcasts can run BP that
+	// registers NEW tasks — both mutate the map under a live range-for. The per-entry Finished
+	// check covers tasks mass-ended earlier in this same pass (watchdog -> EndAbility).
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksSnapshot;
+	RunningTasks.GenerateValueArray(TasksSnapshot);
+	for (UGMCAbilityTaskBase* Task : TasksSnapshot)
 	{
-		if (Task) Task->Tick(DeltaTime);
+		if (!Task || Task->GetState() == EGameplayTaskState::Finished) continue;
+		Task->Tick(DeltaTime);
 	}
 }
 
 void UGMCAbility::AncillaryTickTasks(float DeltaTime) {
-	for (auto& [Id, Task] : RunningTasks)
+	// Same snapshot rationale as TickTasks — the watchdog inside AncillaryTick can end the
+	// whole ability (mass task unregistration) while this loop is running.
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksSnapshot;
+	RunningTasks.GenerateValueArray(TasksSnapshot);
+	for (UGMCAbilityTaskBase* Task : TasksSnapshot)
 	{
-		if (Task) Task->AncillaryTick(DeltaTime);
+		if (!Task || Task->GetState() == EGameplayTaskState::Finished) continue;
+		Task->AncillaryTick(DeltaTime);
 	}
 }
 
@@ -244,21 +309,33 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 			Task->ProgressTask(TaskData);
 		}
 	}
+	else if (TaskID <= TaskIDCounter)
+	{
+		// TaskIDs are monotonic and never reused, so an ID at or below the counter was issued
+		// here and its task already ended and unregistered — usually a benign late/replayed
+		// re-delivery racing the purge (the payload is correctly ignored either way). Caveat:
+		// a SHIFTED-ID divergence (both sides issued this numeric ID for different logical
+		// tasks) is indistinguishable here — don't rule divergence out on this line alone.
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Progress payload for already-unregistered TaskID=%d ignored (benign end race, Replaying=%d)."),
+			TaskID, OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic() ? 1 : 0);
+	}
 	else
 	{
-		// [TaskDiag] probe: a Progress payload arrived for a TaskID this side never registered
-		// (or already dropped). This is the silent dispatch failure that leaves the other
-		// side's task waiting forever — TaskIDs are independent per-side counters, so any
-		// asymmetric task creation (e.g. a BP branch firing on one side only, or a replay
+		// [TaskDiag] probe: a Progress payload arrived for a TaskID this side NEVER issued
+		// (above our monotonic counter). This is the silent dispatch failure that leaves the
+		// other side's task waiting forever — TaskIDs are independent per-side counters, so
+		// any asymmetric task creation (e.g. a BP branch firing on one side only, or a replay
 		// double-executing a graph) shifts every subsequent ID.
+		const FString Diag = GetAbilityCutDiagnostics();
 		UE_LOG(LogGMCAbilitySystem, Warning,
-			TEXT("[TaskDiag] Progress payload dropped: TaskID=%d not in RunningTasks. %s"),
-			TaskID, *GetAbilityCutDiagnostics());
+			TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+			TaskID, TaskIDCounter, *Diag);
 		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Progress payload dropped: TaskID=%d not in RunningTasks. %s"),
-				TaskID, *GetAbilityCutDiagnostics());
+				TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+				TaskID, TaskIDCounter, *Diag);
 		}
 	}
 }
@@ -269,21 +346,36 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 	{
 		RunningTasks[TaskID]->Heartbeat();
 	}
-	else
+	else if (TaskID <= TaskIDCounter)
 	{
-		// [TaskDiag] probe: the client is heartbeating a TaskID the server doesn't have.
-		// The client-side ability is alive (it sent this) but its task layout diverged from
-		// ours — the matching server task is starving and the watchdog will cancel the
-		// ability within HeartbeatMaxInterval. Throttled naturally by the 1/s send rate.
+		// Heartbeat for a task we issued and already ended/unregistered — the sender's twin
+		// just hasn't ended yet (up to one-way transit + the 1s send cadence). Benign.
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Heartbeat for already-unregistered TaskID=%d ignored (benign end race)."), TaskID);
+	}
+	else if (!WarnedDivergentTaskIDs.Contains(TaskID))
+	{
+		// [TaskDiag] probe: the sender is heartbeating a TaskID this side NEVER issued (above
+		// our monotonic counter) — its task layout diverged from ours. If a real twin was
+		// expected here it is starving and the watchdog will cancel the ability; an APPENDED
+		// extra task (e.g. created client-side during replay) starves nothing and just keeps
+		// beating. Warn once per TaskID — repeats at the 1/s send rate go Verbose below.
+		WarnedDivergentTaskIDs.Add(TaskID);
+		const FString Diag = GetAbilityCutDiagnostics();
 		UE_LOG(LogGMCAbilitySystem, Warning,
-			TEXT("[TaskDiag] Heartbeat for unknown TaskID=%d. %s"),
-			TaskID, *GetAbilityCutDiagnostics());
+			TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+			TaskID, TaskIDCounter, *Diag);
 		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
 		{
 			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Heartbeat for unknown TaskID=%d. %s"),
-				TaskID, *GetAbilityCutDiagnostics());
+				TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+				TaskID, TaskIDCounter, *Diag);
 		}
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Heartbeat for divergent TaskID=%d (already warned)."), TaskID);
 	}
 }
 
@@ -389,23 +481,29 @@ void UGMCAbility::FinishEndAbility() {
 	}
 	if (UnfinishedTasks > 0)
 	{
+		const FString Diag = GetAbilityCutDiagnostics();
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
-			UnfinishedTasks, *GetAbilityCutDiagnostics());
+			UnfinishedTasks, *Diag);
 		// Mirror onto LogTemp: the dedicated-server log export only ships a fixed category
 		// allowlist (LogTemp included, LogGMCAbilitySystem not).
 		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
 		{
 			UE_LOG(LogTemp, Warning,
 				TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
-				UnfinishedTasks, *GetAbilityCutDiagnostics());
+				UnfinishedTasks, *Diag);
 		}
 	}
 
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+	// Snapshot: EndTaskGMAS -> EndTask -> OnDestroy unregisters the entry being visited,
+	// which would invalidate a live range-for over the map. EndTask itself is idempotent
+	// (engine-guarded on TaskState != Finished), so re-ending a task is a safe no-op.
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksToEnd;
+	RunningTasks.GenerateValueArray(TasksToEnd);
+	for (UGMCAbilityTaskBase* Task : TasksToEnd)
 	{
-		if (Task.Value == nullptr) continue;
-		Task.Value->EndTaskGMAS();
+		if (Task == nullptr) continue;
+		Task->EndTaskGMAS();
 	}
 
 	// End handled effect
