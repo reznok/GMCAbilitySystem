@@ -294,6 +294,17 @@ private:
 
 	bool bEndPending = false;
 
+	// [TaskDiag] census state (server-side diagnostics only, wall-clock): when this ability was
+	// first observed Active with no live task (0 = has live tasks / not yet observed), and a
+	// once-only latch for the stalled-ability log line. See UGMCAbility::AncillaryTick.
+	double TasklessSinceTime = 0.0;
+	bool bTasklessCensusLogged = false;
+
+	// [TaskDiag] once-per-TaskID latch for the heartbeat divergence Warning — a long-lived
+	// divergent task beats at 1/s for the rest of the ability's life; only the first beat
+	// per ID warrants a Warning + full dump.
+	TSet<int> WarnedDivergentTaskIDs;
+
 	float ClientStartTime = 0.f;
 	
 

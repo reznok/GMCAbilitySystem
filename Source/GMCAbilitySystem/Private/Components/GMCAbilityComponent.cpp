@@ -1726,21 +1726,34 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.IsValid() ? TaskData.Get<FGMCAbilityTaskData>() : FGMCAbilityTaskData{};
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
-		if (ActiveAbilities.Contains(TaskDataFromInstance.AbilityID) && ActiveAbilities[TaskDataFromInstance.AbilityID]->bActivateOnMovementTick == bFromMovement)
+		// FindRef-hoist: a GC-nulled map VALUE would pass Contains() and crash the deref chain;
+		// resolve once, null-safe, and reuse below.
+		UGMCAbility* TargetAbility = ActiveAbilities.FindRef(TaskDataFromInstance.AbilityID);
+		if (TargetAbility && TargetAbility->bActivateOnMovementTick == bFromMovement)
 		{
 			// [TaskDiag] probe: TaskData is GMC-bound as ClientAuth_Input, so a client replay
 			// restores the historical payload of every replayed move and re-enters this
-			// dispatch — ProgressTask has no replay guard and tasks have no completion guard,
-			// so a replay crossing a Progress-carrying move RE-RUNS the BP continuation
-			// (double Completed broadcast). Log every replayed dispatch to catch it in the act.
+			// dispatch. With finished tasks unregistering themselves, a replayed payload for an
+			// already-unregistered task is the NORMAL replay outcome (ignored downstream) —
+			// only a replayed dispatch that will reach a LIVE task risks re-running its BP
+			// continuation (double Completed broadcast). Keep that case loud, quiet the rest.
 			if (IsReplayingForGMASLogic())
 			{
-				UE_LOG(LogGMCAbilitySystem, Warning,
-					TEXT("[TaskDiag] Progress payload RE-dispatched during replay (AbilityID=%d TaskID=%d fromMovement=%d). %s"),
-					TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, bFromMovement ? 1 : 0,
-					*ActiveAbilities[TaskDataFromInstance.AbilityID]->GetAbilityCutDiagnostics());
+				if (TargetAbility->RunningTasks.FindRef(TaskDataFromInstance.TaskID) != nullptr)
+				{
+					UE_LOG(LogGMCAbilitySystem, Warning,
+						TEXT("[TaskDiag] Progress payload RE-dispatched during replay (AbilityID=%d TaskID=%d fromMovement=%d). %s"),
+						TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, bFromMovement ? 1 : 0,
+						*TargetAbility->GetAbilityCutDiagnostics());
+				}
+				else
+				{
+					UE_LOG(LogGMCAbilitySystem, Verbose,
+						TEXT("[TaskDiag] Replayed Progress payload for already-unregistered TaskID=%d (AbilityID=%d) — benign, ignored downstream."),
+						TaskDataFromInstance.TaskID, TaskDataFromInstance.AbilityID);
+				}
 			}
-			ActiveAbilities[TaskDataFromInstance.AbilityID]->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+			TargetAbility->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
 		}
 		else if (!ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
 		{
