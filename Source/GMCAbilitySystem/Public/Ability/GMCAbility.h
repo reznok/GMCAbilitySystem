@@ -251,6 +251,24 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain", meta = (Categories = "Effect"))
 	FGameplayTagContainer RemoveEffectOnEnd;
 
+	// Chain window: on NATURAL EndAbility (not CancelAbility), the ASC applies an
+	// internally-built transient effect (EffectTag = ChainWindowTag, grants
+	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag so a
+	// re-grant refreshes). While the tag is up, the next chain stage's
+	// ActivationRequiredTags can pass. None = no window granted.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	FGameplayTag ChainWindowTag;
+
+	// Seconds the chain window tag stays granted after this ability ends.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	float ChainWindowDuration = 0.f;
+
+	// Window effects matching these tags are removed on successful activation
+	// (BeginAbility, after every gate passed). A denied/cancelled activation
+	// consumes nothing — the chain window survives a whiffed press.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	FGameplayTagContainer ChainConsumeWindowTags;
+
 	/**
 	 * Cancels active abilities based on specific conditions.
 	 *
