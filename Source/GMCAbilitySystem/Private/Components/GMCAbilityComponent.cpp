@@ -4038,6 +4038,26 @@ static void ApplyNiagaraUserParams(UNiagaraComponent* Comp, const TArray<FGMASNi
 	}
 }
 
+UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleAtPoint(
+	UFXSystemAsset* SystemTemplate,
+	FVector Location,
+	FRotator Rotation,
+	FVector Scale,
+	const TArray<FGMASNiagaraUserParam>& UserParams,
+	bool bIsClientPredicted,
+	bool bDelayByGMCSmoothing)
+{
+	FFXSystemSpawnParameters SpawnParams;
+	SpawnParams.SystemTemplate = SystemTemplate;
+	SpawnParams.Location = Location;
+	SpawnParams.Rotation = Rotation;
+	SpawnParams.Scale = Scale.IsNearlyZero() ? FVector::OneVector : Scale;
+	SpawnParams.LocationType = EAttachLocation::KeepWorldPosition;
+	SpawnParams.bAutoDestroy = true;
+	SpawnParams.bAutoActivate = true;
+	return SpawnParticleSystemAtLocation(SpawnParams, UserParams, bIsClientPredicted, bDelayByGMCSmoothing);
+}
+
 UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystemAtLocation(
 	FFXSystemSpawnParameters SpawnParams,
 	const TArray<FGMASNiagaraUserParam>& UserParams,

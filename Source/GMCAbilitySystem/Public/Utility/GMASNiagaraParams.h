@@ -2,6 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 #include "GMASNiagaraParams.generated.h"
 
 UENUM(BlueprintType)
@@ -50,4 +51,33 @@ struct GMCABILITYSYSTEM_API FGMASNiagaraUserParam
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMAS|FX")
 	FLinearColor ColorValue = FLinearColor::White;
+};
+
+/** One-node makers for FGMASNiagaraUserParam — lighter than a MakeStruct
+ *  node in graphs and reachable from scripted graph authoring. */
+UCLASS()
+class GMCABILITYSYSTEM_API UGMASNiagaraParamLibrary : public UBlueprintFunctionLibrary
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintPure, Category = "GMAS|FX")
+	static FGMASNiagaraUserParam MakeNiagaraFloatParam(FName Name, float Value)
+	{
+		FGMASNiagaraUserParam P;
+		P.Name = Name;
+		P.Type = EGMASNiagaraUserParamType::Float;
+		P.FloatValue = Value;
+		return P;
+	}
+
+	UFUNCTION(BlueprintPure, Category = "GMAS|FX")
+	static FGMASNiagaraUserParam MakeNiagaraVectorParam(FName Name, FVector Value)
+	{
+		FGMASNiagaraUserParam P;
+		P.Name = Name;
+		P.Type = EGMASNiagaraUserParamType::Vector;
+		P.VectorValue = Value;
+		return P;
+	}
 };
