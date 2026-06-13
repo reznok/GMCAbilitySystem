@@ -232,6 +232,77 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
+	// ── Shared GrantedTag survives until the LAST granting effect ends ──────
+	// ActiveTags is set-like (no refcount). Two effects (even with different /
+	// empty EffectTags) that both grant the same tag collapse to one entry.
+	// RemoveTagsFromOwner must not strip that entry when the first effect ends
+	// while another still grants it — the real symptom was a short self-root
+	// (GE_PreventMovementForced) clearing State.Movement.Locked out from under
+	// a still-active GE_Stun, freeing the pawn while stunned.
+	Describe("Shared GrantedTag refcount across effects", [this]()
+	{
+		It("keeps the shared tag until the LAST granting effect ends (different/empty EffectTag)", [this]()
+		{
+			AbilityComp->ActionTimer = 1.0;
+
+			// Long effect: grants Burning for 2s. Empty EffectTag (like GE_Stun).
+			UGMCAbilityEffect* LongFx = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			LongFx->AddToRoot();
+			FGMCAbilityEffectData LongData;
+			LongData.EffectType = EGMASEffectType::Persistent;
+			LongData.Duration   = 2.0;
+			LongData.GrantedTags.AddTag(BurningTag);
+			AbilityComp->ApplyAbilityEffect(LongFx, LongData);
+
+			// Short effect: grants Burning for 0.5s. Also empty EffectTag
+			// (like GE_PreventMovementForced) — NOT a same-EffectTag sibling.
+			UGMCAbilityEffect* ShortFx = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			ShortFx->AddToRoot();
+			FGMCAbilityEffectData ShortData;
+			ShortData.EffectType = EGMASEffectType::Persistent;
+			ShortData.Duration   = 0.5;
+			ShortData.GrantedTags.AddTag(BurningTag);
+			AbilityComp->ApplyAbilityEffect(ShortFx, ShortData);
+
+			TestTrue("tag present after both applied", AbilityComp->HasActiveTag(BurningTag));
+
+			// Advance past the SHORT effect's expiry (1.0 + 0.5 = 1.5), not the long's.
+			AbilityComp->ActionTimer = 1.6;
+			AbilityComp->TickActiveEffects(0.6f);
+			TestTrue("tag SURVIVES the short effect's expiry (the bug)",
+				AbilityComp->HasActiveTag(BurningTag));
+
+			// Advance past the LONG effect's expiry (1.0 + 2.0 = 3.0).
+			AbilityComp->ActionTimer = 3.1;
+			AbilityComp->TickActiveEffects(1.5f);
+			TestFalse("tag dropped only after the LAST granter ends (no leak)",
+				AbilityComp->HasActiveTag(BurningTag));
+
+			LongFx->RemoveFromRoot();
+			ShortFx->RemoveFromRoot();
+		});
+
+		It("a single granting effect still clears its tag on its own expiry", [this]()
+		{
+			AbilityComp->ActionTimer = 1.0;
+			UGMCAbilityEffect* Fx = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Fx->AddToRoot();
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.5;
+			Data.GrantedTags.AddTag(BurningTag);
+			AbilityComp->ApplyAbilityEffect(Fx, Data);
+			TestTrue("tag present", AbilityComp->HasActiveTag(BurningTag));
+
+			AbilityComp->ActionTimer = 1.6;
+			AbilityComp->TickActiveEffects(0.6f);
+			TestFalse("single granter clears on expiry (no false preserve)",
+				AbilityComp->HasActiveTag(BurningTag));
+
+			Fx->RemoveFromRoot();
+		});
+	});
+
 	// ── Bug #2 retired ─────────────────────────────────────────────────────
 	// CheckRemovedEffects + ActiveEffectIDs were dropped in the single-channel
 	// refactor. Effect removal now flows exclusively through BoundQueueV2
@@ -1367,30 +1438,28 @@ void FGMASBugFixSpec::Define()
 			SprintCostA->RemoveFromRoot(); SprintCostB->RemoveFromRoot();
 		});
 
-		It("preserve=true with no EffectTag falls back to remove (set-like container can't gate)", [this]()
+		It("preserve=true with no EffectTag removes the tag when no other effect grants it", [this]()
 		{
-			// RemoveTagsFromOwner needs a valid EffectTag to count siblings via
-			// GetActiveEffectsByTag; without one, it logs a warning and falls through
-			// to the unconditional remove. Documented behavior — captured here so a
-			// future refactor doesn't silently change it.
+			// RemoveTagsFromOwner now preserves PER GrantedTag by scanning for any
+			// other live granter (not by EffectTag), so an empty EffectTag is no
+			// longer a special case and no warning is emitted. A single granter
+			// still removes its tag on end because nothing else grants it.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
 			FGMCAbilityEffectData Data;
 			Data.EffectType = EGMASEffectType::Persistent;
 			Data.Duration   = 0.f;
-			// EffectTag deliberately left empty.
+			// EffectTag deliberately left empty — no longer matters for preserve.
 			Data.GrantedTags.AddTag(BurningTag);
 			Data.bPreserveGrantedTagsIfMultiple = true;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
 			TestTrue("Tag present after apply", AbilityComp->GetActiveTags().HasTag(BurningTag));
 
-			AddExpectedError(TEXT("Effect Tag is not valid with PreserveMultipleInstances"),
-				EAutomationExpectedErrorFlags::Contains, 1);
 			Effect->EndEffect();
 
-			TestFalse("Tag removed because EffectTag was missing (preserve fallback)",
+			TestFalse("Tag removed on end (no other granter, empty EffectTag is fine)",
 				AbilityComp->GetActiveTags().HasTag(BurningTag));
 
 			Effect->RemoveFromRoot();
