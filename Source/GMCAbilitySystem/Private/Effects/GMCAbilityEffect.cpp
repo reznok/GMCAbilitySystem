@@ -488,39 +488,50 @@ void UGMCAbilityEffect::AddTagsToOwner()
 
 void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 {
-	if (bPreserveOnMultipleInstances)
-	{
-		if (EffectData.EffectTag.IsValid()) {
-			// Skip self and bCompleted zombies: ActiveEffects retains entries until the
-			// next TickActiveEffects cleanup pass, and counting them as siblings would
-			// preserve tags that no live instance owns. Deferred (EndAtActionTimer >= 0,
-			// !bCompleted) DOES count — still ticking modifiers, still owns the slot.
-			const TArray<UGMCAbilityEffect*> SameTagEffects =
-				OwnerAbilityComponent->GetActiveEffectsByTag(EffectData.EffectTag);
-
-			int32 OthersStillAlive = 0;
-			for (const UGMCAbilityEffect* Other : SameTagEffects)
-			{
-				if (Other && Other != this && !Other->bCompleted)
-				{
-					++OthersStillAlive;
-				}
-			}
-
-			if (OthersStillAlive > 0) {
-				return;
-			}
-		}
-		else
-		{
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Tag is not valid with PreserveMultipleInstances in UGMCAbilityEffect::RemoveTagsFromOwner"));
-		}
-	}
-
-
+	// ActiveTags / ClientAuthActiveTags are set-like (no per-tag refcount), so
+	// two effects granting the same GrantedTag collapse to ONE entry. Without a
+	// guard, the first of several effects sharing a GrantedTag to end would
+	// strip that single shared entry out from under the others — e.g. a short
+	// self-root (GE_PreventMovementForced, ~0.9s) ending would clear
+	// State.Movement.Locked that an active GE_Stun (2s) still needs, freeing the
+	// pawn while it's still stunned.
+	//
+	// When bPreserveOnMultipleInstances, scan PER GrantedTag: keep the tag if any
+	// OTHER live effect routed to the same container (matched by bClientAuth)
+	// still grants it. This generalizes the previous same-EffectTag-only preserve
+	// to ANY granter regardless of EffectTag/class, and subsumes same-effect
+	// stacking (a live sibling instance grants the same tags → preserved). Skip
+	// self and bCompleted zombies (ActiveEffects retains entries until the next
+	// TickActiveEffects cleanup pass; a completed instance no longer owns its
+	// tags). Matching bClientAuth keeps the two containers independent so we
+	// never leave a stale entry in one because the other still grants the tag.
+	const TMap<int, UGMCAbilityEffect*> ActiveEffectsSnapshot =
+		bPreserveOnMultipleInstances && OwnerAbilityComponent
+			? OwnerAbilityComponent->GetActiveEffects()
+			: TMap<int, UGMCAbilityEffect*>();
 
 	for (const FGameplayTag Tag : EffectData.GrantedTags)
 	{
+		if (bPreserveOnMultipleInstances)
+		{
+			bool bAnotherGranterAlive = false;
+			for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffectsSnapshot)
+			{
+				const UGMCAbilityEffect* Other = Pair.Value;
+				if (Other && Other != this && !Other->bCompleted
+					&& Other->EffectData.bClientAuth == EffectData.bClientAuth
+					&& Other->EffectData.GrantedTags.HasTagExact(Tag))
+				{
+					bAnotherGranterAlive = true;
+					break;
+				}
+			}
+			if (bAnotherGranterAlive)
+			{
+				continue; // another active effect still owns this tag
+			}
+		}
+
 		if (EffectData.bClientAuth)
 		{
 			OwnerAbilityComponent->RemoveClientAuthActiveTag(Tag);
