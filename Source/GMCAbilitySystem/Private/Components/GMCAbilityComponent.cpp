@@ -2092,15 +2092,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	const UScriptStruct* StructType = PayloadData.GetScriptStruct();
 
 	// Activate Ability — handled in any tick context (AncillaryTick or PredictionTick),
-	// so consume the cache entry here on the auth side.
+	// so consume the cache entry here on the auth side, but only if ability activation succeeds. 
 	if (StructType == FGMASBoundQueueV2AbilityActivationOperation::StaticStruct())
 	{
-		// Server only ever processes operations once so it doesn't need them cached
-		if (HasAuthority())
-		{
-			BoundQueueV2.RemovePayloadByID(OperationID);
-		}
-
 		const FGMASBoundQueueV2AbilityActivationOperation Data = PayloadData.Get<FGMASBoundQueueV2AbilityActivationOperation>();
 		if (!BoundQueueV2.bInBatchDispatch)
 		{
@@ -2117,10 +2111,22 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				OperationID, *Data.InputTag.ToString(),
 				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
 		}
-
+		
 		// Thread the operation ID through so AbilityIDs are operation-derived and identical
 		// on client and server (Data.OperationID was stamped once by the queueing side).
-		return TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+		const bool bActivated = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+
+		// The ability can fail if it is running on the irrelevant tick, hence we preserve the payload when necessary.
+		if (HasAuthority())
+		{
+			const bool bPreserveForAncillaryTick = !bActivated && bFromMovementTick;
+			if (!bPreserveForAncillaryTick)
+			{
+				BoundQueueV2.RemovePayloadByID(OperationID);
+			}
+		}
+
+		return bActivated;
 	}
 
 	// Everything below happens only during the Prediction tick (or via the forced
