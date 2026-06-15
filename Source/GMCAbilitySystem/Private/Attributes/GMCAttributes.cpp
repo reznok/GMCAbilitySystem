@@ -22,6 +22,25 @@ void FAttribute::AddModifier(const FGMCAttributeModifier& PendingModifier) const
 	}
 	else
 	{
+		// Permanent path: Before clamping, ensure any attributes we depend on are calculated
+		auto EnsureAttributeUpdated = [this](const FGameplayTag& AttributeTag)
+		{
+			if (AttributeTag.IsValid() && Clamp.AbilityComponent)
+			{
+				if (const FAttribute* Attr = Clamp.AbilityComponent->GetAttributeByTag(AttributeTag))
+				{
+					if (Attr->IsDirty())
+					{
+						Attr->CalculateValue();
+						Attr->bIsDirty = true; // Preserve dirty flag for ProcessAttributes
+					}
+				}
+			}
+		};
+        
+		EnsureAttributeUpdated(Clamp.MinAttributeTag);
+		EnsureAttributeUpdated(Clamp.MaxAttributeTag);
+		
 		// Permanent path: Set/SetReplace overwrite RawValue absolutely; Add accumulates.
 		// Permanent Sets are NOT replay-safe by construction (same caveat as permanent Adds today).
 		if (bIsSet || bIsSetReplace)
