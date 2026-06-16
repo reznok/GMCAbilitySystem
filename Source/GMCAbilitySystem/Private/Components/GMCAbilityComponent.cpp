@@ -1185,6 +1185,17 @@ void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
 }
 
 
+void UGMC_AbilitySystemComponent::NoteAbilityEnded(int AbilityID)
+{
+	// Bounded FIFO: drop the oldest once at capacity so this never grows unbounded over a match.
+	RecentlyEndedAbilityIDs.Remove(AbilityID);
+	RecentlyEndedAbilityIDs.Add(AbilityID);
+	if (RecentlyEndedAbilityIDs.Num() > RecentlyEndedAbilityIDsCapacity)
+	{
+		RecentlyEndedAbilityIDs.RemoveAt(0, 1, EAllowShrinking::No);
+	}
+}
+
 void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 {
 	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
@@ -1192,6 +1203,9 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		// If the contained ability is in the Ended state, delete it
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
+			// Remember this ID so a still-in-flight client heartbeat for it reads as a benign
+			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning.
+			NoteAbilityEnded(It.Value()->GetAbilityID());
 			if (HasAuthority() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 			{
 				// Fail safe to tell client server has ended the ability
@@ -1450,11 +1464,22 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	{
 		ActiveAbilities[AbilityID]->HandleTaskHeartbeat(TaskID);
 	}
+	else if (WasAbilityRecentlyEnded(AbilityID))
+	{
+		// Benign end-race: the server HAD this ability and already ended it (e.g. a short
+		// client-predicted weapon-raise whose client instance outlives the server twin by a
+		// tick, long enough to fire its one immediate heartbeat). The server's RPCClientEndAbility
+		// is already on its way back. Not a divergence — keep it quiet. Mirrors the TaskID-level
+		// benign-end-race branch in UGMCAbility::HandleTaskHeartbeat.
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Heartbeat for already-ended AbilityID=%d (TaskID=%d) ignored (benign end race)."),
+			AbilityID, TaskID);
+	}
 	else
 	{
-		// [TaskDiag] probe: the client is still heartbeating an AbilityID the server no longer
-		// (or never) has. Means the SERVER side ended/diverged first while the client instance
-		// is alive — the reverse of the watchdog scenario. List our live IDs for comparison.
+		// [TaskDiag] probe: the client is heartbeating an AbilityID the server NEVER had (not in
+		// the recently-ended ring either). A genuine activation divergence — the client predicted
+		// an activation that never produced a server instance. List our live IDs for comparison.
 		// Throttled naturally by the 1/s per-task client send rate.
 		FString LiveIDs;
 		for (const auto& Pair : ActiveAbilities)

@@ -1024,6 +1024,17 @@ private:
 		return OperationID * 16 + (OperationID < 0 ? -ActivationIndex : ActivationIndex);
 	}
 
+	// Bounded ring of AbilityIDs the server has recently ended/removed. Lets RPCTaskHeartbeat
+	// distinguish a BENIGN end-race (the client beats once for an ability the server already
+	// finished — routine on short client-predicted abilities like weapon-raise, where the
+	// client instance outlives the server twin by a tick) from a REAL client/server divergence
+	// (an AbilityID the server NEVER had). Mirrors the TaskID-level benign-end-race
+	// classification in UGMCAbility::HandleTaskHeartbeat.
+	static constexpr int32 RecentlyEndedAbilityIDsCapacity = 64;
+	TArray<int> RecentlyEndedAbilityIDs;
+	void NoteAbilityEnded(int AbilityID);
+	bool WasAbilityRecentlyEnded(int AbilityID) const { return RecentlyEndedAbilityIDs.Contains(AbilityID); }
+
 
 	// Set Attributes to either a default object or a provided TSubClassOf<UGMCAttributeSet> in BP defaults
 	// This must run before variable binding
