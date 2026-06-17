@@ -74,10 +74,10 @@ public:
 	// Called by AbilityComponent from AncillaryTick (won't be rolled back on mispredictions)
 	virtual void AncillaryTick(float DeltaTime);
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void TickEvent(float DeltaTime);
 
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Ancillary Tick Ability"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ancillary Tick Ability"), Category="GMCAbilitySystem|Ability")
 	void AncillaryTickEvent(float DeltaTime);
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Ability PreExecution Check"), Category="GMCAbilitySystem|Ability")
@@ -92,7 +92,7 @@ public:
 	UFUNCTION()
 	virtual void BeginAbility();
 	
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="Begin Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Begin Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
@@ -103,7 +103,7 @@ public:
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void CancelAbility();
 
-	UFUNCTION(BlueprintImplementableEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
 
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")

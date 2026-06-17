@@ -181,6 +181,14 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 	AncillaryTickEvent(DeltaTime);
 }
 
+void UGMCAbility::AncillaryTickEvent_Implementation(float DeltaTime)
+{
+}
+
+void UGMCAbility::TickEvent_Implementation(float DeltaTime)
+{
+}
+
 void UGMCAbility::TickTasks(float DeltaTime)
 {
 	// Iterate a snapshot, never the live map: tasks end themselves mid-tick (WaitDelay & co)
@@ -678,6 +686,10 @@ void UGMCAbility::BeginAbility()
 	BeginAbilityEvent();
 }
 
+void UGMCAbility::BeginAbilityEvent_Implementation()
+{
+}
+
 void UGMCAbility::EndAbility()
 {
 	if (AbilityState != EAbilityState::Ended) {
@@ -694,6 +706,9 @@ void UGMCAbility::CancelAbility() {
 	}
 }
 
+void UGMCAbility::EndAbilityEvent_Implementation()
+{
+}
 
 AActor* UGMCAbility::GetOwnerActor() const
 {

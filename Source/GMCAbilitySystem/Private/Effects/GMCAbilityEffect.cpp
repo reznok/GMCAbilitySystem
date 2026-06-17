@@ -597,6 +597,14 @@ void UGMCAbilityEffect::EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery En
 		*EffectData.EffectTag.ToString(), NumCancelled);
 }
 
+void UGMCAbilityEffect::EndEffectEvent_Implementation()
+{
+}
+
+void UGMCAbilityEffect::StartEffectEvent_Implementation()
+{
+}
+
 void UGMCAbilityEffect::ModifyMustMaintainQuery(const FGameplayTagQuery& NewQuery)
 {
 	EffectData.MustMaintainQuery = NewQuery;

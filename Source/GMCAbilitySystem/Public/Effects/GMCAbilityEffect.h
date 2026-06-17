@@ -283,7 +283,7 @@ public:
 	virtual void OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	void EndEffect();
+	virtual void EndEffect();
 
 	virtual void BeginDestroy() override;
 	
@@ -409,10 +409,10 @@ private:
 public:
 
 	// Blueprint Event for when the effect starts
-	UFUNCTION(BlueprintImplementableEvent)
+	UFUNCTION(BlueprintNativeEvent)
 	void StartEffectEvent();
 
-	UFUNCTION(BlueprintImplementableEvent)
+	UFUNCTION(BlueprintNativeEvent)
 	void EndEffectEvent();
 
 	
