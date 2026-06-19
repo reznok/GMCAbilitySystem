@@ -94,7 +94,7 @@ struct FGMCAbilityEffectData
 	// (a constant buff/debuff that toggles on/off, or swaps its value source, with a tag — without
 	// re-applying the effect). Requires bNegateEffectAtEnd: the modifiers must be temporal/removable,
 	// not baked into RawValue. No effect on Instant/Ticking/Periodic.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Persistent && bNegateEffectAtEnd", EditConditionHides))
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayName="Recheck Conditions Each Tick (Persistent)", ToolTip="Persistent effects only: re-checks every modifier's Conditions each tick and applies or removes the buff as they change, without re-applying the effect. Requires 'Negate Effect At End'.", EditCondition = "EffectType == EGMASEffectType::Persistent && bNegateEffectAtEnd", EditConditionHides))
 	bool bReevaluateConditionsWhilePersistent = false;
 
 	// Delay before the effect starts
