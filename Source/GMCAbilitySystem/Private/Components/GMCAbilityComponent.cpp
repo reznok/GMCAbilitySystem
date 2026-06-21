@@ -2907,7 +2907,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			return true;
 		}
 
-	case EGMCAbilityEffectQueueType::ServerTurbo:
+	case EGMCAbilityEffectQueueType::ServerInstantAttribute:
 		{
 			// Server-only fast path. Apply in the current tick without queuing through BoundQueueV2.
 			// Attribute modifiers reach clients via the standard FAttribute bound binding.
@@ -2916,7 +2916,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			if (!HasAuthority())
 			{
 				UE_LOG(LogGMCAbilitySystem, Error,
-					TEXT("ServerTurbo apply rejected: %s called on non-authority. ServerTurbo is server-only."),
+					TEXT("ServerInstantAttribute apply rejected: %s called on non-authority. ServerInstantAttribute is server-only."),
 					*EffectClass->GetName());
 				return false;
 			}
@@ -2931,17 +2931,17 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			if (!bIsInstant || bHasGrantedTags || bHasGrantedAbil)
 			{
 				ensureMsgf(bIsInstant,
-					TEXT("ServerTurbo expects EffectType::Instant on %s — non-Instant effects need the GMC bound queue to tick correctly. Falling back to ServerAuth."),
+					TEXT("ServerInstantAttribute expects EffectType::Instant on %s — non-Instant effects need the GMC bound queue to tick correctly. Falling back to ServerAuth."),
 					*EffectClass->GetName());
 				ensureMsgf(!bHasGrantedTags,
-					TEXT("ServerTurbo cannot grant tags on %s — GrantedTags route through the bound ActiveTags container and must use ServerAuth. Falling back to ServerAuth."),
+					TEXT("ServerInstantAttribute cannot grant tags on %s — GrantedTags route through the bound ActiveTags container and must use ServerAuth. Falling back to ServerAuth."),
 					*EffectClass->GetName());
 				ensureMsgf(!bHasGrantedAbil,
-					TEXT("ServerTurbo cannot grant abilities on %s — relies on the bound ability map. Falling back to ServerAuth."),
+					TEXT("ServerInstantAttribute cannot grant abilities on %s — relies on the bound ability map. Falling back to ServerAuth."),
 					*EffectClass->GetName());
 
 				UE_LOG(LogGMCAbilitySystem, Warning,
-					TEXT("ServerTurbo guards failed for %s (Instant=%d GrantedTags=%d GrantedAbil=%d) — falling back to ServerAuth."),
+					TEXT("ServerInstantAttribute guards failed for %s (Instant=%d GrantedTags=%d GrantedAbil=%d) — falling back to ServerAuth."),
 					*EffectClass->GetName(), bIsInstant ? 1 : 0, bHasGrantedTags ? 1 : 0, bHasGrantedAbil ? 1 : 0);
 
 				return ApplyAbilityEffect(EffectClass, InitializationData,
@@ -3477,16 +3477,16 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				return true;
 			}
 
-		case EGMCAbilityEffectQueueType::ServerTurbo:
+		case EGMCAbilityEffectQueueType::ServerInstantAttribute:
 			{
-				// Symmetric to the ServerTurbo apply path: remove immediately on the server, no queue.
-				// Reached only if a caller explicitly requests it; the typical ServerTurbo apply target
+				// Symmetric to the ServerInstantAttribute apply path: remove immediately on the server, no queue.
+				// Reached only if a caller explicitly requests it; the typical ServerInstantAttribute apply target
 				// is EffectType::Instant which self-ends on the first Tick, so an external Remove is
 				// usually unnecessary. Kept for defense in depth.
 				if (!HasAuthority())
 				{
 					UE_LOG(LogGMCAbilitySystem, Error,
-						TEXT("ServerTurbo remove rejected on non-authority."));
+						TEXT("ServerInstantAttribute remove rejected on non-authority."));
 					return false;
 				}
 

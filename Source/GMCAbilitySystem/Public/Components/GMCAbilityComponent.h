@@ -147,10 +147,16 @@ enum class EGMCAbilityEffectQueueType : uint8
 	/// the movement history. you almost certainly don't want to use this, but it's here for the sake of completeness.
 	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]"),
 
-	/// Server-only fast path. The effect is applied immediately on the server, in the current tick, WITHOUT going through
-	/// BoundQueueV2. Attribute modifiers reach clients via the standard FAttribute bound binding — no per-effect RPC and
-	/// no client-side effect instance. Saves up to one server tick of latency compared to ServerAuth, which matters for
-	/// damage application at low server tick rates.
+	/// Server-authoritative, applied INSTANTLY in the current server tick — a fast-path variant of ServerAuth that
+	/// skips BoundQueueV2 entirely. The attribute modifiers reach clients through the normal replicated FAttribute
+	/// bound binding, so there is NO per-effect RPC and NO client-side effect instance. This saves up to one server
+	/// tick of latency vs ServerAuth, which is the whole point at low server tick rates (e.g. server-side damage).
+	///
+	/// TRADE-OFFS — this path is deliberately outside the GMC bound cycle, so:
+	///   - NO client prediction: the owning client only sees the change after the attribute replicates back.
+	///     Use it for effects the player SUFFERS (damage), never for effects the player must anticipate locally.
+	///   - NOT recorded in the GMC move history → it does NOT participate in replay/rollback. Never use it for an
+	///     attribute that feeds movement prediction (stamina→sprint, speed caps), or client/server will diverge.
 	///
 	/// SAFE ONLY for stateless wrapper effects whose sole job is to push attribute modifiers in a single shot:
 	///   - EffectType must be Instant (no Ticking/Periodic/Persistent — those need the bound cycle to tick deterministically)
@@ -159,7 +165,7 @@ enum class EGMCAbilityEffectQueueType : uint8
 	/// If any guard fails at runtime, the apply falls back to ServerAuth and logs a warning rather than corrupting state.
 	///
 	/// Canonical use case: PlayerMaster::Server_AddHealthPoint applying EF_Damage as a one-shot Health modifier.
-	ServerTurbo UMETA(DisplayName="Server Turbo (Instant, Attribute-Only)")
+	ServerInstantAttribute UMETA(DisplayName="Server Instant [Attribute-Only]")
 };
 
 UENUM(BlueprintType)
