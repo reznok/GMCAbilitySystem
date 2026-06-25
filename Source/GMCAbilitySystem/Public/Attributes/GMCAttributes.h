@@ -2,6 +2,7 @@
 #include "GameplayTagContainer.h"
 #include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Replication/SyncSettings.h" // EGMC_CombineMode
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
@@ -115,6 +116,13 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	// NOTE: If you don't bind it, you can't use it for any kind of prediction.
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	bool bIsGMCBound = false;
+
+	// Combine mode used when binding this attribute to the GMC (mirrors FAttributeData::ValueCombineMode; set
+	// from the data asset in InstantiateAttributes). Deliberately NOT a UPROPERTY / not replicated: every side
+	// (server, client, replay) runs BindReplicationData->InstantiateAttributes from the same local data asset,
+	// so the mode is identical everywhere without replication. Default CombineIfUnchanged = legacy behaviour;
+	// see FAttributeData::ValueCombineMode for the AlwaysCombineOverwrite safety contract.
+	EGMC_CombineMode ValueCombineMode = EGMC_CombineMode::CombineIfUnchanged;
 
 	// Runtime mirror of FAttributeData::bStartFull. When set, Init() resolves InitialValue from
 	// the upper clamp instead of using the user-set value.

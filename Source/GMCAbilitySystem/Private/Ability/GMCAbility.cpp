@@ -4,6 +4,7 @@
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
 #include "HAL/PlatformTime.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 
 namespace GMCAbilityCutDiag
 {
@@ -92,6 +93,12 @@ bool UGMCAbility::IsActive() const
 
 void UGMCAbility::Tick(float DeltaTime)
 {
+	// Per-ability profiling scope, named by gameplay tag (class-name fallback). The FString
+	// is only built in trace-enabled configs — TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles to
+	// nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::Tick [%s]"),
+		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
@@ -124,6 +131,9 @@ void UGMCAbility::Tick(float DeltaTime)
 }
 
 void UGMCAbility::AncillaryTick(float DeltaTime) {
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::AncTick [%s]"),
+		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 

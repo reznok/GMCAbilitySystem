@@ -6,6 +6,7 @@
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
 #include "Interfaces/IPluginManager.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Kismet/KismetSystemLibrary.h"
 
 #if WITH_EDITOR
@@ -229,6 +230,11 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
+	// Per-effect profiling scope, named by effect tag (class-name fallback). Zero cost in
+	// Shipping (macro + argument compiled out when CPUPROFILERTRACE_ENABLED == 0).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Effect::Tick [%s]"),
+		EffectData.EffectTag.IsValid() ? *EffectData.EffectTag.ToString() : *GetClass()->GetName()));
+
 	// Consume the bilateral predicted-end defer. Uses an absolute ActionTimer timestamp instead of a
 	// per-tick countdown — both client and server compute the same EndAtActionTimer (same move log,
 	// same ActionTimer at Remove + same ClientGraceTime), and the comparison below fires on the
