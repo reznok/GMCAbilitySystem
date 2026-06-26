@@ -254,8 +254,17 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
-			const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
-			ServerProcessOperation(ClientPayloadOperationData, false);
+			// First-frame guard for REMOTE player pawns: before the client's first move has
+			// populated SV_RemoteMoveExecutionAux.LastRawMove, OutputState is a default-constructed
+			// FGMC_PawnState whose InstancedStruct sync array is empty (Num()==0). The ruff guard
+			// above (!IsLocallyControlledServerPawn) only excludes the listen-server LOCAL pawn, so
+			// remote pawns still reach here and reading BI_OperationData (index 1) asserts
+			// out-of-bounds. No bound payload yet means there is no operation to process — skip.
+			if (OutputState.InstancedStruct.Num() > BoundQueueV2.BI_OperationData)
+			{
+				const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+				ServerProcessOperation(ClientPayloadOperationData, false);
+			}
 		}
 		// [EXPERIMENTAL] Removed second GenPreLocalMoveExecution() call here:
 		// PreLocalMoveExecution already drained ClientQueuedOperations earlier in
