@@ -4,7 +4,7 @@
 #include "GMCAbilitySystem.h"
 #include "GameplayTaskOwnerInterface.h"
 #include "GMCAbilityComponent.h"
-#include "InstancedStruct.h"
+#include "StructUtils/InstancedStruct.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GMCAbility.generated.h"
 
