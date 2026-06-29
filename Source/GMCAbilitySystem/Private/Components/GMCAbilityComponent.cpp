@@ -2211,12 +2211,31 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		{
 			if (!BoundQueueV2.HasPayloadByID(SubID))
 			{
-				// A sub-operation whose payload is missing from the cache (expired, never
-				// delivered) cannot be applied on this side. This used to be a SILENT skip:
-				// the batch still reported success, the op landed on the other side only,
-				// and the resulting state divergence had no trace anywhere. Keep skipping
-				// (nothing to apply) and keep it OUT of the ack list — so the server's
-				// grace-timeout drain still has a chance to force it — but log it loudly.
+				// A sub-operation whose payload is missing from the cache cannot be
+				// applied on this side. There are two distinct reasons for that:
+				//
+				//  (1) BENIGN REPROCESS. The authority re-reads the same bound
+				//      OperationData on both the prediction tick and the ancillary
+				//      tick (and on every server tick until a fresh client move
+				//      overwrites the slot). The FIRST pass already applied this
+				//      sub-op and drained its cached payload (RemovePayloadByID on
+				//      authority); the later passes simply find it gone. This is the
+				//      MP error-spam case — silently skip it, exactly mirroring the
+				//      single-op drained-reprocess no-op (which returns false quietly
+				//      on the cache miss). Keep it OUT of the ack list as before.
+				//
+				//  (2) GENUINE DIVERGENCE. The payload was never delivered / expired
+				//      and was never applied here. This is the case the diagnostic
+				//      exists to catch — log it loudly. Keeping it OUT of the ack list
+				//      also leaves the server's grace-timeout drain free to force it.
+				//
+				// MarkOperationProcessed (below) records every successfully-applied
+				// sub-op, so WasOperationRecentlyProcessed distinguishes (1) from (2).
+				if (BoundQueueV2.WasOperationRecentlyProcessed(SubID))
+				{
+					continue;
+				}
+
 				UE_LOG(LogGMCAbilitySystem, Error,
 					TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops, Authority=%d, Replaying=%d)."),
 					SubID, Batch.SubOperationIDs.Num(), HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0);
@@ -2236,6 +2255,13 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			if (ProcessOperation(WrappedSub, bFromMovementTick, bForce))
 			{
 				AckedIDs.Add(SubID);
+				// Record the successful dispatch so a later reprocess of the same
+				// stale bound OperationData (cache already drained) is recognised as
+				// a benign no-op rather than a genuine missing-payload divergence.
+				// Deferred ability-activation sub-ops that fail on the prediction tick
+				// return false here (payload preserved for the ancillary-tick retry),
+				// so they are intentionally NOT marked until they actually apply.
+				BoundQueueV2.MarkOperationProcessed(SubID);
 			}
 		}
 		BoundQueueV2.bInBatchDispatch = false;

@@ -1964,6 +1964,127 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Num(), 1);
 		});
 	});
+
+	// ── Server reprocess of stale client OperationData batch (MP error spam) ────
+	// In networked MP the bound OperationData slot replicates client->server and is
+	// re-read by the authority on BOTH the prediction and ancillary ticks (and on
+	// every server tick until a fresh client move overwrites it). The first pass
+	// applies each sub-op and drains its cached payload; every later pass found the
+	// payload gone and spammed:
+	//   "[BatchOp] Sub-operation N payload missing from cache — NOT applied ..."
+	// even though the effects had already applied EXACTLY ONCE. Fix: a drained
+	// sub-op that was already dispatched (WasOperationRecentlyProcessed) is a benign
+	// silent skip; a genuinely-missing-on-first-encounter payload STILL logs loudly.
+	Describe("ServerAuth batch reprocess dedup", [this]()
+	{
+		It("reprocessing the same drained batch is a benign no-op that logs NO error", [this]()
+		{
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+
+			// Three server-broadcast apply-effect ops, each adding +10 Health.
+			FGMASBoundQueueV2ApplyEffectOperation Op;
+			Op.EffectClass            = UGMCAbilityEffect::StaticClass();
+			Op.EffectData.EffectType  = EGMASEffectType::Persistent; // Duration 0 == infinite, stays in ActiveEffects
+			Op.EffectData.Duration    = 0.f;
+			Op.EffectData.Modifiers.Add(MakeHealthMod(10.f));
+
+			Op.EffectID = 510; const int ID1 = Q.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+			Op.EffectID = 511; const int ID2 = Q.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+			Op.EffectID = 512; const int ID3 = Q.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(Op);
+
+			// Build the batch wrapper exactly as GenPreLocalMoveExecution would.
+			FGMASBoundQueueV2BatchOperation Batch;
+			Batch.SubOperationIDs = { ID1, ID2, ID3 };
+			const FInstancedStruct BatchStruct =
+				FInstancedStruct::Make<FGMASBoundQueueV2BatchOperation>(Batch);
+
+			// First process (prediction tick): applies all three, marks them processed.
+			const bool bFirst = AbilityComp->ProcessOperationForTest(BatchStruct, true, false);
+			TestTrue("first process dispatched the batch", bFirst);
+			TestTrue ("sub-op 1 recorded as recently processed", Q.WasOperationRecentlyProcessed(ID1));
+			TestTrue ("sub-op 2 recorded as recently processed", Q.WasOperationRecentlyProcessed(ID2));
+			TestTrue ("sub-op 3 recorded as recently processed", Q.WasOperationRecentlyProcessed(ID3));
+
+			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->TickActiveEffects(1.f);
+			AbilityComp->ProcessAttributes(true);
+			TestEqual("effects applied EXACTLY ONCE: Health 100 + 3x10 = 130",
+				AbilityComp->GetAttributeValueByTag(HealthTag), 130.f);
+			TestEqual("three effects live in ActiveEffects",
+				AbilityComp->GetActiveEffects().Num(), 3);
+
+			// Simulate the authority drain that the prediction tick performs on the
+			// HasAuthority() path (the headless harness reports HasAuthority()==false,
+			// so we drain manually to reproduce the listen-server reprocess).
+			Q.RemovePayloadByID(ID1);
+			Q.RemovePayloadByID(ID2);
+			Q.RemovePayloadByID(ID3);
+
+			// Second process (ancillary tick / next server tick) of the SAME stale
+			// batch. No AddExpectedError on purpose: if the dedup regresses, the
+			// [BatchOp] errors below will fail this test — that is the regression net.
+			const bool bSecond = AbilityComp->ProcessOperationForTest(BatchStruct, false, false);
+			TestFalse("benign reprocess acks nothing", bSecond);
+
+			AbilityComp->ActionTimer = 2.0;
+			AbilityComp->TickActiveEffects(1.f);
+			AbilityComp->ProcessAttributes(true);
+			TestEqual("Health unchanged after benign reprocess (no double-apply)",
+				AbilityComp->GetAttributeValueByTag(HealthTag), 130.f);
+			TestEqual("ActiveEffects unchanged after benign reprocess",
+				AbilityComp->GetActiveEffects().Num(), 3);
+		});
+
+		It("a genuinely-missing payload on first encounter STILL logs the error", [this]()
+		{
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+
+			// A sub-op ID that was never cached and never processed — true divergence.
+			constexpr int32 GhostID = 90001;
+			TestFalse("ghost ID is not (yet) recorded as processed",
+				Q.WasOperationRecentlyProcessed(GhostID));
+
+			FGMASBoundQueueV2BatchOperation Batch;
+			Batch.SubOperationIDs = { GhostID };
+			const FInstancedStruct BatchStruct =
+				FInstancedStruct::Make<FGMASBoundQueueV2BatchOperation>(Batch);
+
+			// The loud diagnostic MUST fire for genuine divergence. (Harness is
+			// HasAuthority()==false, so only the LogGMCAbilitySystem error fires.)
+			AddExpectedError(TEXT("payload missing from cache"),
+				EAutomationExpectedErrorFlags::Contains, 1);
+
+			const bool bResult = AbilityComp->ProcessOperationForTest(BatchStruct, true, false);
+			TestFalse("genuine-missing batch acks nothing", bResult);
+			TestFalse("genuinely-missing ID is NOT recorded as processed",
+				Q.WasOperationRecentlyProcessed(GhostID));
+		});
+
+		It("MarkOperationProcessed is bounded and idempotent per ID", [this]()
+		{
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+
+			// Re-marking the same ID keeps a single entry (move-to-back, no growth).
+			Q.MarkOperationProcessed(7);
+			Q.MarkOperationProcessed(7);
+			TestTrue ("ID present after repeated mark", Q.WasOperationRecentlyProcessed(7));
+			TestEqual("repeated mark of same ID keeps one entry",
+				Q.RecentlyProcessedOperationIDs.Num(), 1);
+
+			// Ring is bounded: pushing well past capacity never grows past the cap,
+			// and the oldest entries are evicted FIFO.
+			for (int32 i = 0; i < FGMASBoundQueueV2::MaxRecentlyProcessedOperations + 50; ++i)
+			{
+				Q.MarkOperationProcessed(1000 + i);
+			}
+			TestEqual("ring capped at MaxRecentlyProcessedOperations",
+				Q.RecentlyProcessedOperationIDs.Num(),
+				FGMASBoundQueueV2::MaxRecentlyProcessedOperations);
+			TestFalse("oldest entry evicted", Q.WasOperationRecentlyProcessed(7));
+			TestTrue ("newest entry retained",
+				Q.WasOperationRecentlyProcessed(1000 + FGMASBoundQueueV2::MaxRecentlyProcessedOperations + 49));
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER

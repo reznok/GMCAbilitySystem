@@ -1218,6 +1218,15 @@ public:
 		ServerProcessOperation(OperationData, bFromMovementTick);
 	}
 
+	// Test seam for ProcessOperation. The function is private so tests cannot call it
+	// directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only. Used by
+	// the batch-reprocess dedup spec to drive a FGMASBoundQueueV2BatchOperation through
+	// the dispatch path more than once.
+	bool ProcessOperationForTest(FInstancedStruct OperationData, bool bFromMovementTick, bool bForce = false)
+	{
+		return ProcessOperation(OperationData, bFromMovementTick, bForce);
+	}
+
 	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
 	// in the headless harness always report HasAuthority()==false; setting this flag forces
 	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
