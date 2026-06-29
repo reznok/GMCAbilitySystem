@@ -4259,32 +4259,34 @@ void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
 {
 	if (!ShouldApplyServerOpImmediately())
 	{
-		// Legacy path: Client RPC to the owning client + grace window; the client
+		// Legacy path: Client RPC to the owning client + 1.0s grace window; the client
 		// acks via its move stream (or the grace timeout forces it on the server).
 		BoundQueueV2.QueueServerOperation(OperationID);
 		return;
 	}
 
-	// No autonomous-proxy client will ever ack this op (AI / server-controlled pawn).
-	// Apply it now on the authority via the same code the grace-timeout force uses
-	// (ProcessOperation with bForce=true), and DO NOT add it to the grace map or send
-	// the recipientless Client RPC -- there is nothing to wait for, and queueing it
-	// would risk a redundant double-apply force later.
-	const FInstancedStruct Payload = BoundQueueV2.GetPayloadByID(OperationID);
-	if (!Payload.IsValid())
-	{
-		// Payload missing (should not happen for a freshly-made op): fall back to the
-		// legacy path rather than silently dropping the operation.
-		UE_LOG(LogGMCAbilitySystem, Warning,
-			TEXT("[EnqueueServerOperation] op=%d has no cached payload; falling back to queue path"),
-			OperationID);
-		BoundQueueV2.QueueServerOperation(OperationID);
-		return;
-	}
-
-	// ProcessOperation drains the cached payload on the authority (RemovePayloadByID),
-	// so this single apply does not leave anything behind for a later force/ack.
-	ProcessOperation(Payload, /*bFromMovementTick=*/false, /*bForce=*/true);
+	// No autonomous-proxy client will ever ack this op (AI / level-placed /
+	// server-controlled pawn): the Client RPC has no recipient, so the legacy path would
+	// only apply the op when the 1.0s grace timeout forced it (visible ~1s delay).
+	//
+	// Do NOT apply it inline here. EnqueueServerOperation can run RE-ENTRANTLY inside
+	// ANOTHER pawn's movement tick -- e.g. the leap attacker's GenPredictionTick lands,
+	// calls UILCombatLibrary::ProcessAbilityHit, which fires each VICTIM's server-auth
+	// ops on the SAME frame. A synchronous ProcessOperation in that context mutates the
+	// victim's movement-mode + tags while we are nested inside the attacker's move tick,
+	// corrupting the victim's replicated movement/tag snapshot for sim proxies (the
+	// victim sticks mid-air with no stun on observing clients, even though the server
+	// authoritative sim runs correctly).
+	//
+	// Instead, queue it with a ZERO grace timeout. The next BoundQueueV2.GenAncillaryTick
+	// -- the VICTIM's OWN ancillary tick, a clean context outside any other pawn's
+	// movement tick -- decrements (0 - DeltaTime <= 0) and force-applies via
+	// OnServerOperationForced -> ProcessOperation(bForce=true). That is the exact
+	// proven-correct path the grace timeout always used, now ~1 frame instead of ~1s.
+	// QueueServerOperation also fires the Client RPC, which is a harmless no-op for a
+	// pawn with no owning connection. ProcessOperation drains the cached payload and
+	// the grace tick removes the grace-map entry, so the op applies exactly once.
+	BoundQueueV2.QueueServerOperation(OperationID, /*Timeout=*/0.f);
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

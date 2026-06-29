@@ -1255,6 +1255,17 @@ public:
 	void EnqueueServerOperationForTest(const int OperationID) { EnqueueServerOperation(OperationID); }
 	bool ShouldApplyServerOpImmediatelyForTest() const { return ShouldApplyServerOpImmediately(); }
 
+	// Test seam: bind the BoundQueueV2 grace-force delegate the same way BeginPlay does,
+	// so headless specs can drive the next-tick force path (OnServerOperationForced ->
+	// ProcessOperation(bForce=true)) without a world/BeginPlay. Only the force delegate is
+	// bound; the Client-RPC "added" delegate is intentionally left unbound (no NetDriver in
+	// the orphan-component harness). Idempotent: AddUnique-style binding via AddDynamic.
+	void BindServerOpForcedDelegateForTest()
+	{
+		BoundQueueV2.OnServerOperationForced.RemoveDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+		BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+	}
+
 	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
 	// in the headless harness always report HasAuthority()==false; setting this flag forces
 	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.

@@ -140,12 +140,20 @@ void FGMASBugFixSpec::Define()
 	// ~1s delay (e.g. an AI victim's knockup lagging far behind RTT).
 	//
 	// EnqueueServerOperation now routes the op based on ShouldApplyServerOpImmediately():
-	//   - has acking client  -> QueueServerOperation (grace map + Client RPC), unchanged.
-	//   - no acking client    -> ProcessOperation(bForce=true) NOW, no grace, no RPC.
+	//   - has acking client  -> QueueServerOperation (grace map + Client RPC, 1.0s grace),
+	//     unchanged: client acks via its move stream within RTT.
+	//   - no acking client    -> QueueServerOperation with a ZERO grace timeout. The op is
+	//     NOT applied synchronously inside the enqueue call (a synchronous apply would run
+	//     re-entrantly inside another pawn's movement tick and corrupt the victim's
+	//     replicated movement/tag snapshot for sim proxies). It applies on the VERY NEXT
+	//     BoundQueueV2.GenAncillaryTick via the grace-force path (OnServerOperationForced
+	//     -> ProcessOperation(bForce=true)) -- a clean ~1-frame defer, not the old ~1s.
 	//
 	// The headless harness can't populate GMC net-role state (orphan component reports
 	// NM_Standalone), so bForceNoAckClientForTest drives the decision. Standalone /
-	// player targets fall through to the queue path (flag left false).
+	// player targets fall through to the legacy queue path (flag left false). BeginPlay
+	// isn't run in the harness, so BindServerOpForcedDelegateForTest() wires the force
+	// delegate the no-client specs need to observe the next-tick apply.
 	Describe("Immediate server-op apply (no acknowledging client)", [this]()
 	{
 		// Builds + caches a server-auth ApplyEffect op carrying one Health modifier.
@@ -166,7 +174,7 @@ void FGMASBugFixSpec::Define()
 				.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(ApplyOp);
 		};
 
-		It("applies the op on the server the same tick when there is no acking client", [this, MakeApplyEffectOp]()
+		It("does NOT apply the op synchronously during enqueue when there is no acking client", [this, MakeApplyEffectOp]()
 		{
 			AbilityComp->ActionTimer = 1.0;
 			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
@@ -178,14 +186,51 @@ void FGMASBugFixSpec::Define()
 
 			AbilityComp->EnqueueServerOperationForTest(OpID);
 
-			// Immediate path: op never parked in the grace map, and the effect is live
-			// in ActiveEffects synchronously (ProcessOperation ran inside EnqueueServerOperation).
-			TestFalse("op NOT parked in grace map (no 1s wait)",
+			// Deferred (non-re-entrant) path: the op must NOT be applied synchronously inside
+			// the enqueue call -- that synchronous ProcessOperation was the regression (it ran
+			// re-entrantly inside another pawn's movement tick and corrupted the victim's
+			// sim-proxy snapshot). Instead it is parked in the grace map with a ZERO timeout
+			// so the next ancillary tick force-applies it from a clean context.
+			TestEqual("effect NOT applied synchronously during enqueue",
+				AbilityComp->GetActiveEffects().Num(), 0);
+			TestTrue("op parked in grace map awaiting the next-tick force",
 				Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
-			TestEqual("effect applied to ActiveEffects this tick",
+			TestEqual("grace timeout is ~0 (fires next tick, not the 1.0s legacy grace)",
+				Q.ServerQueuedBoundOperationsGracePeriods.FindRef(OpID), 0.f);
+		});
+
+		It("applies the no-client op on the very next ancillary tick (grace-force, ~1 frame)", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
+			AbilityComp->BindServerOpForcedDelegateForTest(); // BeginPlay didn't run in the harness
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			const int OpID = MakeApplyEffectOp(778);
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+			TestEqual("still not applied before the tick", AbilityComp->GetActiveEffects().Num(), 0);
+
+			// One ancillary tick: 0 - DeltaTime <= 0 -> OnServerOperationForced ->
+			// ProcessOperation(bForce=true). This is the same clean queue-tick context the
+			// pre-bc64a48 grace force used, now firing after ~1 frame instead of ~1s.
+			Q.GenAncillaryTick(0.016f);
+
+			TestEqual("effect applied after one ancillary tick",
 				AbilityComp->GetActiveEffects().Num(), 1);
 			TestTrue("effect applied under the authoritative server-auth EffectID",
-				AbilityComp->GetActiveEffects().Contains(777));
+				AbilityComp->GetActiveEffects().Contains(778));
+
+			// Cleanup: the grace-map entry and cached payload are gone (no leak, no re-fire).
+			TestFalse("grace-map entry removed after firing",
+				Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
+			TestFalse("cached payload drained after apply",
+				Q.HasPayloadByID(OpID));
+
+			// A second tick must NOT re-apply the op (no double-apply / no stuck entry).
+			Q.GenAncillaryTick(0.016f);
+			TestEqual("no re-fire on a subsequent tick (still exactly one effect)",
+				AbilityComp->GetActiveEffects().Num(), 1);
 		});
 
 		It("routes through the grace/ack queue when an acking client exists", [this, MakeApplyEffectOp]()
