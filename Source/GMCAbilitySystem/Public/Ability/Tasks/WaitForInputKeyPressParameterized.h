@@ -4,7 +4,7 @@
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "EnhancedInputComponent.h"
 #include "Ability/GMCAbility.h"
-#include "InstancedStruct.h"
+#include "StructUtils/InstancedStruct.h"
 #include "LatentActions.h"
 #include "WaitForInputKeyPressParameterized.generated.h"
 

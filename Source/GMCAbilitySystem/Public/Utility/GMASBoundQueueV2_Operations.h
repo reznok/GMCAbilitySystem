@@ -2,7 +2,7 @@
 #include "GameplayTagContainer.h"
 #include "InputAction.h"
 #include "Effects/GMCAbilityEffect.h"
-#include "InstancedStruct.h"
+#include "StructUtils/InstancedStruct.h"
 #include "GMASBoundQueueV2_Operations.generated.h"
 
 class UGMCAbility;

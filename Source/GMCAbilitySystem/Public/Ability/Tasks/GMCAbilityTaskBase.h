@@ -1,5 +1,5 @@
 ﻿#pragma once
-#include "InstancedStruct.h"
+#include "StructUtils/InstancedStruct.h"
 #include "Ability/GMCAbility.h"
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "GMCAbilityTaskBase.generated.h"
