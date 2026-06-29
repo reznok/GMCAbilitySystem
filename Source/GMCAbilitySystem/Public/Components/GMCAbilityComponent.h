@@ -1011,6 +1011,27 @@ private:
 	// GenPredictionTick and GenAncillaryTick.
 	void DrainPendingPredictedOperations();
 
+	// Single funnel for every server-authored ("server-broadcast") op: effect apply,
+	// custom event, ability activation, impulse, etc. Routes the op to the right path
+	// based on whether an autonomous-proxy client will ever acknowledge it:
+	//   - has acking client (remote player, listen-host's own pawn, standalone/client):
+	//     enqueue via BoundQueueV2.QueueServerOperation -> Client RPC + grace window,
+	//     client acks via its move stream within RTT (unchanged legacy behaviour).
+	//   - NO acking client (AI / level-placed / server-controlled pawn with no owning
+	//     client connection): the Client RPC has no recipient, so the op would only
+	//     ever apply via the 1.0s grace-timeout force -> visible ~1s knockup delay.
+	//     Apply it NOW on the authority via the same safe forced path (bForce=true),
+	//     bypassing the Client RPC and the grace map entirely.
+	// All authority-side call sites use this instead of BoundQueueV2.QueueServerOperation
+	// directly so the decision stays uniform across every op type.
+	void EnqueueServerOperation(const int OperationID);
+
+	// True when a server-broadcast op on this pawn would never be acknowledged by an
+	// autonomous-proxy client and must therefore be applied immediately on the server.
+	// See EnqueueServerOperation. Test builds can force the result via
+	// bForceNoAckClientForTest (headless harness can't populate GMC net-role state).
+	bool ShouldApplyServerOpImmediately() const;
+
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
 	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
@@ -1227,10 +1248,24 @@ public:
 		return ProcessOperation(OperationData, bFromMovementTick, bForce);
 	}
 
+	// Test seams for the immediate server-op-apply routing. EnqueueServerOperation and
+	// ShouldApplyServerOpImmediately are private (production callers are in-class); these
+	// thin wrappers expose them under WITH_AUTOMATION_WORKER only so the BugFix spec can
+	// drive both branches (immediate apply vs grace/ack queue) directly.
+	void EnqueueServerOperationForTest(const int OperationID) { EnqueueServerOperation(OperationID); }
+	bool ShouldApplyServerOpImmediatelyForTest() const { return ShouldApplyServerOpImmediately(); }
+
 	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
 	// in the headless harness always report HasAuthority()==false; setting this flag forces
 	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
 	bool bForceAuthorityForTest = false;
+
+	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
+	// (IsNetworkedServer / IsPlayerControlledPawn) can't be populated for an orphan component
+	// in the headless harness (always reports NM_Standalone). Setting this flag forces the
+	// "no acknowledging client" decision so EnqueueServerOperation's immediate-apply branch
+	// can be exercised; left false, EnqueueServerOperation takes the legacy queue path.
+	bool bForceNoAckClientForTest = false;
 
 	// Test seam: pre-seed BoundQueueV2.OperationData with a valid base struct so that
 	// IsValidGMASOperation() passes during headless-harness ServerProcessOperation calls.

@@ -800,9 +800,9 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	}
 	else
 	{
-		BoundQueueV2.QueueServerOperation(OperationID);
+		EnqueueServerOperation(OperationID);
 	}
-	
+
 }
 
 int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
@@ -1191,9 +1191,9 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 		EffectActivationData.EffectClass = Effect;
 		EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
 		int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
-		BoundQueueV2.QueueServerOperation(OperationID);
+		EnqueueServerOperation(OperationID);
 	}
-} 
+}
 
 void UGMC_AbilitySystemComponent::OnServerOperationForced(FInstancedStruct OperationData)
 {
@@ -2846,7 +2846,7 @@ void UGMC_AbilitySystemComponent::AddImpulse(FVector Impulse, bool bVelChange)
 	ImpulseOperation.Impulse = Impulse;
 	ImpulseOperation.bVelocityChange = bVelChange;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AddImpulseOperation>(ImpulseOperation);
-	BoundQueueV2.QueueServerOperation(OperationID);
+	EnqueueServerOperation(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::FireCustomEvent(FGameplayTag EventTag, FInstancedStruct Payload)
@@ -2861,7 +2861,7 @@ void UGMC_AbilitySystemComponent::FireCustomEvent(FGameplayTag EventTag, FInstan
 	EventOperation.EventTag = EventTag;
 	EventOperation.InstancedPayload = MoveTemp(Payload);
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2CustomEventOperation>(EventOperation);
-	BoundQueueV2.QueueServerOperation(OperationID);
+	EnqueueServerOperation(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::SetActorLocation(FVector Location)
@@ -2875,7 +2875,7 @@ void UGMC_AbilitySystemComponent::SetActorLocation(FVector Location)
 	FGMASBoundQueueV2SetActorLocationOperation ImpulseOperation;
 	ImpulseOperation.Location = Location;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2SetActorLocationOperation>(ImpulseOperation);
-	BoundQueueV2.QueueServerOperation(OperationID);
+	EnqueueServerOperation(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
@@ -3176,7 +3176,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			OutEffectId =EffectActivationData.EffectID;
 			int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 			OutEffectHandle = OutEffectId;
-			BoundQueueV2.QueueServerOperation(OperationID);
+			EnqueueServerOperation(OperationID);
 			return true;
 		}
 
@@ -3746,7 +3746,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				FGMASBoundQueueV2RemoveEffectOperation EffectRemovalData;
 				EffectRemovalData.EffectIDs = Ids;
 				const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2RemoveEffectOperation>(EffectRemovalData);
-				BoundQueueV2.QueueServerOperation(OperationID);
+				EnqueueServerOperation(OperationID);
 				return true;
 			}
 
@@ -4231,6 +4231,60 @@ bool UGMC_AbilitySystemComponent::IsAuthorityForGMASLogic() const
 	if (bForceAuthorityForTest) { return true; }
 #endif
 	return HasAuthority();
+}
+
+bool UGMC_AbilitySystemComponent::ShouldApplyServerOpImmediately() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceNoAckClientForTest) { return true; }
+#endif
+	if (!GMCMovementComponent) { return false; }
+
+	// Only a networked server (dedicated or listen) can strand a server-broadcast op
+	// with no client to ack it. On a pure client, or in standalone, the op is run
+	// through the LOCAL move stream (the Client RPC loops back to this machine), so it
+	// is always acknowledged -> keep the legacy queue path.
+	if (!GMCMovementComponent->IsNetworkedServer()) { return false; }
+
+	// A player-owned pawn -- a remote autonomous proxy (dedicated or listen), OR the
+	// listen-server host's own locally-controlled player pawn -- receives
+	// RPCOnServerOperationAdded and acks it via its move stream within RTT, so the
+	// grace window stays its safety net (unchanged). Only AI / level-placed /
+	// unpossessed pawns have no owning client connection: their Client RPC has no
+	// recipient, so the op would otherwise apply only via the 1.0s grace force.
+	return !GMCMovementComponent->IsPlayerControlledPawn();
+}
+
+void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
+{
+	if (!ShouldApplyServerOpImmediately())
+	{
+		// Legacy path: Client RPC to the owning client + grace window; the client
+		// acks via its move stream (or the grace timeout forces it on the server).
+		BoundQueueV2.QueueServerOperation(OperationID);
+		return;
+	}
+
+	// No autonomous-proxy client will ever ack this op (AI / server-controlled pawn).
+	// Apply it now on the authority via the same code the grace-timeout force uses
+	// (ProcessOperation with bForce=true), and DO NOT add it to the grace map or send
+	// the recipientless Client RPC -- there is nothing to wait for, and queueing it
+	// would risk a redundant double-apply force later.
+	const FInstancedStruct Payload = BoundQueueV2.GetPayloadByID(OperationID);
+	if (!Payload.IsValid())
+	{
+		// Payload missing (should not happen for a freshly-made op): fall back to the
+		// legacy path rather than silently dropping the operation.
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[EnqueueServerOperation] op=%d has no cached payload; falling back to queue path"),
+			OperationID);
+		BoundQueueV2.QueueServerOperation(OperationID);
+		return;
+	}
+
+	// ProcessOperation drains the cached payload on the authority (RemovePayloadByID),
+	// so this single apply does not leave anything behind for a later force/ack.
+	ProcessOperation(Payload, /*bFromMovementTick=*/false, /*bForce=*/true);
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

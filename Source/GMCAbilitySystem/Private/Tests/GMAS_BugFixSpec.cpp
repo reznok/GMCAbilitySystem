@@ -129,6 +129,95 @@ void FGMASBugFixSpec::Define()
 	BeforeEach([this]() { SetupHarness();    });
 	AfterEach ([this]() { TeardownHarness(); });
 
+	// ── Immediate server-op apply for targets with no acknowledging client ──
+	//
+	// Server-broadcast ops (effect apply, custom event, ability activation, ...)
+	// normally go through BoundQueueV2.QueueServerOperation: the server caches the
+	// op into a grace map and pushes a Client RPC to the owning client, which acks
+	// it via its move stream within RTT. For a pawn with NO autonomous-proxy client
+	// (AI / level-placed / server-controlled), that Client RPC has no recipient, so
+	// the op used to apply ONLY when the 1.0s grace timeout forced it — a visible
+	// ~1s delay (e.g. an AI victim's knockup lagging far behind RTT).
+	//
+	// EnqueueServerOperation now routes the op based on ShouldApplyServerOpImmediately():
+	//   - has acking client  -> QueueServerOperation (grace map + Client RPC), unchanged.
+	//   - no acking client    -> ProcessOperation(bForce=true) NOW, no grace, no RPC.
+	//
+	// The headless harness can't populate GMC net-role state (orphan component reports
+	// NM_Standalone), so bForceNoAckClientForTest drives the decision. Standalone /
+	// player targets fall through to the queue path (flag left false).
+	Describe("Immediate server-op apply (no acknowledging client)", [this]()
+	{
+		// Builds + caches a server-auth ApplyEffect op carrying one Health modifier.
+		// Returns the positive OperationID (server-generated) so the test can route it.
+		auto MakeApplyEffectOp = [this](int EffectID) -> int
+		{
+			FGMASBoundQueueV2ApplyEffectOperation ApplyOp;
+			ApplyOp.EffectClass = UGMCAbilityEffect::StaticClass();
+			ApplyOp.EffectID    = EffectID;
+
+			FGMCAbilityEffectData EData;
+			EData.EffectType = EGMASEffectType::Persistent;
+			EData.Duration   = 0.f;
+			EData.Modifiers.Add(MakeHealthMod(25.f));
+			ApplyOp.EffectData = EData;
+
+			return AbilityComp->GetBoundQueueV2ForTest()
+				.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(ApplyOp);
+		};
+
+		It("applies the op on the server the same tick when there is no acking client", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			const int OpID = MakeApplyEffectOp(777);
+
+			TestEqual("no effects before enqueue", AbilityComp->GetActiveEffects().Num(), 0);
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+
+			// Immediate path: op never parked in the grace map, and the effect is live
+			// in ActiveEffects synchronously (ProcessOperation ran inside EnqueueServerOperation).
+			TestFalse("op NOT parked in grace map (no 1s wait)",
+				Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
+			TestEqual("effect applied to ActiveEffects this tick",
+				AbilityComp->GetActiveEffects().Num(), 1);
+			TestTrue("effect applied under the authoritative server-auth EffectID",
+				AbilityComp->GetActiveEffects().Contains(777));
+		});
+
+		It("routes through the grace/ack queue when an acking client exists", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->bForceNoAckClientForTest = false; // player target -> client will ack
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			const int OpID = MakeApplyEffectOp(888);
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+
+			// Queue path: op parked in the grace map awaiting the client ack (or the
+			// grace-timeout force); NOT applied immediately on the server.
+			TestTrue("op parked in grace map (awaits client ack)",
+				Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
+			TestEqual("effect NOT applied yet (deferred to ack/grace)",
+				AbilityComp->GetActiveEffects().Num(), 0);
+		});
+
+		It("ShouldApplyServerOpImmediately is false by default and true under the no-client flag", [this]()
+		{
+			// Standalone orphan harness: IsNetworkedServer() is false -> never immediate.
+			TestFalse("default (standalone harness) keeps the legacy queue path",
+				AbilityComp->ShouldApplyServerOpImmediatelyForTest());
+
+			AbilityComp->bForceNoAckClientForTest = true;
+			TestTrue("forced no-client decision selects the immediate path",
+				AbilityComp->ShouldApplyServerOpImmediatelyForTest());
+		});
+	});
+
 	// ── Bug #1: MustMaintainQuery logic inversion ─────────────────────────
 	// Prior to fix: EndEffect() was called when the query DID match, keeping
 	// the effect alive only when the query was unsatisfied (backwards).
