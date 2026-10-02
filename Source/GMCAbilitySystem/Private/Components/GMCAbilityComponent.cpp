@@ -391,7 +391,7 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(co
 	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
 
 	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
-		if (IsValid(EffectFound.Value) && bMatchExact ? EffectFound.Value->EffectData.EffectTag.MatchesTagExact(GameplayTag) : EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+		if (IsValid(EffectFound.Value) && (bMatchExact ? EffectFound.Value->EffectData.EffectTag.MatchesTagExact(GameplayTag) : EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag))) {
 			ActiveEffectsFound.Add(EffectFound.Value);
 		}
 	}
