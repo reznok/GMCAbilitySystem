@@ -51,7 +51,7 @@ PublicDependencyModuleNames.AddRange(new string[] {
 });
 ```
 
-`GMCAbilitySystem` exports `GMCCore`, `GameplayTags`, `GameplayTasks`, `EnhancedInput`, `StructUtils` and `NetCore` as public dependencies (`Source/GMCAbilitySystem/GMCAbilitySystem.Build.cs`), so its headers compile in your module without more. List `GMCCore` and `GameplayTags` anyway: your own headers use them directly. List `GameplayTasks` yourself when you subclass the ability system component (a `UGameplayTasksComponent`) or write ability tasks. `StructUtils` is never needed on 5.5+ (`FInstancedStruct` lives in `CoreUObject`, header `StructUtils/InstancedStruct.h`); on 5.4 add it only when your own headers include `InstancedStruct.h`.
+`GMCAbilitySystem` exports `GMCCore`, `GameplayTags`, `GameplayTasks`, `EnhancedInput`, `StructUtils` and `NetCore` as public dependencies (`Source/GMCAbilitySystem/GMCAbilitySystem.Build.cs`), so its headers compile in your module without more. List `GMCCore` and `GameplayTags` anyway: your own headers use them directly. List `GameplayTasks` yourself when you subclass the ability system component (a `UGameplayTasksComponent`) or write ability tasks. `StructUtils` is normally not needed on any version: on 5.5+ `FInstancedStruct` lives in `CoreUObject` (header `StructUtils/InstancedStruct.h`), and on 5.4 UBT propagates the module through GMAS's public dependencies; add it only if your 5.4 build complains.
 
 Regenerate project files, build (a source plugin compiles with the project), open the editor: *Edit → Plugins* lists "GMAS - GMC Ability System" under the GMAS category.
 
@@ -133,7 +133,8 @@ void UMyMovementCmp::GenAncillaryTick_Implementation(float DeltaTime, bool bLoca
 The pawn adds the movement component (and, from a bare `AGMC_Pawn`, a root collision component plus `CreateDefaultSubobject<UGMC_AbilitySystemComponent>`); the pawn's root becomes GMC's updated component. Attribute data chosen at runtime (an archetype) is injected before the bind:
 
 ```cpp
-// MyPawn.h  (includes: Actors/GMAS_Pawn.h, MyMovementCmp.h, Attributes/GMCAttributesData.h, InputAction.h)
+// MyPawn.h  (includes: Actors/GMAS_Pawn.h, MyMovementCmp.h, Attributes/GMCAttributesData.h, InputAction.h;
+//            the .cpp adds EnhancedInputComponent.h)
 UCLASS()
 class AMyPawn : public AGMAS_Pawn
 {
@@ -163,9 +164,9 @@ void AMyPawn::PostInitializeComponents()
 
 ## Blueprint wiring
 
-The same five events, in the movement component Blueprint (a child of `GMC_OrganicMovementCmp`), with the ASC on the character. Step by step with screenshots: https://github.com/reznok/GMCAbilitySystem/wiki/Getting-Started (its editable "Ability Map" property predates 1.0; since then you list `GMCAbilityMapData` assets, below).
+The same five events, in the movement component Blueprint (a child of `GMC_OrganicMovementCmp`), with the ASC on the character. Step by step with screenshots: https://github.com/reznok/GMCAbilitySystem/wiki/Getting-Started (the wiki is stale: since 1.0 the tag-to-class rows live in `GMCAbilityMapData` assets, below, not in an editable map, and its `Ability.Jump` map key and activation tag are an `Input.*` tag today).
 
-1. Character Blueprint: *Add Component → GMC Ability System* (or parent the Blueprint to `GMAS Pawn`, which already has one).
+1. Character Blueprint: *Add Component → GMC Ability System Component* (or parent the Blueprint to `GMAS Pawn`, which already has one).
 2. Movement component Blueprint: a variable of type *GMC Ability System Component*, filled from *Get Owner → Get Component by Class*.
 3. *Event Bind Replication Data*: call the parent, do your own binds, set the ASC's `GMCMovementComponent` (advanced-display, writable) to *Self*, then call the ASC's *Bind Replication Data* last.
 4. *Event Pre Local Move Execution*, *Event Gen Prediction Tick*, *Event Gen Simulation Tick*, *Event Gen Ancillary Tick*: parent call, then the ASC function of the same name with the event pins connected (`Delta Time`; the ancillary tick's `Combined Client Move`).
@@ -177,15 +178,14 @@ The same five events, in the movement component Blueprint (a child of `GMC_Organ
 
 **Attributes** are rows of a `UGMCAttributesData` asset (`Public/Attributes/GMCAttributesData.h`, array `AttributeData` of `FAttributeData`), listed in the ASC's `AttributeDataAssets` (*Attributes* in Details):
 
-| Field | Default | Set it to |
-|---|---|---|
-| `AttributeTag` | – | `Attribute.Stamina` |
-| `DefaultValue`, `bStartFull` (1.4+) | `0`, `false` | `100`; or `bStartFull` to start at the upper clamp |
-| `Clamp` (`FAttributeClamp`, `GMCAttributeClamp.h`): `bClampMin` / `bClampMax` (1.4+), `Min` / `Max`, `MinAttributeTag` / `MaxAttributeTag` | clamps on, bounds `0` | **the default holds the value at 0 (1.4+).** `Max = 100`, or `MaxAttributeTag = Attribute.MaxStamina`, or untick `bClampMax` |
-| `bGMCBound` | `true` | `true` only for values predicted logic reads (a cost, a cap, a cooldown); otherwise `false` and it replicates normally, outside prediction (`gmas:gmas-rules`) |
-| `ValueCombineMode` (1.4+) | `CombineIfUnchanged` | leave it |
+| Field | Set it to |
+|---|---|
+| `AttributeTag` | `Attribute.Stamina` |
+| `DefaultValue` | `100` (or `bStartFull` (1.4+) to start at the upper clamp) |
+| `Clamp` (`FAttributeClamp`, `GMCAttributeClamp.h`) | `Max = 100` or `MaxAttributeTag = Attribute.MaxStamina`: **the default clamp holds the value at 0 (1.4+)** |
+| `bGMCBound` | `true`, because predicted logic (the dash cost) reads it |
 
-A `MaxAttributeTag` names another attribute of the same component (`Attribute.MaxStamina`, default `100`, bound like the value it clamps, since the clamp is evaluated inside the move). Everything else about attributes: `gmas:gmas-attribute`.
+A `MaxAttributeTag` names another attribute of the same component (`Attribute.MaxStamina`, default `100`, bound like the value it clamps, since the clamp is evaluated inside the move). Field defaults, the clamp flags, `ValueCombineMode` and the bound-versus-unbound rule: `gmas:gmas-rules`; everything else about attributes: `gmas:gmas-attribute`.
 
 **Ability map.** A `UGMCAbilityMapData` asset (`Public/Ability/GMCAbilityMapData.h`) holds rows of `FAbilityMapData`: `InputTag` (`Input.Dash`), `Abilities` (every class that may answer that tag; the first granted one decides which tick the batch runs on), `bGrantedByDefault` (`true`). List the asset in the ASC's `AbilityMaps`; at the ASC's `BeginPlay`, `InitializeAbilityMap` copies the rows into the runtime `AbilityMap` and grants every default row, i.e. adds its tag to the bound `GrantedAbilityTags`. Runtime changes: `AddAbilityMapData(UGMCAbilityMapData*)`, `RemoveAbilityMapData`, `GrantAbilityByTag(Tag)`, or an effect's `GrantedAbilities`.
 
@@ -197,11 +197,13 @@ An ability is a `UGMCAbility` (`Public/Ability/GMCAbility.h`). Activation runs `
 
 ```cpp
 // MyAbility_Dash.h
+#include "Ability/GMCAbility.h"
 UCLASS()
 class UMyAbility_Dash : public UGMCAbility
 {
     GENERATED_BODY()
 public:
+    UMyAbility_Dash() { bActivateOnMovementTick = true; }   // the 1.4 default; false on older trees
     UPROPERTY(EditDefaultsOnly) float DashSpeed = 1200.f;
     virtual bool PreExecuteCheckEvent_Implementation() override { return CanAffordAbilityCost(); }
     virtual void BeginAbilityEvent_Implementation() override;
@@ -216,7 +218,7 @@ void UMyAbility_Dash::BeginAbilityEvent_Implementation()
 }
 ```
 
-Class defaults (or a Blueprint child): `AbilityTag = Ability.Dash`, `AbilityCost = UMyEffect_DashCost` (an instant effect with one modifier, `Attribute.Stamina` `-20`; `gmas:gmas-effect`), `CooldownTime` if wanted. The impulse runs inside the move on the owning client and the server alike, so it is predicted and replayed without further work. Longer-lived abilities, tasks and the `bActivateOnMovementTick` choice: `gmas:gmas-ability`.
+Class defaults (or a Blueprint child): `AbilityTag = Ability.Dash`, `AbilityCost = UMyEffect_DashCost` (an instant effect with one modifier, `Attribute.Stamina` `-20`; `gmas:gmas-effect`), `CooldownTime` if wanted. With `bActivateOnMovementTick = true` (1.4+ default; set it explicitly on older trees, where `false` runs the ability on the ancillary tick and the impulse lands outside the move) the impulse runs inside the move on the owning client and the server alike, so it is predicted and replayed without further work. Longer-lived abilities, tasks and the `bActivateOnMovementTick` choice: `gmas:gmas-ability`.
 
 Wire it: one row `Input.Dash → UMyAbility_Dash` in the ability map asset (granted by default), then activate from input through `QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction = nullptr, bool bPreventConcurrentActivation = false)`. On the owning client the activation rides the next move and is predicted; on a server-controlled pawn it becomes a server operation (`gmas:gmas-rules`):
 
@@ -238,7 +240,7 @@ void AMyPawn::OnDash(const FInputActionInstance& Instance)
 ## Verify
 
 - Play in editor and press `'` (the Gameplay Debugger's default `ActivationKey`, Apostrophe); enable the `GMCAbilitySystem` category (registered by the runtime module in slot 9). It shows, server and client side by side, the granted abilities, active abilities, bound and client-auth active tags, attributes, active effects and cached operations of the debug actor. Your attribute rows and the `Input.Dash` grant must be listed before you press anything.
-- `Log LogGMCAbilitySystem Verbose` in the console. A press that does nothing logs `No Abilities Granted for InputTag` (the tag is not in `GrantedAbilityTags`: missing row or `bGrantedByDefault` off and not in `StartingAbilities`), `Ability Tag Not Found ... Check The Component's AbilityMap` (granted but no row), or `Ability Activation for Ability.Dash Stopped ...` (cooldown, pre-execution check, blocking).
+- `Log LogGMCAbilitySystem Verbose` in the console. A press that does nothing logs `Ability Tag Not Granted` followed by `No Abilities Granted for InputTag` (the tag is not in `GrantedAbilityTags`: missing row, or `bGrantedByDefault` off and not in `StartingAbilities`), `Ability Tag Not Found ... Check The Component's AbilityMap` (granted but no row), or `Ability Activation for Ability.Dash Stopped ...` (cooldown, pre-execution check, blocking).
 - Run it under networked PIE with at least one client, not only standalone: a wiring mistake (ASC bound before your values, a list filled on one machine only) shows up as corrections in `LogGMCReplication`, never standalone (`gmas:gmas-testing`).
 
 ## Checklist
@@ -249,6 +251,6 @@ void AMyPawn::OnDash(const FInputActionInstance& Instance)
 - `AttributeDataAssets`, `AbilityMaps`, `StartingAbilities`, `StartingEffects`, `StartingTags` are filled before the bind or in class defaults, identically on every machine.
 - Every attribute row has a deliberate clamp (`Max`, `MaxAttributeTag`, or `bClampMax` off) and `bGMCBound` only where predicted logic reads it.
 - Tags use the prefixes the pickers enforce: `Attribute.*`, `Ability.*` (the ability's own tag), `Input.*` (map key and `QueueAbility` argument).
-- The first ability gates on `CanAffordAbilityCost()` in `PreExecuteCheckEvent`, commits the cost, acts through `GetOwnerMovementComponent()`, and ends.
+- The first ability runs on the movement tick (`bActivateOnMovementTick = true`, explicit on trees older than 1.4), gates on `CanAffordAbilityCost()` in `PreExecuteCheckEvent`, commits the cost, acts through `GetOwnerMovementComponent()`, and ends.
 - Input calls `QueueAbility` with the input action; nothing calls `TryActivateAbility*` directly.
 - The Gameplay Debugger category lists the attributes and the grant; the ability fires under networked PIE with a client.
