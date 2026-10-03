@@ -37,25 +37,11 @@ public class GMCAbilitySystem : ModuleRules
 			}
 			);
 
-		// The Gameplay Debugger category exists only where the debugger does (not in Shipping
-		// or Test). Public because consumers that include GMCAbilitySystem.h see the header.
-		if (Target.bBuildDeveloperTools || (Target.Configuration != UnrealTargetConfiguration.Shipping && Target.Configuration != UnrealTargetConfiguration.Test))
-		{
-			PublicDependencyModuleNames.Add("GameplayDebugger");
-			PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=1");
-		}
-		else
-		{
-			PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=0");
-		}
-
-		if (Target.Configuration != UnrealTargetConfiguration.Shipping)
-		{
-			PrivateDependencyModuleNames.AddRange(new string[] {
-				"AutomationController",
-				"AutomationWorker"
-			});
-		}
+		// The Gameplay Debugger category exists only where the debugger does. The engine helper
+		// adds the dependency (public: consumers that include GMCAbilitySystem.h see the header)
+		// and defines WITH_GAMEPLAY_DEBUGGER* exactly as the target's settings say, so GMAS can
+		// never disagree with the value it already inherits through GMCCore -> AIModule.
+		SetupGameplayDebuggerSupport(Target, /*bAddAsPublicDependency*/ true);
 
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
 		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public/Components"));

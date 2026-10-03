@@ -152,8 +152,16 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// This is the sum of permanent modification applied to this attribute.
 	// Replicated to Simulated Proxy
+	// Permanent writes (Instant effects, non-history modifiers) live here and are restored on replay
+	// only through the bound RawValue; an Instant effect that already ended is not re-applied by a
+	// replay, so one correction can follow such a write inside a replayed window.
 	UPROPERTY()
 	mutable float RawValue = 0.f;
+
+	// Diagnostic latch for FGMCAttributeModifier::CalculateModifierValue, per attribute instance so
+	// it dies with the attribute. bit 1: AddPercentageMaxClamp with bClampMax off reported; bit 2:
+	// the Min twin.
+	mutable uint8 WarnedClampOps = 0;
 
 protected:
 

@@ -7,6 +7,7 @@
 // without touching any UObject chain.
 
 #include "Misc/AutomationTest.h"
+#include "NativeGameplayTags.h"
 #include "Attributes/GMCAttributes.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "Attributes/GMCAttributeClamp.h"
@@ -21,6 +22,11 @@ BEGIN_DEFINE_SPEC(FGMASModifierMathSpec,
 	// Helper shared across Describe blocks
 	FGMCAttributeModifier MakeMod(EModifierType Op, float ModVal, float DeltaTime = 1.f) const;
 
+	// A registered tag for a warn-once case. The latch in CalculateModifierValue is process-wide and
+	// keyed by (op, attribute tag); GMASTest::MakeAttr leaves the tag empty, so a case that asserts
+	// exactly one Warning needs a key no earlier case has used.
+	FGameplayTag ProbeTag() const;
+
 END_DEFINE_SPEC(FGMASModifierMathSpec)
 
 FGMCAttributeModifier FGMASModifierMathSpec::MakeMod(EModifierType Op, float ModVal, float DeltaTime) const
@@ -31,6 +37,15 @@ FGMCAttributeModifier FGMASModifierMathSpec::MakeMod(EModifierType Op, float Mod
 	Mod.ModifierValue = ModVal;
 	Mod.DeltaTime = DeltaTime;
 	return Mod;
+}
+
+FGameplayTag FGMASModifierMathSpec::ProbeTag() const
+{
+	static FNativeGameplayTag SProbeTag(
+		TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+		TEXT("GMAS.ModifierMath.Attribute.Probe"), TEXT("Attribute for the modifier-math warn-once cases"),
+		ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+	return SProbeTag.GetTag();
 }
 
 void FGMASModifierMathSpec::Define()
@@ -232,6 +247,8 @@ void FGMASModifierMathSpec::Define()
 
 		It("returns zero when Max clamp is zero (unset)", [this]()
 		{
+			// First use of the (AddPercentageMaxClamp, untagged) key in the run: one Warning, then silence.
+			AddExpectedErrorPlain(TEXT("AddPercentageMaxClamp on"), EAutomationExpectedErrorFlags::Contains, 1);
 			const FAttribute Attr = GMASTest::MakeAttr(100.f); // (flag off, Max 0)
 			const FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMaxClamp, 50.f);
 			TestEqual("50% of Max=0 is 0", Mod.CalculateModifierValue(Attr), 0.f);
@@ -251,6 +268,8 @@ void FGMASModifierMathSpec::Define()
 
 		It("returns zero when Min clamp is zero (default)", [this]()
 		{
+			// First use of the (AddPercentageMinClamp, untagged) key in the run: one Warning, then silence.
+			AddExpectedErrorPlain(TEXT("AddPercentageMinClamp on"), EAutomationExpectedErrorFlags::Contains, 1);
 			const FAttribute Attr = GMASTest::MakeAttr(100.f); // (flag off, Min 0)
 			const FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMinClamp, 100.f);
 			TestEqual("100% of Min=0 is 0", Mod.CalculateModifierValue(Attr), 0.f);
@@ -290,6 +309,36 @@ void FGMASModifierMathSpec::Define()
 			const FAttribute Attr = GMASTest::MakeAttr(100.f);
 			const FGMCAttributeModifier Mod = MakeMod(EModifierType::Set, -50.f);
 			TestEqual("Set -50 returns -50", Mod.CalculateModifierValue(Attr), -50.f);
+		});
+	});
+
+	Describe("Audit 1.4.1", [this]()
+	{
+		It("AddScaledBetween clamps with the resolved bounds (literal X/Y)", [this]()
+		{
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
+			FGMCAttributeModifier Mod = MakeMod(EModifierType::AddScaledBetween, 0.5f);
+			Mod.X = 10.f; Mod.Y = 30.f;
+			TestEqual("lerp(10,30,0.5) = 20", Mod.CalculateModifierValue(Attr), 20.f);
+			Mod.ModifierValue = 2.f;   // alpha past 1 clamps to Y
+			TestEqual("clamped to 30", Mod.CalculateModifierValue(Attr), 30.f);
+		});
+
+		It("AddPercentageMaxClamp contributes 0 and warns once when bClampMax is off", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("AddPercentageMaxClamp on GMAS.ModifierMath.Attribute.Probe whose clamp bound is off"), EAutomationExpectedErrorFlags::Contains, 1);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
+			Attr.Tag = ProbeTag();   // own latch key: the untagged key was spent by the AddPercentageMaxClamp block
+			FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMaxClamp, 50.f);
+			TestEqual("0 with the bound off", Mod.CalculateModifierValue(Attr), 0.f);
+			TestEqual("still 0, no second log", Mod.CalculateModifierValue(Attr), 0.f);
+		});
+
+		It("AddPercentageMaxClamp uses Clamp.Max when bClampMax is on", [this]()
+		{
+			FAttribute Attr = GMASTest::MakeClampedAttr(100.f, 0.f, 200.f);
+			FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMaxClamp, 50.f);
+			TestEqual("50% of 200", Mod.CalculateModifierValue(Attr), 100.f);
 		});
 	});
 }

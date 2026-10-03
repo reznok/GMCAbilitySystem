@@ -757,7 +757,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes", meta=(DeprecatedFunction, DeprecationMessage="Please use ApplyAbilityAttributeModifier instead."))
 	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue, bool bResetModifiers = false);
 	
-	/** Get the default value of an attribute from the data assets. */
+	/** The initial value actually applied (after bStartFull and SetAttributeInitialValue); -1 and a one-time Warning for an unknown tag. */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	float GetAttributeInitialValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
@@ -946,8 +946,11 @@ public:
 	// Empty the AbilityMap and remove all granted abilities from existing maps
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void ClearAbilityMap();
-	
 
+	// Project hook to seed an attribute's initial value. Called once per attribute after the rows
+	// exist and resolved their defaults; a changed value is applied, then every row is settled again
+	// so bStartFull and attribute-driven clamps see the overrides. The hook wins over bStartFull,
+	// never over the clamp (an Error and the clamped value).
 	virtual void SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
@@ -1190,6 +1193,10 @@ public:
 private:
 	// IDs that have been claimed by server-auth effect applications
 	TArray<int> ReservedEffectIDs;
+
+	// Tags GetAttributeInitialValueByTag already reported as unknown on this component (one Warning
+	// per tag per instance; mutable because the getter is const).
+	mutable TSet<FGameplayTag> UnknownInitialValueTagsWarned;
 
 	UPROPERTY()
 	TMap<int, FGMASQueueOperationHandle> EffectHandles;

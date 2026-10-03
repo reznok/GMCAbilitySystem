@@ -19,7 +19,7 @@ float UGMCModifierCustom_Exponent::Calculate(UGMCAbilityEffect* SourceEffect, co
 				const float x = Attribute->Value * 3;
 				const float rawExp = FMath::Exp(x);
 				constexpr float minExp = 1.f;
-				constexpr float MaxExp = 0x1.42096ff2afc4p+4; // exp(3)
+				constexpr float MaxExp = 20.085537f; // exp(3)
 		
 				return Min + ((rawExp - minExp) / (MaxExp - minExp)) * (Max - Min);
 			}

@@ -20,7 +20,6 @@ public class GMCAbilitySystemTests : ModuleRules
 			"GameplayTags",
 			"GameplayTasks",
 			"EnhancedInput",
-			"StructUtils",
 			"DeveloperSettings"
 		});
 	}

@@ -1344,53 +1344,117 @@ void UGMC_AbilitySystemComponent::InstantiateAttributes()
 	OldUnBoundAttributes = FGMCUnboundAttributeSet();
 	if(AttributeDataAssets.IsEmpty()) return;
 
-	// Loop through each of the data assets inputted into the component to create new attributes.
-	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
+	// Tag -> asset that declared it first, so a duplicate names both assets.
+	TMap<FGameplayTag, const UGMCAttributesData*> Declared;
 
+	for(UGMCAttributesData* AttributeDataAsset : AttributeDataAssets){
 		// Avoid crashing in an editor preview if we're actually editing the ability component's attribute table.
 		if (!AttributeDataAsset) continue;
-		
-		for(const FAttributeData AttributeData : AttributeDataAsset->AttributeData){
+
+		for(const FAttributeData& AttributeData : AttributeDataAsset->AttributeData){
+			if (!AttributeData.AttributeTag.IsValid())
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("InstantiateAttributes: a row of %s has no AttributeTag; ignored."), *GetNameSafe(AttributeDataAsset));
+				continue;
+			}
+			if (const UGMCAttributesData* const* First = Declared.Find(AttributeData.AttributeTag))
+			{
+				if (*First == AttributeDataAsset)
+				{
+					UE_LOG(LogGMCAbilitySystem, Error, TEXT("InstantiateAttributes: attribute %s is declared twice in %s; the second row is ignored."),
+						*AttributeData.AttributeTag.ToString(), *GetNameSafe(AttributeDataAsset));
+				}
+				else
+				{
+					UE_LOG(LogGMCAbilitySystem, Error, TEXT("InstantiateAttributes: attribute %s is declared by both %s and %s; the second declaration is ignored."),
+						*AttributeData.AttributeTag.ToString(), *GetNameSafe(*First), *GetNameSafe(AttributeDataAsset));
+				}
+				continue;
+			}
+			Declared.Add(AttributeData.AttributeTag, AttributeDataAsset);
+
+			if (AttributeData.Clamp.bClampMin && AttributeData.Clamp.bClampMax
+				&& !AttributeData.Clamp.MinAttributeTag.IsValid() && !AttributeData.Clamp.MaxAttributeTag.IsValid()
+				&& AttributeData.Clamp.Min == 0.f && AttributeData.Clamp.Max == 0.f)
+			{
+				// Since 1.4 an active [0,0] clamp pins the attribute at 0 (1.3 ignored an all-zero
+				// clamp). Almost always an upgraded asset that never set Max.
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("InstantiateAttributes: %s in %s has an active [0, 0] clamp and will be pinned at 0. Set Clamp.Max (or MaxAttributeTag) or turn bClampMax off."),
+					*AttributeData.AttributeTag.ToString(), *GetNameSafe(AttributeDataAsset));
+			}
+
 			FAttribute NewAttribute;
 			NewAttribute.Tag = AttributeData.AttributeTag;
 			NewAttribute.InitialValue = AttributeData.DefaultValue;
-			SetAttributeInitialValue(NewAttribute.Tag, NewAttribute.InitialValue);
 			NewAttribute.Clamp = AttributeData.Clamp;
 			NewAttribute.Clamp.AbilityComponent = this;
 			NewAttribute.bIsGMCBound = AttributeData.bGMCBound;
 			NewAttribute.bStartFull = AttributeData.bStartFull;
 			NewAttribute.ValueCombineMode = AttributeData.ValueCombineMode;
 			NewAttribute.Init();
-			
+
 			if(AttributeData.bGMCBound){
 				BoundAttributes.AddAttribute(NewAttribute);
 			}
 			else {
-				// Initiate old unbound attributes
 				UnBoundAttributes.AddAttribute(NewAttribute);
 				OldUnBoundAttributes.AddAttribute(NewAttribute);
 			}
 		}
 	}
 
-	// After all attributes are initialized, calc their values which will primarily apply their Clamps
-	
-	for (const FAttribute& Attribute : BoundAttributes.Attributes)
+	// Pass 1: every row exists, so bStartFull and tag-driven clamps resolve.
+	for (FAttribute& A : BoundAttributes.Attributes) { A.Init(); }
+	for (FAttribute& A : UnBoundAttributes.Items) { A.Init(); }
+
+	// Pass 2: the project hook, once per attribute. An override is applied provisionally (unclamped)
+	// so that pass 3 sees every override when it resolves dependencies between rows.
+	TSet<FGameplayTag> Overridden;
+	auto ApplyHook = [this, &Overridden](FAttribute& A)
 	{
-		Attribute.Init();
+		float Override = A.InitialValue;
+		SetAttributeInitialValue(A.Tag, Override);
+		if (Override != A.InitialValue)
+		{
+			A.InitialValue = Override;
+			A.RawValue = Override;
+			A.CalculateValue();
+			Overridden.Add(A.Tag);
+		}
+	};
+	for (FAttribute& A : BoundAttributes.Attributes) { ApplyHook(A); }
+	for (FAttribute& A : UnBoundAttributes.Items) { ApplyHook(A); }
+
+	// Pass 3: settle. A row the hook did not touch re-runs Init() against the overridden
+	// neighbours (bStartFull, MinAttributeTag/MaxAttributeTag); an overridden row keeps the
+	// hook's value, clamped (an Error when the clamp changes it: the hook wins over bStartFull
+	// but never over the clamp).
+	auto Settle = [&Overridden](FAttribute& A)
+	{
+		if (!Overridden.Contains(A.Tag)) { A.Init(); return; }
+		const float Clamped = A.Clamp.ClampValue(A.InitialValue);
+		if (Clamped != A.InitialValue)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("InstantiateAttributes: SetAttributeInitialValue returned %f for %s, outside its clamp; using %f."), A.InitialValue, *A.Tag.ToString(), Clamped);
+			A.InitialValue = Clamped;
+		}
+		A.RawValue = Clamped;
+		A.CalculateValue();
+	};
+	for (FAttribute& A : BoundAttributes.Attributes) { Settle(A); }
+	for (FAttribute& A : UnBoundAttributes.Items) { Settle(A); UnBoundAttributes.MarkItemDirty(A); }
+
+	// The change-detection copy mirrors the settled rows by index (both arrays were built in the
+	// same order) instead of running the hook a second time: it fires once per attribute.
+	for (int32 Index = 0; Index < UnBoundAttributes.Items.Num() && Index < OldUnBoundAttributes.Items.Num(); ++Index)
+	{
+		const FAttribute& Source = UnBoundAttributes.Items[Index];
+		FAttribute& Copy = OldUnBoundAttributes.Items[Index];
+		Copy.InitialValue = Source.InitialValue;
+		Copy.RawValue = Source.RawValue;
+		Copy.Value = Source.Value;
 	}
 
-	for (FAttribute& Attribute : UnBoundAttributes.Items)
-	{
-		Attribute.Init();
-		UnBoundAttributes.MarkItemDirty(Attribute);
-	}
-	
-	for (const FAttribute& Attribute : OldUnBoundAttributes.Items)
-	{
-		Attribute.Init();
-	}
-	
 	OldBoundAttributes = BoundAttributes;
 }
 
@@ -4115,14 +4179,16 @@ bool UGMC_AbilitySystemComponent::SetAttributeValueByTag(FGameplayTag AttributeT
 	return false;
 }
 
-float UGMC_AbilitySystemComponent::GetAttributeInitialValueByTag(FGameplayTag AttributeTag) const{
-	if(!AttributeTag.IsValid()){return -1.0f;}
-	for(UGMCAttributesData* DataAsset : AttributeDataAssets){
-		for(FAttributeData DefaultAttribute : DataAsset->AttributeData){
-			if(DefaultAttribute.AttributeTag.IsValid() && AttributeTag.MatchesTagExact(DefaultAttribute.AttributeTag)){
-				return DefaultAttribute.DefaultValue;
-			}
-		}
+float UGMC_AbilitySystemComponent::GetAttributeInitialValueByTag(FGameplayTag AttributeTag) const
+{
+	if (const FAttribute* Attribute = GetAttributeByTag(AttributeTag))
+	{
+		return Attribute->InitialValue;   // after bStartFull and SetAttributeInitialValue
+	}
+	if (!UnknownInitialValueTagsWarned.Contains(AttributeTag))
+	{
+		UnknownInitialValueTagsWarned.Add(AttributeTag);
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("GetAttributeInitialValueByTag: %s is not an attribute of %s; returning -1."), *AttributeTag.ToString(), *GetNameSafe(GetOwner()));
 	}
 	return -1.0f;
 }
