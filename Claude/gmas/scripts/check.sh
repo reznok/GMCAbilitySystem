@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Structural checks for the gmas Claude Code plugin. Usage: [GMAS_CHECK_FAST=1] check.sh [repo-root]
+# check.ps1 is the PowerShell twin (same checks; it also runs this script's bash hook harness).
 # Prints one line per check; final line "N passed, M failed" (", K skipped" appended when checks
 # were skipped); exit 1 when anything failed. GMAS_CHECK_FAST=1 skips the slow checks (manifest
 # validation, hook harness) and prints a "skip" line for each; the harness uses it for the
@@ -73,9 +74,9 @@ if [ -f "$PLUGIN/hooks/hooks.json" ]; then
 	if py -c 'import json,sys; json.load(open(sys.argv[1]))' "$PLUGIN/hooks/hooks.json" 2>/dev/null; then ok "hooks.json parses"; else fail "hooks.json parses"; fi
 fi
 
-# 6. Leak grep over the plugin and the marketplace. The two checker scripts carry the patterns
-#    and the harness's injected violations, so they are the only files excluded.
-EXCL=(--exclude=check.sh --exclude=check.test.sh)
+# 6. Leak grep over the plugin and the marketplace. The checker scripts (bash and PowerShell)
+#    carry the patterns and the harnesses' injected violations, so they are the only files excluded.
+EXCL=(--exclude=check.sh --exclude=check.test.sh --exclude=check.ps1 --exclude=check.test.ps1)
 hits="$(grep -rnE "${EXCL[@]}" "$LEAK_WORDS" "$PLUGIN" "$MARKET" 2>/dev/null; grep -rnE "${EXCL[@]}" "$LEAK_PATHS" "$PLUGIN" "$MARKET" 2>/dev/null)"
 [ -z "$hits" ] && ok "leak grep clean" || fail "leak grep clean (leak)" "$hits"
 

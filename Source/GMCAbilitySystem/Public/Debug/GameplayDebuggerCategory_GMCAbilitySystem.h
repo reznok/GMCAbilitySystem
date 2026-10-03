@@ -1,10 +1,9 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 #pragma once
 #include "CoreMinimal.h"
-#include "GameplayDebuggerCategory.h"
-#include "GameplayTagContainer.h"
 #if WITH_GAMEPLAY_DEBUGGER
+#include "GameplayDebuggerCategory.h"
 
 /**
  * 
@@ -37,8 +36,6 @@ protected:
 		int NBAttributes;
 		FString ActiveEffects;
 		int NBActiveEffects;
-		FString ActiveEffectData;
-		int NBActiveEffectData;
 		FString ActiveAbilities;
 		int NBActiveAbilities;
 

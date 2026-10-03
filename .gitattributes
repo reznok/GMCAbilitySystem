@@ -2,3 +2,8 @@
 *.yml text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.cs text eol=lf
+*.uplugin text eol=lf
+*.ps1 text eol=crlf

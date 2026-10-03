@@ -21,7 +21,9 @@ UGMCAbilityTask_RotateYawTowardsDirection* UGMCAbilityTask_RotateYawTowardsDirec
 void UGMCAbilityTask_RotateYawTowardsDirection::Activate()
 {
 	Super::Activate();
-	bTickingTask = true;
+
+	// Set first: OnFinish reports a duration measured from StartTime.
+	StartTime = AbilitySystemComponent->ActionTimer;
 
 	MovementComponent = AbilitySystemComponent->GMCMovementComponent;
 
@@ -31,8 +33,6 @@ void UGMCAbilityTask_RotateYawTowardsDirection::Activate()
 		OnFinish();
 		return;
 	}
-
-	StartTime = GetWorld()->GetTimeSeconds();
 
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("RotateYawTowardsDirection activated with direction: %s, speed: %f"), 
 		*DesiredDirection.ToString(), RotationSpeed);
@@ -65,7 +65,7 @@ void UGMCAbilityTask_RotateYawTowardsDirection::OnFinish()
 {
 	if (GetState() != EGameplayTaskState::Finished)
 	{
-		float Duration = GetWorld()->GetTimeSeconds() - StartTime;
+		const float Duration = static_cast<float>(AbilitySystemComponent.IsValid() ? AbilitySystemComponent->ActionTimer - StartTime : 0.0);
 		Completed.Broadcast(Duration);
 		EndTask();
 	}

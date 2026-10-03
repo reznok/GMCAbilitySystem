@@ -1,7 +1,7 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
-#include "GMCModifierCustom_Exponent.h"
+#include "Attributes/PreDefinedCustomCalculator/GMCModifierCustom_Exponent.h"
 
 #include "GMCAttributes.h"
 
@@ -19,7 +19,7 @@ float UGMCModifierCustom_Exponent::Calculate(UGMCAbilityEffect* SourceEffect, co
 				const float x = Attribute->Value * 3;
 				const float rawExp = FMath::Exp(x);
 				constexpr float minExp = 1.f;
-				constexpr float MaxExp = 0x1.42096ff2afc4p+4; // exp(3)
+				constexpr float MaxExp = 20.085537f; // exp(3)
 		
 				return Min + ((rawExp - minExp) / (MaxExp - minExp)) * (Max - Min);
 			}

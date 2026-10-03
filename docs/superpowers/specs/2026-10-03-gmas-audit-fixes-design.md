@@ -1,6 +1,6 @@
 # GMAS 1.4.1 — source audit fixes — design
 
-**Status:** approved 2026-10-03, not yet implemented.
+**Status:** implemented on branch fix/audit-1.4.1, 2026-10-03; refinements recorded in the pull request and in §9.
 **Scope:** one pull request against `dev` that fixes the defects found while verifying the Claude Code plugin's skills against the GMAS source (the audit table is `docs/audits/2026-10-03-source-audit.md`; items are referenced below as A#n).
 
 ## 1. Context
@@ -96,7 +96,7 @@ Each table row: audit item → change → verification → **B** when it is a br
 
 | Item | Change | Verification |
 |---|---|---|
-| A#60, A#61, A#73, A#85, A#88 | Every abnormal or external end calls `CancelAbility()`: the client confirm timeout, `RPCClientEndAbility`, the task heartbeat watchdog, `CancelAbilitiesWithTag`, effects' `CancelAbilityOnActivation`/`OnEnd`, `EndOtherAbilitiesQuery`/`EndAbilitiesByQuery`. `EndAbility()` remains the ability's own natural end. Log text matches the call. **B** | Spec: a cancelled ability fires no `EndAbilityEvent` and opens no chain window; the natural end still does. |
+| A#60, A#61, A#73, A#85, A#88 | Every abnormal or external end calls `CancelAbility()`: the client confirm timeout, `RPCClientEndAbility`, the task heartbeat watchdog, `CancelAbilitiesWithTag`, effects' `CancelAbilityOnActivation`/`OnEnd`, `EndOtherAbilitiesQuery` and an effect's `EndAbilityOn*Query` (through the new `CancelAbilitiesByQuery`). `EndAbility()` remains the ability's own natural end, and so do the public `EndAbilitiesByTag` / `ByClass` / `ByQuery` (amended at implementation, §9). Log text matches the call. **B** | Spec: a cancelled ability fires no `EndAbilityEvent` and opens no chain window; the natural end still does. |
 | A#5, A#14 | `PreBeginAbility` refuses (and logs at `Verbose`) when `CanAffordAbilityCost()` is false. **B** | Spec: unaffordable cost → no `BeginAbility`, attribute unchanged. |
 | A#63 | `CommitAbilityCost` declares its instance so `CancelAbility` removes a `Ticking`/`Persistent` cost. **B** | Spec. |
 | A#62 | `BlockOtherAbilitiesQuery` keeps its name (asset data) but its comment and display name say what it does ("End other abilities on begin (query)"); no new blocking semantics. | — |
@@ -192,3 +192,20 @@ Sections, in order: Summary (one paragraph per group); **Breaking changes** (eve
 - Restoring the grace deferral runs the suspend/revive path in production for the first time; the PIE check and the opt-out are the mitigation.
 - Cancel semantics and the cost check change what existing content does; both are visible in the first play session and are the headline breaking changes.
 - Removing `FAttribute::OnAttributeChanged` changes the struct; the bound layout is derived at bind time, so no serialized data is affected, but the change is called out.
+
+## 9. Implementation notes
+
+Refinements decided while planning and implementing; each is called out in the pull request.
+
+1. **Test module instead of `#if` guards (§5.0, A#132, A#17).** The header tool does not reliably honour a preprocessor guard around a `UCLASS`, so the specs and the `UGMAS_Test*` stubs moved to a new `GMCAbilitySystemTests` module of type `UncookedOnly` (editor and uncooked builds only). Same outcome (nothing test-only in a cooked or Shipping game, `Private/Tests` gone from the public include paths), different mechanism. The `…ForTest` seams stay in the runtime module under `WITH_AUTOMATION_WORKER`; the specs guard on `WITH_DEV_AUTOMATION_TESTS`.
+2. **Two documented clock seeds (§5.0, A#115).** `-1.0` is the stable seed (the stub's move timestamp, so `GenPredictionTick` leaves it unchanged); the client-auth specs use `1.0` so their ids stay inside the client-auth range. Both live in `GMAS_TestHelpers.h` with the reason beside them; a negative clock wraps the effect-id generators once, which `SilenceEffectIDWrapReportForTest` keeps out of unrelated specs.
+3. **`SetActionTimerForTest` is a one-line wrapper** over the public `ActionTimer`; it names the intent. `TickActiveAbilitiesForTest`, `CleanupStaleAbilitiesForTest` and `bForceNetworkedForTest` joined it.
+4. **A null movement pointer at bind logs an Error and binds nothing (§5.5, A#4, A#13); no `ensureMsgf`.** A missing component is a setup data error (policy §4), and an ensure would fail the spec that covers the path.
+5. **`UGMCAttributeModifierContainer` stays one minor (§5.6, A#23)** because the deprecated `OnPreAttributeChanged` delegate signature references it; both go in 1.5. `OnPreAttributeChanged` is deprecated, not restored: re-adding it would run Blueprint code that edits modifiers inside every predicted apply and every replay.
+6. **The attribute-bind console tag is `[AttrBindMap]`** (§5.7 said `[MoveEnqueue]`): the command maps bound float indices to attribute tags and depends on no move-enqueue log.
+7. **Commits per task, not strictly one per group (§3):** some groups split into two commits for bisectability; the branch is merged as a branch, not squashed.
+8. **`CanAffordAbilityCost` resolves attribute-sourced cost modifiers** through the same per-instance query effect `GetAbilityCostValues` reads (A#68); affordability is judged per attribute over all modifiers, a `Set` is absolute, and the activation gate judges a `Ticking` or `Periodic` cost over one second. Without an owner (a class default object) `GetAbilityCostValues` sums the raw `AMT_Value` amounts.
+9. **Cancel hooks.** `CancelAbility()` fires a new `CancelAbilityEvent` (BlueprintNativeEvent) and the component broadcasts a new `OnAbilityCancelled`, the abnormal-end twins of `EndAbilityEvent` / `OnAbilityEnded`; without them, making cancel the common interruption path would have left Blueprint abilities no cleanup hook. A refused (dead-born) activation fires neither and applies no `ApplyEffectOnEnd` / `RemoveEffectOnEnd`; `OnAbilityActivated` fires with the ability `Initialized` and a listener's cancel refuses the activation; `EndAbility` and `CancelAbility` share one entry latch (first end wins).
+10. **CDO copy (A#66, A#75).** Deleting the hand-kept copy list was not enough: for a native class the object initializer copies only the config properties from the class's own default object, so runtime-written defaults never reached instances. Abilities are instanced with `NewObject(..., bCopyTransientsFromClassDefaults = true)`, the engine's full-copy path.
+11. **Attribute initialisation settles after every override (A#32).** Rows are created and resolved, the `SetAttributeInitialValue` hook runs once per attribute, then every row settles again so dependent rows (`bStartFull`, attribute-driven clamps) see the overrides; dependencies resolve one level deep.
+12. **Queue fixes found on the way.** The server never freed client-auth payloads (its payload map grew and logged one false Error per operation); a reconnecting client's operation ids restart, so the server's processed-operation ring is reset for the new connection; the id allocator stays inside its range for negative clocks.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Harness for hooks/gmas-context.sh: fixture project trees under a temp dir, one assertion set each.
+# Harness for hooks/gmas-context.sh: fixture project trees under a temp dir, one assertion set each,
+# plus F9, the hooks.json command line run through sh. hooks/tests/gmas-context.test.ps1 is the
+# PowerShell twin (same F1 to F8; its F9 runs the command line through PowerShell).
 # Every assertion records ok or FAIL and continues; the final line is "N passed, M failed".
 set -euo pipefail
 
@@ -107,6 +109,21 @@ if [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ]; then ok "F8 one line"; else fail
 ev="$(printf '%s' "$out" | py -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["hookEventName"])' 2>/dev/null)" || ev="(unparsable JSON)"
 if [ "$ev" = "SessionStart" ]; then ok "F8 hookEventName"; else fail "F8 hookEventName" "$ev"; fi
 assert_exit0 "F8 project with GMC and GMAS"
+
+# F9: the hooks.json command as Claude Code runs it with the bash shell (sh -c on macOS and Linux,
+# Git Bash on Windows): exactly one JSON line (the PowerShell part must not run), nothing on stderr.
+cmd="$(py -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$HERE/../hooks.json")"
+plugin_root="$(cd "$HERE/../.." && pwd)"
+for case in "project|$WORK/p4/Source/Game|\`Plugins/GMCAbilitySystem\` (VersionName 1.4" "repository|$WORK/repo|gmas:gmas-maintain"; do
+	name="F9 hooks.json under sh, ${case%%|*}"; rest="${case#*|}"; d="${rest%%|*}"; needle="${rest#*|}"
+	rc=0; out="$( (cd "$d" && env -u CLAUDE_GMAS_HOOK_DISABLE -u CLAUDE_GMAS_HOOK_DEBUG CLAUDE_PLUGIN_ROOT="$plugin_root" sh -c "$cmd" 2>"$WORK/f9.err") )" || rc=$?
+	if [ -n "$out" ] && [ "$(printf '%s
+' "$out" | wc -l)" -eq 1 ]; then ok "$name: one line"; else fail "$name: one line" "$out"; fi
+	context "$name" "$out"
+	assert_contains "$name: context" "$ctx" "$needle"
+	if [ ! -s "$WORK/f9.err" ]; then ok "$name: no stderr"; else fail "$name: no stderr" "$(cat "$WORK/f9.err")"; fi
+	assert_exit0 "$name"
+done
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

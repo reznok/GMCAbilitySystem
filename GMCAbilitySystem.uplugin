@@ -24,6 +24,11 @@
 			"Name": "GMCAbilitySystemEditor",
 			"Type": "Editor",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "GMCAbilitySystemTests",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [

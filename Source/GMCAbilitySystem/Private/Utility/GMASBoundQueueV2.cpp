@@ -213,7 +213,7 @@ void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float 
 {
 	if (!OperationPayloads.Contains(OperationID))
 	{
-		UE_LOG(LogTemp, Error, TEXT("Tried to queue server operation, but server operation %d not found in payloads"), OperationID);
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to queue server operation, but server operation %d not found in payloads"), OperationID);
 		return;
 	}
 
@@ -253,6 +253,20 @@ void FGMASBoundQueueV2::MarkOperationProcessed(int32 OperationID)
 	}
 }
 
+void FGMASBoundQueueV2::ResetForNewConnection()
+{
+	RecentlyProcessedOperationIDs.Reset();
+	for (auto It = OperationPayloads.CreateIterator(); It; ++It)
+	{
+		if (It.Key() < 0)
+		{
+			ReportedInvalidPayloadIDs.Remove(It.Key());
+			It.RemoveCurrent();
+		}
+	}
+	OperationDataCacheExpiration.RemoveAll([this](const auto& Entry) { return Entry.OperationID < 0; });
+}
+
 bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
 {
 	return RecentlyProcessedOperationIDs.Contains(OperationID);
@@ -260,30 +274,37 @@ bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
 
 void FGMASBoundQueueV2::CheckValidState() const
 {
-	// Server Logic
 	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
-		// Check Client Queued Operations is empty
 		if (ClientQueuedOperations.Num() > 0)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientQueuedOperations has %d pending operations on server"), ClientQueuedOperations.Num());
-		}
-
-		// Check OperationPayloads for invalid IDs (-1 is reserved for client-made operations)
-		for (auto operation : OperationPayloads)
-		{
-			if (operation.Key < 0)
+			if (!bReportedClientQueuedOnServer)
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationPayloads has invalid operation ID %d on server"), operation.Key);
+				bReportedClientQueuedOnServer = true;
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientQueuedOperations has %d pending operations on server (reported once until it clears)"), ClientQueuedOperations.Num());
+			}
+		}
+		else { bReportedClientQueuedOnServer = false; }
+
+		for (const auto& Operation : OperationPayloads)
+		{
+			if (Operation.Key < 0 && !ReportedInvalidPayloadIDs.Contains(Operation.Key))
+			{
+				ReportedInvalidPayloadIDs.Add(Operation.Key);
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationPayloads has a client-made operation id %d on the server (reported once)"), Operation.Key);
 			}
 		}
 	}
 	else
 	{
-		// Check Server Queued Operations is empty
 		if (ServerQueuedBoundOperationsGracePeriods.Num() > 0)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ServerQueuedBoundOperationsGracePeriods has %d pending operations on client"), ServerQueuedBoundOperationsGracePeriods.Num());;
+			if (!bReportedServerQueuedOnClient)
+			{
+				bReportedServerQueuedOnClient = true;
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("ServerQueuedBoundOperationsGracePeriods has %d pending operations on client (reported once until it clears)"), ServerQueuedBoundOperationsGracePeriods.Num());
+			}
 		}
+		else { bReportedServerQueuedOnClient = false; }
 	}
 }

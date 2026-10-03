@@ -13,8 +13,8 @@ Six `UGMCAbility` subclasses as short sketches: the class defaults to set (only 
 | map row | `Input.Dash` → `UMyAbility_Dash` |
 
 ```cpp
-bool UMyAbility_Dash::PreExecuteCheckEvent_Implementation() { return CanAffordAbilityCost(); }
-
+// The activation refuses an unaffordable AbilityCost (1.4.1+); on 1.4.0 also override
+// PreExecuteCheckEvent_Implementation() to return CanAffordAbilityCost().
 void UMyAbility_Dash::BeginAbilityEvent_Implementation()
 {
     UGMC_MovementUtilityCmp* Move = GetOwnerMovementComponent();
@@ -58,7 +58,7 @@ void UMyAbility_Sprint::TickEvent_Implementation(float DeltaTime)
 }
 ```
 
-Activated once on the press (`QueueAbility(Input.Sprint)` from the *Started* event), it lives while the bound flag is held and ends on bound conditions, so a replay that re-runs its ticks reaches the same decision at the same move. Do not use `WaitForInputKeyRelease` to end it: that task needs an Enhanced Input action and the key's live state, neither of which a replay has. The alternative cost shape (`AbilityCost` = the ticking drain, `CommitAbilityCost()` at begin, `CanAffordAbilityCost(DeltaTime)` per tick, `RemoveAbilityCost()` at end) works but must also be removed in an override of `CancelAbility`, since the cost instance is not declared.
+Activated once on the press (`QueueAbility(Input.Sprint)` from the *Started* event), it lives while the bound flag is held and ends on bound conditions, so a replay that re-runs its ticks reaches the same decision at the same move. Do not use `WaitForInputKeyRelease` to end it: that task needs an Enhanced Input action and the key's live state, neither of which a replay has. The alternative cost shape (`AbilityCost` = the ticking drain, `CommitAbilityCost()` at begin, `CanAffordAbilityCost(DeltaTime)` per tick) works too: the activation gate judges the drain over one second, and on 1.4.1+ the committed cost is declared, so every end path removes it. On 1.4.0 it was not declared: call `RemoveAbilityCost()` from both `EndAbilityEvent` and an override of `CancelAbility`.
 
 ## 3. Charge or cast with cost at commit: `UMyAbility_Overcharge`
 
@@ -71,9 +71,7 @@ Activated once on the press (`QueueAbility(Input.Sprint)` from the *Started* eve
 | map row | `Input.Overcharge` → `UMyAbility_Overcharge` |
 
 ```cpp
-bool UMyAbility_Overcharge::PreExecuteCheckEvent_Implementation() { return CanAffordAbilityCost(); }
-
-void UMyAbility_Overcharge::BeginAbilityEvent_Implementation()
+void UMyAbility_Overcharge::BeginAbilityEvent_Implementation()   // activation already refused an unaffordable cost (1.4.1+)
 {
     UGMCAbilityTask_WaitDelay* Cast = UGMCAbilityTask_WaitDelay::WaitDelay(this, CastTime);    // ActionTimer-based
     Cast->Completed.AddDynamic(this, &UMyAbility_Overcharge::OnCastFinished);
@@ -94,7 +92,7 @@ void UMyAbility_Overcharge::OnCastFinished()                                    
 }
 ```
 
-`WaitDelay` compares `ActionTimer`, so the cast finishes in the same logical move on both sides and a replay recounts it. The cost and the cooldown are committed only when the cast completes: an interrupted cast costs nothing. A stun that arrives as an effect with `CancelAbilityOnActivation = Ability.Overcharge` ends the ability through `EndAbility` (a natural end); the explicit `CancelAbility` in `TickEvent` is what keeps the end event and any chain window from running for an interruption.
+`WaitDelay` compares `ActionTimer`, so the cast finishes in the same logical move on both sides and a replay recounts it. The cost and the cooldown are committed only when the cast completes: an interrupted cast costs nothing. A stun that arrives as an effect with `CancelAbilityOnActivation = Ability.Overcharge` cancels the ability (1.4.1+: `CancelAbilityEvent` runs, no end event, no chain window; on 1.4.0 it was a natural `EndAbility`, and the explicit `CancelAbility` in `TickEvent` was the only way to keep the end event and the window from running). Hide the cast's cosmetics in both `EndAbilityEvent` and `CancelAbilityEvent`.
 
 ## 4. Per-life persistent ability polling a bound flag: `UMyAbility_Gun`
 

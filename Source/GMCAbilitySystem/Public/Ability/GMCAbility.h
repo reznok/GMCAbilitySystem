@@ -19,8 +19,8 @@ enum class EAbilityState : uint8
 {
 	PreExecution,
 	Initialized,
-	Running,
-	Waiting,
+	Running UMETA(Hidden, DisplayName="DEPRECATED: never assigned"),
+	Waiting UMETA(Hidden, DisplayName="DEPRECATED: never assigned"),
 	Ended
 };
 
@@ -57,7 +57,7 @@ public:
 
 	bool IsActive() const;
 
-	int GetAbilityID() const {return AbilityID;};;
+	int GetAbilityID() const {return AbilityID;};
 	
 	UPROPERTY()
 	TMap<int, UGMCAbilityTaskBase*> RunningTasks;
@@ -95,22 +95,37 @@ public:
 	UFUNCTION()
 	virtual bool PreBeginAbility();
 	
+	// Entered only by an ability that survived its activation broadcast (PreBeginAbility sets Initialized,
+	// broadcasts OnAbilityActivated and refuses the activation if a listener cancelled it); a cancel from
+	// inside CancelConflictingAbilities / BeginAbilityEvent is still possible and ends the ability inside
+	// Super. An override whose work after Super creates tasks, declares effects or commits a cost must
+	// check AbilityState first: `Super::BeginAbility(); if (AbilityState == EAbilityState::Ended) return;`.
 	UFUNCTION()
 	virtual void BeginAbility();
-	
+
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Begin Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void EndAbility();
 
-	/** End an ability without triggering the EndAbilityEvent.
-	 * This is useful for abilities that need to end immediately without any additional logic, usual for dead born abilities. */
+	/** The abnormal end: FinishEndAbility (tasks ended, declared effects removed, chain hooks
+	 * ApplyEffectOnEnd / RemoveEffectOnEnd run), then CancelAbilityEvent and OnAbilityCancelled.
+	 * No EndAbilityEvent, no OnAbilityEnded, no chain window; CancelAbilityEvent and
+	 * OnAbilityCancelled fire instead. Used by every interruption: confirm timeout, server
+	 * force-end, task watchdog, CancelAbilitiesWithTag, an effect's CancelAbilityOn*,
+	 * EndAbilityOn*Query and EndOtherAbilitiesQuery. EndAbility is for an ability that completed. */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void CancelAbility();
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
+
+	/** Fired by CancelAbility after FinishEndAbility: the abnormal-end hook (stop loops, hide cosmetics).
+	 * EndAbilityEvent is the natural-end hook; an ability that must clean up on both paths implements both.
+	 * Not fired for an activation refused in PreBeginAbility (the ability never began). */
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
+	void CancelAbilityEvent();
 
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	AActor* GetOwnerActor() const;
@@ -134,14 +149,18 @@ public:
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
-	// An Effect that modifies attributes when the ability is activated
+	// An Effect that modifies attributes when the ability is activated. PreBeginAbility refuses an
+	// activation the owner cannot afford (CanAffordAbilityCost with its default DeltaTime: a Ticking or
+	// Periodic cost is judged over one second at activation). The attributes it reads and spends should
+	// be GMC-bound: the gate runs on both sides, and an unbound attribute can differ between client and
+	// server (a Warning is logged once per ability class).
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
 	// How long in seconds ability should go on cooldown when activated
 	// Requires AbilityTag to be set
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
-	float CooldownTime;
+	float CooldownTime = 0.f;
 
 	// If true, the ability will apply the Cooldown when activated
 	// If false, the ability will NOT apply the Cooldown when the ability begins
@@ -154,8 +173,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	bool bAllowMultipleInstances {false};
 	
-	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
-	// Delta time can be required if the cost is time based.
+	// True when every attribute the AbilityCost touches would still be >= 0 after all of its modifiers
+	// (judged per attribute over the whole cost: two drains on one attribute add up, a Set is absolute).
+	// DeltaTime scales a time-based cost; the activation gate uses the default, so a Ticking or Periodic
+	// cost is judged over one second at activation.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	virtual bool CanAffordAbilityCost(float DeltaTime = 1.f) const;
 
@@ -169,16 +190,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCooldown();
 	
-	// Apply the effects in AbilityCost
+	// Apply the effects in AbilityCost. A non-Instant cost is declared so it ends with the ability.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCost();
 
-	// Remove the ability cost effect (if applicable)
+	// Remove the ability cost effect now (if applicable); a declared cost would also end with the ability.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void RemoveAbilityCost();
-	
-	// Retrieves the attribute costs of this ability from its AbilityCost effect class.
-	// @return A map of GameplayTags (Attributes) to their respective modifier values.
+
+	// Per attribute, the sum of what the AbilityCost modifiers would apply now (attribute-sourced values
+	// and Conditions resolved against the owner). Without an owner (a class default object, e.g. for a
+	// hotbar or tooltip) each modifier's raw value is summed per attribute instead: Conditions are not
+	// resolved and an attribute-, custom- or externally-sourced value contributes 0.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	TMap<FGameplayTag, float> GetAbilityCostValues() const;
 
@@ -201,7 +224,7 @@ public:
 
 	// The GMC Movement Component on the same actor as OwnerAbilityComponent
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
-	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
+	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent ? OwnerAbilityComponent->GMCMovementComponent : nullptr; };
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	TObjectPtr<const UInputAction> AbilityInputAction;
@@ -264,9 +287,10 @@ public:
 
 	// Chain window: on NATURAL EndAbility (not CancelAbility), the ASC applies an
 	// internally-built transient effect (EffectTag = ChainWindowTag, grants
-	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag so a
-	// re-grant refreshes). While the tag is up, the next chain stage's
-	// ActivationRequiredTags can pass. None = no window granted.
+	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag: the window
+	// is Persistent so it has no deferred end; a re-grant while a window is open is
+	// rejected and the window keeps its original expiry). While the tag is up, the
+	// next chain stage's ActivationRequiredTags can pass. None = no window granted.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
 	FGameplayTag ChainWindowTag;
 
@@ -286,12 +310,12 @@ public:
 	 * This method performs the cancellation of abilities on the owner ability component depending on the tags specified in
 	 * `CancelAbilitiesWithTag` and `EndOtherAbilitiesQuery`. It also prevents an ability from unintentionally canceling itself.
 	 *
-	 * Abilities are checked and canceled as follows:
+	 * Abilities are checked and cancelled (abnormal end: no end event, no chain window) as follows:
 	 * - Each tag in `CancelAbilitiesWithTag` is evaluated against the current ability tag (`AbilityTag`). If the tag matches,
 	 *   the current ability is skipped.
-	 * - Calls `EndAbilitiesByTag` on the owner ability component for abilities matching a tag in `CancelAbilitiesWithTag`.
+	 * - Calls `CancelAbilitiesByTag` on the owner ability component for abilities matching a tag in `CancelAbilitiesWithTag`.
 	 * - Iterates through the active abilities in the owner ability component and checks if they match the query in
-	 *   `EndOtherAbilitiesQuery`. If a match is found, those abilities are set to pending end.
+	 *   `EndOtherAbilitiesQuery`. If a match is found, those abilities are set to pending cancel (cancelled on their next Tick).
 	 *
 	 */
 	virtual void CancelConflictingAbilities();
@@ -308,7 +332,12 @@ public:
 
 	UFUNCTION()
 	void SetPendingEnd();
-	
+
+	// Cancel on the next Tick (same deferral as SetPendingEnd, abnormal end); takes precedence over a
+	// pending natural end in the same tick.
+	UFUNCTION()
+	void SetPendingCancel();
+
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
 	// --------------------------------------	
@@ -324,7 +353,7 @@ public:
 
 	// Local activation time, in ActionTimer units. Diagnostics only: subtract it from the
 	// component's ActionTimer to age an instance that is holding a gate.
-	float GetClientStartTime() const { return ClientStartTime; }
+	double GetClientStartTime() const { return ClientStartTime; }
 
 protected:
 
@@ -342,6 +371,15 @@ private:
 	bool bServerConfirmed = false;
 
 	bool bEndPending = false;
+	bool bCancelPending = false;
+
+	// Entry latch shared by EndAbility and CancelAbility, set for good at the top of the first call: the
+	// first end wins, and exactly one hook set (end or cancel) fires for an ability.
+	bool bEndRequested = false;
+
+	// Unwind guard, set for good once FinishEndAbility starts. Defensive: both callers are latched by
+	// bEndRequested, so it cannot trip today; kept as the backstop for "the unwind runs once".
+	bool bFinishing = false;
 
 	// [TaskDiag] census state (server-side diagnostics only, wall-clock): when this ability was
 	// first observed Active with no live task (0 = has live tasks / not yet observed), and a
@@ -354,7 +392,7 @@ private:
 	// per ID warrants a Warning + full dump.
 	TSet<int> WarnedDivergentTaskIDs;
 
-	float ClientStartTime = 0.f;
+	double ClientStartTime = 0.0;
 	
 
 
@@ -364,6 +402,24 @@ private:
 
 	UPROPERTY()
 	UGMCAbilityEffect* AbilityCostInstance = nullptr;
+
+	// A copy of the AbilityCost CDO wired to the owner for read-only modifier math, built once per
+	// instance (both readers are BlueprintPure and may be polled every frame) and rebuilt if
+	// AbilityCost changes. Outer is this ability, so it dies with it. Never applied.
+	UPROPERTY(Transient)
+	TObjectPtr<UGMCAbilityEffect> CostQueryEffect;
+
+	// The cached query effect, built on first use. Null without a cost or owner. A (re)build warns once
+	// per ability class about cost attributes that are not GMC-bound.
+	UGMCAbilityEffect* GetCostQueryEffect();
+
+	// Logs the not-GMC-bound attributes the cached cost reads or writes, once per ability class.
+	void WarnUnboundCostAttributes() const;
+
+	// Per attribute the cost touches, the value it would leave: the current Value walked through every
+	// resolved modifier in order (Set / SetReplace absolute, AddPercentageOfBase scales, the rest
+	// accumulate), as the permanent apply path does. CanAffordAbilityCost and GetAbilityCostValues read it.
+	TMap<FGameplayTag, float> ProjectAbilityCost(float DeltaTime) const;
 
 	bool IsOnCooldown() const;
 
@@ -389,11 +445,12 @@ public:
 	FGameplayTagQuery ActivationQuery;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Cancel Ability via Definition Query"))
-	// End Abilities via Definition
+	// Cancel (abnormal end) every active ability whose AbilityDefinition matches when this ability begins
 	FGameplayTagQuery EndOtherAbilitiesQuery;
 
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Block Other Ability via Definition Query"))
-	// Block Abilities via Definition
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="End Other Abilities On Begin (Definition Query)"))
+	// At BeginAbility, every active ability whose AbilityDefinition matches is cancelled. It
+	// blocks nothing; the name is kept for asset compatibility.
 	FGameplayTagQuery BlockOtherAbilitiesQuery;
 
 	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Queries")

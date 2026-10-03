@@ -27,7 +27,7 @@ FString UGMCAbility::GetAbilityCutDiagnostics() const
 	const double Now = FPlatformTime::Seconds();
 	const bool bAuthority = OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority();
 	const bool bReplaying = OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic();
-	const float Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.f;
+	const double Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
 
 	FString Out = FString::Printf(
 		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f Tasks=%d"),
@@ -94,15 +94,16 @@ bool UGMCAbility::IsActive() const
 void UGMCAbility::Tick(float DeltaTime)
 {
 	// Per-ability profiling scope, named by gameplay tag (class-name fallback). The FString
-	// is only built in trace-enabled configs — TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles to
-	// nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::Tick [%s]"),
-		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+	// is only built while the CPU trace channel is on; TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles
+	// to nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)
+		? FString::Printf(TEXT("Ability::Tick [%s]"), AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName())
+		: FString()));
 
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
-	if (!OwnerAbilityComponent->HasAuthority())
+	if (!OwnerAbilityComponent->IsAuthorityForGMASLogic())
 	{
 		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
 		{
@@ -111,17 +112,15 @@ void UGMCAbility::Tick(float DeltaTime)
 			// diverging AbilityIDs and the confirm RPC targeted an instance we don't have.
 			// Full task dump so the log shows what the prediction was doing when it died.
 			UE_LOG(LogGMCAbilitySystem, Error,
-				TEXT("[AbilityCut] Client removing unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
+				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
 				ServerConfirmTimeout, *GetAbilityCutDiagnostics());
-			EndAbility();
+			CancelAbility();
 			return;
 		}
 	}
 
-	if (bEndPending) {
-		EndAbility();
-		return;
-	}
+	if (bCancelPending) { CancelAbility(); return; }
+	if (bEndPending) { EndAbility(); return; }
 
 	TickTasks(DeltaTime);
 	// A task ending itself mid-pass (or its Completed BP) can have ended the whole ability;
@@ -131,8 +130,9 @@ void UGMCAbility::Tick(float DeltaTime)
 }
 
 void UGMCAbility::AncillaryTick(float DeltaTime) {
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::AncTick [%s]"),
-		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)
+		? FString::Printf(TEXT("Ability::AncTick [%s]"), AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName())
+		: FString()));
 
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
@@ -174,9 +174,6 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 				// removal) legitimately idle task-less — this is coverage info, not an accusation.
 				const FString Diag = GetAbilityCutDiagnostics();
 				UE_LOG(LogGMCAbilitySystem, Verbose,
-					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
-					Now - TasklessSinceTime, *Diag);
-				UE_LOG(LogTemp, Verbose,
 					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
 					Now - TasklessSinceTime, *Diag);
 				bTasklessCensusLogged = true;
@@ -236,24 +233,112 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	PreBeginAbility();
 }
 
-bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
+namespace
 {
-	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return true;
+	// Ability classes (full path names) already warned about a cost attribute that is not GMC-bound:
+	// once per class per process.
+	TSet<FString> GWarnedUnboundCostAbilityClasses;
+}
 
-	UGMCAbilityEffect* AbilityEffect = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
+void UGMCAbility::WarnUnboundCostAttributes() const
+{
+	if (!CostQueryEffect || !OwnerAbilityComponent) { return; }
+	const FString ClassPath = GetClass()->GetPathName();
+	if (GWarnedUnboundCostAbilityClasses.Contains(ClassPath)) { return; }
+
+	// The activation gate reads these values on both sides; only a GMC-bound attribute is guaranteed
+	// to hold the same value on the client and the server at the same move.
+	TArray<FString> Unbound;
+	auto Check = [this, &Unbound](const FGameplayTag& Tag)
 	{
-		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(AttributeModifier.AttributeTag);
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Tag);
+		if (Attribute && !Attribute->bIsGMCBound) { Unbound.AddUnique(Tag.ToString()); }
+	};
+	for (const FGMCAttributeModifier& Modifier : CostQueryEffect->EffectData.Modifiers)
+	{
+		Check(Modifier.AttributeTag);
+		Check(Modifier.ValueAsAttribute);
+	}
+	if (Unbound.Num() == 0) { return; }
+
+	GWarnedUnboundCostAbilityClasses.Add(ClassPath);
+	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("%s: cost attribute %s is not GMC-bound; client and server may disagree on affordability. Reported once per ability class."),
+		*GetClass()->GetName(), *FString::Join(Unbound, TEXT(", ")));
+}
+
+UGMCAbilityEffect* UGMCAbility::GetCostQueryEffect()
+{
+	if (!AbilityCost || !OwnerAbilityComponent) { return nullptr; }
+
+	// Built once and reused: the readers copy each modifier by value before InitModifier /
+	// ResolveConditions, so the cached effect's data stays pristine. Rebuilt if AbilityCost changed
+	// under it; re-wired if the owner did.
+	if (!CostQueryEffect || CostQueryEffect->GetClass() != AbilityCost.Get())
+	{
+		CostQueryEffect = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+	}
+	if (CostQueryEffect->GetOwnerAbilityComponent() != OwnerAbilityComponent)
+	{
+		CostQueryEffect->InitializeForQuery(OwnerAbilityComponent);
+		WarnUnboundCostAttributes();
+	}
+	return CostQueryEffect;
+}
+
+TMap<FGameplayTag, float> UGMCAbility::ProjectAbilityCost(float DeltaTime) const
+{
+	// The modifiers are evaluated through a query effect wired to the owner: an attribute-sourced
+	// value (AMT_Attribute, AddPercentageAttribute, ...) read through the bare CDO has no owner and
+	// contributes 0, which made such a cost always affordable. Per attribute, start from the current
+	// Value and walk the resolved modifiers in order the way the permanent apply path does.
+	// The projection reads Value before this move's pending Instant costs are processed, so two
+	// activations inside one move can both pass the gate on the same Value. That is deterministic on
+	// both sides (same move, same Value), so it never diverges; it only lets such a pair overdraw.
+	TMap<FGameplayTag, float> Projected;
+	// The cache is a lazily built transient object; the projection itself is read-only.
+	UGMCAbilityEffect* Query = const_cast<UGMCAbility*>(this)->GetCostQueryEffect();
+	if (!Query) return Projected;
+
+	for (FGMCAttributeModifier Modifier : Query->EffectData.Modifiers)
+	{
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Modifier.AttributeTag);
 		if (Attribute == nullptr) continue;
 
-		AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
-		if (!AttributeModifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
-		if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
+		Modifier.InitModifier(Query, OwnerAbilityComponent->ActionTimer, -1, false, DeltaTime);
+		if (!Modifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
+
+		float* Found = Projected.Find(Modifier.AttributeTag);
+		float& Value = Found ? *Found : Projected.Add(Modifier.AttributeTag, Attribute->Value);
+		const float Delta = Modifier.CalculateModifierValue(*Attribute);
+		if (Modifier.Op == EModifierType::Set || Modifier.Op == EModifierType::SetReplace)
+		{
+			Value = Delta;            // the absolute target for these ops
+		}
+		else if (Modifier.Op == EModifierType::AddPercentageOfBase)
+		{
+			// Scales the projected value: an approximation of the real apply, which scales the base layer
+			// (the two agree while no temporary modifier sits on the attribute).
+			Value *= 1.f + Delta;
+		}
+		else
+		{
+			Value += Delta;
+		}
+	}
+	return Projected;
+}
+
+bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
+{
+	// Judged per attribute over every modifier of the cost: two drains on one attribute add up and
+	// a Set is absolute.
+	for (const TPair<FGameplayTag, float>& Projected : ProjectAbilityCost(DeltaTime))
+	{
+		if (Projected.Value < 0.f)
 		{
 			return false;
 		}
 	}
-
 	return true;
 }
 
@@ -273,29 +358,64 @@ void UGMCAbility::CommitAbilityCost()
 {
 	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return;
 
-	const UGMCAbilityEffect* EffectCDO = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
-	FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
+	UGMCAbilityEffect* CostEffect = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+	FGMCAbilityEffectData EffectData = CostEffect->EffectData;
 	EffectData.OwnerAbilityComponent = OwnerAbilityComponent;
 	EffectData.SourceAbilityComponent = OwnerAbilityComponent;
-	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
+	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(CostEffect, EffectData);
+
+	// A cost that outlives this call (Ticking / Persistent / Periodic) ends with the ability on
+	// every end path, like any effect applied with HandlingAbility.
+	if (AbilityCostInstance && !AbilityCostInstance->bCompleted)
+	{
+		DeclareEffect(AbilityCostInstance->EffectData.EffectID, EGMCAbilityEffectQueueType::Predicted);
+	}
 }
 
 void UGMCAbility::RemoveAbilityCost() {
-	if (AbilityCostInstance) {
+	// An already-ended cost (Instant, or declared and ended with the ability) is a silent no-op in
+	// RemoveActiveAbilityEffect.
+	if (AbilityCostInstance && OwnerAbilityComponent) {
+		const int CostID = AbilityCostInstance->EffectData.EffectID;
 		OwnerAbilityComponent->RemoveActiveAbilityEffect(AbilityCostInstance);
+
+		// Forget the declaration: a removed cost is purged from ActiveEffects on the next effect tick,
+		// after which its id no longer resolves and FinishEndAbility would take the [EffectLeak] tag
+		// fallback, removing the first live effect with the cost's tag (another instance's cost, or
+		// any effect sharing the tag).
+		DeclaredEffect.Remove(CostID);
+		DeclaredEffectTags.Remove(CostID);
+		AbilityCostInstance = nullptr;
 	}
 }
 
 TMap<FGameplayTag, float> UGMCAbility::GetAbilityCostValues() const
 {
+	// Per attribute, the change the cost would make now: projected minus current.
 	TMap<FGameplayTag, float> CostMap;
 	if (!AbilityCost) return CostMap;
 
-	const UGMCAbilityEffect* EffectCDO = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-    
-	for (const FGMCAttributeModifier& Modifier : EffectCDO->EffectData.Modifiers)
+	if (!OwnerAbilityComponent)
 	{
-		CostMap.Add(Modifier.AttributeTag, Modifier.GetValue()); 
+		// No owner (a class default object, typically read by hotbar or tooltip UI): the raw modifier
+		// values summed per attribute, Conditions unresolved. An attribute-, custom- or externally-sourced
+		// value has nothing to resolve against here and contributes 0 (GetValue would log an Error for
+		// it on every poll).
+		for (const FGMCAttributeModifier& Modifier : AbilityCost->GetDefaultObject<UGMCAbilityEffect>()->EffectData.Modifiers)
+		{
+			float& Sum = CostMap.FindOrAdd(Modifier.AttributeTag);
+			if (Modifier.ValueType == EGMCAttributeModifierType::AMT_Value)
+			{
+				Sum += Modifier.GetValue();
+			}
+		}
+		return CostMap;
+	}
+
+	for (const TPair<FGameplayTag, float>& Projected : ProjectAbilityCost(1.f))
+	{
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Projected.Key);
+		CostMap.Add(Projected.Key, Projected.Value - (Attribute ? Attribute->Value : 0.f));
 	}
 	return CostMap;
 }
@@ -318,7 +438,16 @@ void UGMCAbility::ResetBlockOtherAbility() {
 
 void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 {
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	const FGMCAbilityTaskData* Ptr = TaskData.IsValid() && TaskData.GetScriptStruct()->IsChildOf(FGMCAbilityTaskData::StaticStruct())
+		? TaskData.GetPtr<FGMCAbilityTaskData>() : nullptr;
+	if (!Ptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] HandleTaskData: payload (struct %s) for TaskID=%d is not a FGMCAbilityTaskData; dropped (ability %s, owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("none"), TaskID,
+			*AbilityTag.ToString(), *GetNameSafe(GetOwnerActor()));
+		return;
+	}
+	const FGMCAbilityTaskData TaskDataFromInstance = *Ptr;
 	if (RunningTasks.Contains(TaskID) && RunningTasks[TaskID] != nullptr)
 	{
 		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Progress)
@@ -362,12 +491,6 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
 			TaskID, TaskIDCounter, *Diag);
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
-				TaskID, TaskIDCounter, *Diag);
-		}
 	}
 }
 
@@ -396,12 +519,6 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
 			TaskID, TaskIDCounter, *Diag);
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
-				TaskID, TaskIDCounter, *Diag);
-		}
 	}
 	else
 	{
@@ -414,11 +531,11 @@ void UGMCAbility::CancelConflictingAbilities()
 {
 	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
 		if (AbilityTag == AbilityToCancelTag) {
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s lists its own tag in CancelAbilitiesWithTag; an ability cannot cancel itself on activation, the entry is ignored."), *AbilityTag.ToString());
 			continue;
 		}
 
-		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+		if (OwnerAbilityComponent->CancelAbilitiesByTag(AbilityToCancelTag)) {
 			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());
 		}
 	}
@@ -431,7 +548,7 @@ void UGMCAbility::CancelConflictingAbilities()
 
 			if (EndOtherAbilitiesQuery.Matches(ActiveAbility.Value->AbilityDefinition))
 			{
-				ActiveAbility.Value->SetPendingEnd();
+				ActiveAbility.Value->SetPendingCancel();
 				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s cancelled ability %s (matching definition query)"),
 					*AbilityTag.ToString(), *ActiveAbility.Value->AbilityTag.ToString());
 			}
@@ -450,6 +567,10 @@ void UGMCAbility::SetPendingEnd() {
 	bEndPending = true;
 }
 
+void UGMCAbility::SetPendingCancel() {
+	bCancelPending = true;
+}
+
 
 UGameplayTasksComponent* UGMCAbility::GetGameplayTasksComponent(const UGameplayTask& Task) const
 {
@@ -465,7 +586,7 @@ AActor* UGMCAbility::GetGameplayTaskOwner(const UGameplayTask* Task) const
 
 AActor* UGMCAbility::GetGameplayTaskAvatar(const UGameplayTask* Task) const
 {
-	// Wtf is avatar?
+	// GMAS has no separate avatar: the owner actor is the avatar.
 	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent->GetOwner(); }
 	return nullptr;
 }
@@ -496,6 +617,18 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 
 void UGMCAbility::FinishEndAbility() {
 
+	// Defensive: both callers (EndAbility, CancelAbility) are latched by bEndRequested, so a declared
+	// effect's CancelAbilityOnEnd (or any listener) targeting this ability mid-unwind never gets here;
+	// kept as the backstop that makes "the unwind runs once" true on its own.
+	if (bFinishing) { return; }
+	bFinishing = true;
+
+	// Read before the state is written below: a dead-born instance (refused in PreBeginAbility) never
+	// began, and its end effects are for an ability that ran, not for a refused press.
+	// Same predicate as CancelAbility's capture; both read before any state write, so the cancel hooks
+	// and this gate always agree.
+	const bool bHadBegun = AbilityState != EAbilityState::PreExecution;
+
 	// [AbilityCut] probe: an ability ending while it still has unfinished tasks is the
 	// fingerprint of an abnormal cut (watchdog kill, confirm timeout, cancel-by-other,
 	// gameplay guard, forced server end). Normal completions end with every task already
@@ -516,14 +649,6 @@ void UGMCAbility::FinishEndAbility() {
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
 			UnfinishedTasks, *Diag);
-		// Mirror onto LogTemp: the dedicated-server log export only ships a fixed category
-		// allowlist (LogTemp included, LogGMCAbilitySystem not).
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
-				UnfinishedTasks, *Diag);
-		}
 	}
 
 	// Snapshot: EndTaskGMAS -> EndTask -> OnDestroy unregisters the entry being visited,
@@ -585,7 +710,8 @@ void UGMCAbility::FinishEndAbility() {
 	// Chain hooks: apply / remove effects when this ability ends. Reuses bInsideGMCTick from the
 	// DeclaredEffect removal block above — Predicted requires being inside a GMC tick or
 	// Standalone, otherwise PredictedQueued is used to defer until the next safe window.
-	if (OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
+	// Skipped for a dead-born instance (bHadBegun above).
+	if (bHadBegun && OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
 	{
 		const EGMCAbilityEffectQueueType ChainQueueType =
 			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
@@ -613,7 +739,7 @@ void UGMCAbility::FinishEndAbility() {
 
 bool UGMCAbility::IsOnCooldown() const
 {
-	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
+	return OwnerAbilityComponent && OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
 }
 
 
@@ -632,12 +758,14 @@ void UGMCAbility::DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType 
 	DeclaredEffect.Add(OutEffectHandle, EffectType);
 
 	// Cache the tag now, while the id still resolves. FinishEndAbility needs it to reach the effect
-	// after a replay renumbered it.
+	// after a replay renumbered it. A live effect only: a completed one (Instant, or already removed
+	// by a listener) has nothing left to end, and a cached tag for it would let the [EffectLeak] tag
+	// fallback at ability end remove an unrelated live effect sharing the tag.
 	if (OwnerAbilityComponent)
 	{
 		if (const UGMCAbilityEffect* Effect = OwnerAbilityComponent->GetEffectById(OutEffectHandle))
 		{
-			if (Effect->EffectData.EffectTag.IsValid())
+			if (!Effect->bCompleted && Effect->EffectData.EffectTag.IsValid())
 			{
 				DeclaredEffectTags.Add(OutEffectHandle, Effect->EffectData.EffectTag);
 			}
@@ -650,6 +778,15 @@ bool UGMCAbility::PreBeginAbility()
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
+		CancelAbility();
+		return false;
+	}
+
+	// An AbilityCost the owner cannot pay refuses the activation here, before any event of the ability
+	// runs; CommitAbilityCost is still the ability's own call.
+	if (!CanAffordAbilityCost())
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cost"), *AbilityTag.ToString());
 		CancelAbility();
 		return false;
 	}
@@ -687,6 +824,18 @@ bool UGMCAbility::PreBeginAbility()
 		return false;
 	}
 
+	// Begun exactly when listeners are told it activated: a listener's CancelAbility() on the ability
+	// it was handed is the cancel of a begun ability (cancel hooks fire) and refuses the activation
+	// here, before the cooldown and BeginAbilityEvent. BeginAbility and every override of it are thus
+	// entered only by an ability that survived its activation broadcast; an override that starts
+	// tasks or declares effects after Super never does so on an Ended instance.
+	AbilityState = EAbilityState::Initialized;
+	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
+	if (AbilityState == EAbilityState::Ended)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped by an OnAbilityActivated listener"), *AbilityTag.ToString());
+		return false;
+	}
 
 	BeginAbility();
 
@@ -696,21 +845,18 @@ bool UGMCAbility::PreBeginAbility()
 
 void UGMCAbility::BeginAbility()
 {
-
-
-	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
-
+	// End-other-on-begin query (misnamed BlockOtherAbilitiesQuery): cancel matching abilities.
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{
-		FGameplayTagQuery BlockQuery = BlockOtherAbilitiesQuery;
+		FGameplayTagQuery EndQuery = BlockOtherAbilitiesQuery;
 		for (auto& ActiveAbility : OwnerAbilityComponent->GetActiveAbilities())
 		{
 			const FGameplayTagContainer& ActiveAbilityTags = ActiveAbility.Value->AbilityDefinition;
 
-			if (BlockQuery.Matches(ActiveAbilityTags))
+			if (EndQuery.Matches(ActiveAbilityTags))
 			{
-				ActiveAbility.Value->SetPendingEnd();
-				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s blocked ability %s (matching query)"),
+				ActiveAbility.Value->SetPendingCancel();
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s cancelled ability %s (matching query)"),
 					*AbilityTag.ToString(), *ActiveAbility.Value->AbilityTag.ToString());
 			}
 		}
@@ -740,11 +886,12 @@ void UGMCAbility::BeginAbility()
 		CommitAbilityCooldown();
 	}
 
-	// Initialize Ability
-	AbilityState = EAbilityState::Initialized;
-
 	// Cancel Abilities in CancelAbilitiesWithTag container
 	CancelConflictingAbilities();
+	// Defensive: this ability is not in ActiveAbilities yet, so a cancel from inside those hooks can only
+	// come through a reference a listener stored at the activation broadcast. It lands after the
+	// cooldown was committed; the cooldown stays, as for any cancel of a begun ability.
+	if (AbilityState == EAbilityState::Ended) return;
 
 	// Execute BP Event
 	BeginAbilityEvent();
@@ -756,43 +903,59 @@ void UGMCAbility::BeginAbilityEvent_Implementation()
 
 void UGMCAbility::EndAbility()
 {
-	if (AbilityState != EAbilityState::Ended) {
-		// Chain: grant the next stage's window on NATURAL end only —
-		// CancelAbility skips this on purpose (interrupted swings don't
-		// advance a combo).
-		if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
-		{
-			const bool bInsideGMCTick =
-				(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
-				|| OwnerAbilityComponent->IsInAncillaryTick()
-				|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
-			const EGMCAbilityEffectQueueType WindowQueueType =
-				bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+	// bEndRequested: the first end wins. A same-kind re-entry (a declared effect's CancelAbilityOnEnd,
+	// a listener on the chain window effect) is the same end; a cross-kind re-entry (an EndAbility()
+	// during a cancel's unwind, or a CancelAbility() during a natural end) is ignored on purpose, so
+	// exactly one hook set fires. AbilityState only turns Ended once FinishEndAbility returns, so the
+	// state alone cannot tell; the latch is set before anything below can reach a listener.
+	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
+	bEndRequested = true;
 
-			FGMCAbilityEffectData WindowData;
-			WindowData.EffectTag = ChainWindowTag;
-			WindowData.GrantedTags.AddTag(ChainWindowTag);
-			// Persistent (not the default Instant — that ends the same frame
-			// and the tag never survives) with a finite Duration.
-			WindowData.EffectType = EGMASEffectType::Persistent;
-			WindowData.Duration = ChainWindowDuration;
-			WindowData.bUniqueByEffectTag = true; // re-grant refreshes, never stacks
+	// Chain: grant the next stage's window on NATURAL end only —
+	// CancelAbility skips this on purpose (interrupted swings don't
+	// advance a combo).
+	if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType WindowQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
 
-			int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
-			OwnerAbilityComponent->ApplyAbilityEffect(
-				UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
-		}
+		FGMCAbilityEffectData WindowData;
+		WindowData.EffectTag = ChainWindowTag;
+		WindowData.GrantedTags.AddTag(ChainWindowTag);
+		// Persistent (not the default Instant — that ends the same frame
+		// and the tag never survives) with a finite Duration.
+		WindowData.EffectType = EGMASEffectType::Persistent;
+		WindowData.Duration = ChainWindowDuration;
+		WindowData.bUniqueByEffectTag = true; // single instance per tag: a re-grant during an open window is rejected
 
-		FinishEndAbility();
-		EndAbilityEvent();
-		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);
+		int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
+		OwnerAbilityComponent->ApplyAbilityEffect(
+			UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
 	}
+
+	FinishEndAbility();
+	EndAbilityEvent();
+	if (OwnerAbilityComponent) { OwnerAbilityComponent->OnAbilityEnded.Broadcast(this); }
 }
 
 
 void UGMCAbility::CancelAbility() {
-	if (AbilityState != EAbilityState::Ended) {
-		FinishEndAbility();
+	// Same entry latch as EndAbility: the first end wins, one unwind, one hook set.
+	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
+	bEndRequested = true;
+
+	// An activation refused in PreBeginAbility (cooldown, PreExecuteCheck, blocked) is not an
+	// interruption: the ability never began, so the cancel hooks stay silent for it.
+	const bool bHadBegun = AbilityState != EAbilityState::PreExecution;
+	FinishEndAbility();
+	if (bHadBegun)
+	{
+		CancelAbilityEvent();
+		if (OwnerAbilityComponent) { OwnerAbilityComponent->OnAbilityCancelled.Broadcast(this); }
 	}
 }
 
@@ -800,9 +963,13 @@ void UGMCAbility::EndAbilityEvent_Implementation()
 {
 }
 
+void UGMCAbility::CancelAbilityEvent_Implementation()
+{
+}
+
 AActor* UGMCAbility::GetOwnerActor() const
 {
-	return OwnerAbilityComponent->GetOwner();
+	return OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr;
 }
 
 AGMC_Pawn* UGMCAbility::GetOwnerPawn() const {
@@ -823,13 +990,14 @@ AGMC_PlayerController* UGMCAbility::GetOwningPlayerController() const {
 
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 {
-	return OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag);
+	// 0 without an owner (a class default object), as the component returns for an unknown tag.
+	return OwnerAbilityComponent ? OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag) : 0.f;
 }
 
 
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
-	OwnerAbilityComponent->bJustTeleported = bValue;
+	if (OwnerAbilityComponent) { OwnerAbilityComponent->bJustTeleported = bValue; }
 }
 
 void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)
@@ -841,5 +1009,5 @@ void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
 {
 	BlockOtherAbilitiesQuery = NewQuery;
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("BlockOtherAbilityByDefinitionQuery modified: %s"), *NewQuery.GetDescription());
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("EndOtherAbilitiesOnBegin query modified: %s"), *NewQuery.GetDescription());
 }

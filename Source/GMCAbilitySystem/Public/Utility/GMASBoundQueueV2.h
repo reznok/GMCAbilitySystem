@@ -1,6 +1,10 @@
 ﻿#pragma once
 
-#include "StructUtils/InstancedStruct.h"
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+#include "StructUtils/InstancedStruct.h"  // UE 5.5+
+#else
+#include "InstancedStruct.h"              // UE 5.4 and earlier
+#endif
 #include "GMASBoundQueueV2_Operations.h"
 #include "GMCMovementUtilityComponent.h"
 #include "GMASBoundQueueV2.generated.h"
@@ -25,7 +29,7 @@ struct FOperationDataCacheExpiration
 };
 
 USTRUCT()
-struct  FGMASBoundQueueV2
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2
 {
 	GENERATED_BODY()
 	// Events
@@ -49,7 +53,9 @@ struct  FGMASBoundQueueV2
 	// Any negative ID is a client generated operation
 	int GetNextOperationID()
 	{
-		if (GMCMovementComponent->GetNetMode() != NM_Client)
+		// Reachable through MakeOperationData before BindToGMC: without a movement component this
+		// side cannot be a client, so it takes a positive (server) id.
+		if (!GMCMovementComponent || GMCMovementComponent->GetNetMode() != NM_Client)
 		{
 			return ++NextOperationID;
 		}
@@ -69,6 +75,7 @@ public:
 		{
 			OperationPayloads.Remove(OperationID);
 		}
+		ReportedInvalidPayloadIDs.Remove(OperationID);
 	}
 
 	// Make a GetOperationByID
@@ -147,8 +154,8 @@ public:
 	// Queue a Client operation
 	void QueueClientOperation(const int OperationID);
 
-	// Queue a ServerAuth operation
-	void QueueServerOperation(const int OperationID, const float Timeout = 1.0f);
+	// Queue a server operation; Timeout is the ack grace in seconds (UGMASNetworkTimingSettings::ServerOperationGraceSeconds for pawns with a client, 0 otherwise).
+	void QueueServerOperation(const int OperationID, const float Timeout);
 	
 	bool CurrentOperationIsOfType(const UScriptStruct* T) const
 	{
@@ -172,15 +179,20 @@ public:
 	// Bounded ring of the most-recently dispatched sub-op IDs. A batch is only ever
 	// reprocessed within its own short lifetime (one move's prediction+ancillary
 	// tick pair, a handful of server ticks), so a small ring is always large enough
-	// to recognise the reprocess; older entries are evicted FIFO. IDs are globally
-	// monotonic (GetNextOperationID never reuses a value), so an ID found here was
-	// genuinely processed -- there are no false benign-skips. Netmode-independent
+	// to recognise the reprocess; older entries are evicted FIFO. IDs are monotonic for
+	// one connection (GetNextOperationID does not reuse a value), so an ID found here was
+	// genuinely processed -- there are no false benign-skips. A reconnecting client restarts
+	// its ids, so the server empties the ring then (ResetForNewConnection). Netmode-independent
 	// (does not depend on GMCMoveCounter, which never advances on a listen server).
 	static constexpr int32 MaxRecentlyProcessedOperations = 256;
 	TArray<int32> RecentlyProcessedOperationIDs;
 
 	// Record a sub-op as successfully dispatched on this side.
 	void MarkOperationProcessed(int32 OperationID);
+
+	// A new owning connection took over (kept-pawn reconnect): its client restarts its operation
+	// ids at -1, so forget the processed ring and every cached client-made (negative id) payload.
+	void ResetForNewConnection();
 
 	// True if this sub-op was dispatched recently (i.e. a missing payload is a
 	// benign reprocess, not a genuine divergence).
@@ -202,8 +214,12 @@ public:
 	// the end of the batch, carrying every successfully-processed sub-op ID.
 	bool bInBatchDispatch = false;
 
-	// Runs checks on the current state of the queue and logs any issues found
+	// Runs checks on the current state of the queue and logs any issues found. Each issue is
+	// reported once (per id, or until the offending queue clears) instead of every tick.
 	void CheckValidState() const;
+	mutable TSet<int> ReportedInvalidPayloadIDs;
+	mutable bool bReportedClientQueuedOnServer = false;
+	mutable bool bReportedServerQueuedOnClient = false;
 };
 
 // Operations

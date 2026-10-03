@@ -45,7 +45,7 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 	UPROPERTY()
 	UGMC_AbilitySystemComponent* AbilityComponent { nullptr };
 
-	bool operator==(const FAttributeClamp* Other) const {return *this == *Other;}
+	bool operator==(const FAttributeClamp* Other) const { return Other != nullptr && *this == *Other; }
 	bool operator==(const FAttributeClamp& Other) const
 	{
 		return Other.Min == Min
@@ -57,6 +57,12 @@ struct GMCABILITYSYSTEM_API FAttributeClamp
 	}
 
 	bool IsSet() const;
-	
+
+	// The bound in effect on each side: the value of MinAttributeTag / MaxAttributeTag read through
+	// AbilityComponent when both are set, else the literal Min / Max. Neither consults bClampMin /
+	// bClampMax; callers check the flag.
+	float ResolveMin() const;
+	float ResolveMax() const;
+
 	float ClampValue(float Value) const;
 };

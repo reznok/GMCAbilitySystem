@@ -72,8 +72,7 @@ void FAttribute::CalculateValue() const
 		if (Mod.Kind != EAttributeModifierKind::Set && Mod.Kind != EAttributeModifierKind::SetReplace) continue;
 		if (!Mod.InstigatorEffect.IsValid())
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphelin Set Modifier found in FAttribute::CalculateValue"));
-			checkNoEntry();
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphan Set Modifier found in FAttribute::CalculateValue"));
 			continue;
 		}
 		if (!WinningSet
@@ -101,8 +100,7 @@ void FAttribute::CalculateValue() const
 		if (Mod.Kind != EAttributeModifierKind::PercentOfBase) continue;
 		if (!Mod.InstigatorEffect.IsValid())
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphelin PercentOfBase Modifier found in FAttribute::CalculateValue"));
-			checkNoEntry();
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphan PercentOfBase Modifier found in FAttribute::CalculateValue"));
 			continue;
 		}
 		if (bReplaceMode && Mod.ActionTimer < SetTime) continue;
@@ -116,8 +114,7 @@ void FAttribute::CalculateValue() const
 		if (Mod.Kind != EAttributeModifierKind::Add) continue;
 		if (!Mod.InstigatorEffect.IsValid())
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphelin Attribute Modifier found in FAttribute::CalculateValue"));
-			checkNoEntry();
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Orphan Attribute Modifier found in FAttribute::CalculateValue"));
 			continue;
 		}
 		if (bReplaceMode && Mod.ActionTimer < SetTime) continue;
@@ -146,7 +143,6 @@ void FAttribute::PurgeTemporalModifier(double CurrentActionTimer)
 	if (!bIsGMCBound)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("PurgeTemporalModifier called on an unbound attribute %s"), *Tag.ToString());
-		checkNoEntry();
 		return;
 	}
 	

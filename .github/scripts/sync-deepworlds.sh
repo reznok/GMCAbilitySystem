@@ -15,6 +15,7 @@ UPSTREAM_BRANCH="${UPSTREAM_BRANCH:-dev}"
 UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-deepworlds}"
 TARGET_BRANCH="${TARGET_BRANCH:-dev}"
 SYNC_BRANCH="${SYNC_BRANCH:-sync/deepworlds}"
+CANONICAL_URL="${CANONICAL_URL:-https://github.com/reznok/GMCAbilitySystem.git}"
 DRY_RUN="${DRY_RUN:-false}"
 LABEL="deepworlds-sync"
 MAX_LISTED_COMMITS=50
@@ -39,8 +40,7 @@ upstream_label() {
 }
 
 open_pr_number() {
-	gh pr list --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --state open --json number |
-		sed -n 's/.*"number": *\([0-9][0-9]*\).*/\1/p' | head -n 1
+	gh pr list --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --state open --json number --jq '.[0].number // empty'
 }
 
 # Close the conflict PR if one is open and delete the sync branch if present. $1 = comment.
@@ -94,7 +94,8 @@ $commits_md
 
 ## Resolve locally
     git fetch origin $TARGET_BRANCH $SYNC_BRANCH
-    git checkout $TARGET_BRANCH && git pull --ff-only
+    git checkout $TARGET_BRANCH
+    git pull --ff-only
     git merge --no-ff origin/$SYNC_BRANCH
     # resolve conflicts, build locally, then
     git push origin $TARGET_BRANCH
@@ -109,6 +110,11 @@ current=$(git rev-parse --abbrev-ref HEAD)
 [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
 [ "$(git rev-parse --is-shallow-repository)" = "false" ] || die "shallow clone; full history is required"
 is_dry || [ -n "${GH_TOKEN:-}" ] || die "GH_TOKEN is required unless DRY_RUN=true"
+origin_url=$(git remote get-url origin 2>/dev/null || true)
+case "$origin_url" in
+	"$CANONICAL_URL"|"${CANONICAL_URL%.git}"|"${CANONICAL_URL%.git}.git") ;;
+	*) is_dry || die "origin is '$origin_url', not the canonical repository ($CANONICAL_URL); set CANONICAL_URL to override" ;;
+esac
 
 # ---- fetch the fork
 if git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then

@@ -53,7 +53,7 @@ protected:
 	
 	void OnKeyPressed(const FInputActionValue& InputActionValue);
 
-	/** If true, we may complete this task during activation if the ability's input action key is already released. */
+	/** If true, the task completes during activation when the ability's input action is already pressed. */
 	UPROPERTY(Transient)
 	bool bShouldCheckForPressDuringActivation = false;
 

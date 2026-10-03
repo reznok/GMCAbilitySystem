@@ -77,6 +77,6 @@ The guard is true on the owning client's first execution of a move and on the se
 | `FireCustomEvent(FGameplayTag EventTag, FInstancedStruct Payload)` (1.4+) | the server and the owning client in the same logical move, through `OnCustomEvent(EventTag, Payload)`; an AI pawn on its next ancillary tick; never simulated proxies | a one-shot the owner must act on deterministically (knock-up parameters, forced reload, a cue the owner plays at the same move the server did) |
 | `AddImpulse(FVector Impulse, bool bVelChange = false)` | same path | knock-backs (`gmas:gmas-rules`) |
 | `SetActorLocation(FVector Location)` | same path | teleports |
-| `ExecuteSyncedEvent(FGMASSyncedEventContainer)` and `OnSyncedEvent` | nobody on the 1.4 tree: the call validates its input and queues nothing | do not build on it |
+| `ExecuteSyncedEvent(FGMASSyncedEventContainer)` and `OnSyncedEvent` | nobody on the 1.4 tree: the call does nothing (deprecated in 1.4.1, removed in 1.5) | do not build on it: `FireCustomEvent` / `OnCustomEvent` |
 
 A client call logs a `Warning` and returns. The payload is any `USTRUCT` in an `FInstancedStruct`; both sides read it from the delegate and integrate it themselves. Proxies see the result through bound state; a cue they must also see is one of the multicasts above, sent from the same server code.

@@ -16,7 +16,7 @@ void UGMCAbilityTask_SetTargetDataFloat::Activate()
 {
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -25,8 +25,14 @@ void UGMCAbilityTask_SetTargetDataFloat::Activate()
 void UGMCAbilityTask_SetTargetDataFloat::ProgressTask(FInstancedStruct& TaskData)
 {
 	Super::ProgressTask(TaskData);
+	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataFloat::StaticStruct())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataFloat::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataFloat; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
+		EndTask();
+		return;
+	}
 	const FGMCAbilityTaskTargetDataFloat Data = TaskData.Get<FGMCAbilityTaskTargetDataFloat>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }
