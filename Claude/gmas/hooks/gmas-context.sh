@@ -66,7 +66,7 @@ debug "root=$project_root gmc=$gmc_dir gmas=$gmas_dir"
 if [ -z "$gmas_dir" ]; then debug "no GMAS under Plugins/"; exit 0; fi
 
 gmas_version="$(version_of "$project_root/$gmas_dir/GMCAbilitySystem.uplugin")"
-[ -n "$gmas_version" ] || gmas_version="unknown version"
+[ -n "$gmas_version" ] || gmas_version="unknown"
 if [ -f "$project_root/$gmas_dir/Source/GMCAbilitySystem/Public/Utility/GMASBoundQueueV2.h" ]; then
 	generation="1.4+ bound queue V2"
 else
@@ -83,7 +83,7 @@ else
 	gmc_source="GMC was not found under \`Plugins/\`; it may be installed as an engine plugin (Engine/Plugins/Marketplace). GMC's source is licensed: read its headers where they are and never copy GMC code into other repositories."
 fi
 
-context="This project uses $gmc_text and GMAS (GMC Ability System) at \`$gmas_dir\` ($gmas_version, $generation). $gmc_source"
+context="This project uses $gmc_text and GMAS (GMC Ability System) at \`$gmas_dir\` (VersionName $gmas_version, $generation). $gmc_source"
 context="$context Load gmas:gmas-rules before editing predicted gameplay (gmas:gmc-prediction for GMC-only code); author with gmas:gmas-ability, gmas:gmas-effect, gmas:gmas-attribute, gmas:gmas-task; use gmas:gmas-debug for desync, replay or missing-effect issues, gmas:gmas-review for reviews, gmas:gmas-testing for automation tests, gmas:gmas-setup when wiring a new pawn, gmas:gmas-upgrade after updating GMAS."
 
 emit "$context"
