@@ -30,7 +30,8 @@ enum class EGMASEffectState : uint8
 
 
 
-// Container for exposing the attribute modifier to blueprints
+// Container for exposing the attribute modifier to blueprints.
+// Payload type of the deprecated OnPreAttributeChanged; removed in 1.5.
 UCLASS()
 class GMCABILITYSYSTEM_API UGMCAttributeModifierContainer : public UObject
 {
@@ -295,8 +296,6 @@ public:
 	
 	virtual void Tick(float DeltaTime);
 
-	int32 CalculatePeriodicTicksBetween(float Period, float StartActionTimer, float EndActionTimer);
-
 	// Return the current duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	float GetCurrentDuration() const { return EffectData.CurrentDuration; }
@@ -347,12 +346,10 @@ public:
 	
 	void UpdateState(EGMASEffectState State, bool Force=false);
 
-	virtual bool IsPaused();
+	virtual bool IsPaused() const;
 
 	bool IsEffectModifiersRegisterInHistory() const;
 	
-	float ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* attribute);
-
 	bool bCompleted;
 
 	// True once StartEffect passed its gates and applied tags, abilities and the first modifiers. False on an effect refused by its application tags / ActivationQuery.
@@ -384,9 +381,6 @@ public:
 
 protected:
 
-	UPROPERTY(Transient)
-	TMap<TSubclassOf<UGMCAttributeModifierCustom_Base>, UGMCAttributeModifierCustom_Base*> CustomModifiersInstances;
-
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent = nullptr;
 
@@ -410,7 +404,7 @@ private:
 	void EndActiveAbilitiesFromOwner(const FGameplayTagContainer& TagContainer);
 
 	// Does the owner have any of the tags from the container?
-	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
+	bool DoesOwnerHaveTagFromContainer(const FGameplayTagContainer& TagContainer) const;
 	
 	void EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery);
 
@@ -428,9 +422,8 @@ public:
 	void EndEffectEvent();
 
 	
-	FString ToString() {
-		return FString::Printf(TEXT("[name: %s] (%s) | %s | %s | Data: %s"), *GetName().Right(30), *EnumToString(CurrentState), bHasStarted ? TEXT("Started") : TEXT("Not Started"), IsPaused() ? TEXT("Paused") : TEXT("Running"), *EffectData.ToString());
-	}
+	// One line for logs and the gameplay debugger, with the client's answer state for this effect id.
+	FString ToString() const;
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
 	void ModifyMustMaintainQuery(const FGameplayTagQuery& NewQuery);

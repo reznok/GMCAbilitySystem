@@ -1,3 +1,4 @@
+// Deprecated with ExecuteSyncedEvent (GMAS 1.4.1); removed in 1.5. FireCustomEvent carries a tag and an FInstancedStruct instead.
 #pragma once
 
 #include "CoreMinimal.h"

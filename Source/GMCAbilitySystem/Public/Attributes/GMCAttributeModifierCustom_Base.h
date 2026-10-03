@@ -29,6 +29,9 @@ class UGMC_AbilitySystemComponent;
  * Features include:
  * - Extension support for custom logic and behaviors.
  * - Compatibility with general modifier systems.
+ *
+ * Calculators run on the class default object: keep them stateless (configuration in class
+ * defaults, no per-call members).
  */
 UCLASS(Blueprintable)
 class GMCABILITYSYSTEM_API UGMCAttributeModifierCustom_Base : public UObject

@@ -32,8 +32,6 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 			DataPack.NBAttributes = AbilityComponent->GetAllAttributes().Num();
 			DataPack.ActiveEffects = AbilityComponent->GetActiveEffectsString();
 			DataPack.NBActiveEffects = AbilityComponent->GetActiveEffects().Num();
-			DataPack.ActiveEffectData = AbilityComponent->GetActiveEffectsDataString();
-			DataPack.NBActiveEffectData = AbilityComponent->GetActiveEffects().Num();
 			DataPack.ActiveAbilities = AbilityComponent->GetActiveAbilitiesString();
 			DataPack.NBActiveAbilities = AbilityComponent->GetActiveAbilities().Num();
 			DataPack.NBCachedOperationPayloads = AbilityComponent->BoundQueueV2.GetPayloadCount();
@@ -127,23 +125,12 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::DrawData(APlayerController* Own
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects: {white}%s\n"), *AbilityComponent->GetActiveEffectsString());
 		}
 
-		// Active Effects Data
-		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Active Effects Data: {white}%s"), *DataPack.ActiveEffectData);
-		// Show client-side data
-		if (AbilityComponent)
-		{
-			if (DataPack.NBActiveEffectData != AbilityComponent->GetActiveEffects().Num())
-				CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {red} [INCOHERENCY] {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
-			else
-			CanvasContext.Printf(TEXT("{green}[client] {yellow}Active Effects Data: {white}%s\n"), *AbilityComponent->GetActiveEffectsDataString());
-		}
-
 		// Cached Operations Data
 		CanvasContext.Printf(TEXT("{blue}[server] {yellow}Cached Operations: {white}%d"), DataPack.NBCachedOperationPayloads);
 		// Show client-side data
 		if (AbilityComponent)
 		{
-			if (DataPack.NBActiveEffectData != AbilityComponent->GetActiveEffects().Num())
+			if (DataPack.NBCachedOperationPayloads != AbilityComponent->BoundQueueV2.GetPayloadCount())
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {red} [INCOHERENCY] {white}%d\n"), AbilityComponent->BoundQueueV2.GetPayloadCount());
 			else
 				CanvasContext.Printf(TEXT("{green}[client] {yellow}Cached Operations: {white}%d\n"), AbilityComponent->BoundQueueV2.GetPayloadCount());
@@ -165,14 +152,12 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::FRepData::Serialize(FArchive& A
 	Ar << ClientAuthActiveTags;
 	Ar << Attributes;
 	Ar << ActiveEffects;
-	Ar << ActiveEffectData;
 	Ar << ActiveAbilities;
 	Ar << NBGrantedAbilities;
 	Ar << NBBoundActiveTags;
 	Ar << NBClientAuthActiveTags;
 	Ar << NBAttributes;
 	Ar << NBActiveEffects;
-	Ar << NBActiveEffectData;
 	Ar << NBActiveAbilities;
 	Ar << NBCachedOperationPayloads;
 }

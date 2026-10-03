@@ -161,9 +161,8 @@ struct GMCABILITYSYSTEM_API FGMCAttributeModifier
 		meta=(DisplayAfter = "ValueType", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Custom"))
 		TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
 	
-		// Metadata tags to be passed with the attribute
-		// Ie: DamageType (Element.Fire, Element.Electric), DamageSource (Source.Player, Source.Boss), etc
-		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+		// Deprecated: never read by GMAS. Kept one minor so existing assets load; removed in 1.5.
+		UPROPERTY(meta=(DeprecatedProperty, DeprecationMessage="GMAS 1.4.1: never read; removed in 1.5."))
 		FGameplayTagContainer MetaTags;
 
 		// Ordered conditional rules. Evaluated at application time against the owner's bound active

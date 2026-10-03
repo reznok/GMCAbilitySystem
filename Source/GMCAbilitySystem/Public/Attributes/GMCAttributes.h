@@ -6,8 +6,6 @@
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
-
 
 
 USTRUCT()
@@ -97,9 +95,6 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	// Used to purge "future modifiers" during replay
 	void PurgeTemporalModifier(double CurrentActionTimer);
 	
-
-	UPROPERTY(BlueprintAssignable)
-	FAttributeChanged OnAttributeChanged;
 
 	int32 BoundIndex = INDEX_NONE;
 

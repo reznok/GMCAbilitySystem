@@ -36,6 +36,7 @@ BEGIN_DEFINE_SPEC(FGMASEffectLifecycleSpec,
 	FGameplayTag BuffChildTag;
 	FGameplayTag DefinitionTag;
 	FGameplayTag InputTag;
+	FGameplayTag ProbeEventTag;   // GMAS.Lifecycle.Event.Probe
 
 	// The project default the cases overwrite; restored by TeardownHarness.
 	float SavedDefaultClientGraceTime;
@@ -53,6 +54,11 @@ END_DEFINE_SPEC(FGMASEffectLifecycleSpec)
 
 void FGMASEffectLifecycleSpec::SetupHarness()
 {
+	static FNativeGameplayTag SProbeEventTag(
+		TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+		TEXT("GMAS.Lifecycle.Event.Probe"), TEXT("Custom event for effect-lifecycle tests"),
+		ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+	ProbeEventTag = SProbeEventTag.GetTag();
 	static FNativeGameplayTag SHealthTag(
 		TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
 		TEXT("GMAS.Lifecycle.Attribute.Health"), TEXT("Health for effect-lifecycle tests"),
@@ -464,6 +470,20 @@ void FGMASEffectLifecycleSpec::Define()
 			TestTrue("parent ended", AbilityComp->GetActiveEffectsByTag(BuffTag, true)[0]->bCompleted);
 			AbilityComp->RemoveActiveAbilityEffectByTag(BuffTag, EGMCAbilityEffectQueueType::Predicted, true);   // hierarchical
 			TestTrue("child ended by the hierarchical removal", Child->bCompleted);
+		});
+	});
+
+	Describe("Custom events", [this]()
+	{
+		It("FireCustomEvent reaches OnCustomEvent on the standalone path", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = true;
+			AbilityComp->bForceNoAckClientForTest = true;
+			AbilityComp->BindServerOpForcedDelegateForTest();
+			AbilityComp->FireCustomEvent(ProbeEventTag, FInstancedStruct());
+			AbilityComp->GenAncillaryTick(0.f, false);     // zero grace: forced on this tick
+			TestEqual("one custom event", Recorder->CustomEvents.Num(), 1);
+			if (Recorder->CustomEvents.Num() == 1) { TestEqual("its tag", Recorder->CustomEvents[0], ProbeEventTag); }
 		});
 	});
 }

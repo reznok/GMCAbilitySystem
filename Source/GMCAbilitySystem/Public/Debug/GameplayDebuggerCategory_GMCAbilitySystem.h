@@ -37,8 +37,6 @@ protected:
 		int NBAttributes;
 		FString ActiveEffects;
 		int NBActiveEffects;
-		FString ActiveEffectData;
-		int NBActiveEffectData;
 		FString ActiveAbilities;
 		int NBActiveAbilities;
 

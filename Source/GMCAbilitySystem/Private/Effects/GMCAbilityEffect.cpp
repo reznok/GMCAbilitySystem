@@ -410,19 +410,6 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	CheckState();
 }
 
-int32 UGMCAbilityEffect::CalculatePeriodicTicksBetween(float Period, float StartActionTimer, float EndActionTimer)
-{
-	if (Period <= 0.0f || EndActionTimer <= StartActionTimer) { return 0; }
-	
-	float FirstTick = FMath::CeilToFloat(StartActionTimer / Period) * Period;
-	if (FirstTick > EndActionTimer) { return 0; }
-
-
-	float LastTick = FMath::FloorToFloat(EndActionTimer / Period) * Period;
-	
-	return FMath::RoundToInt((LastTick - FirstTick) / Period) + 1;
-}
-
 void UGMCAbilityEffect::TickEvent_Implementation(float DeltaTime)
 {
 }
@@ -452,7 +439,7 @@ void UGMCAbilityEffect::UpdateState(EGMASEffectState State, bool Force)
 	CurrentState = State;
 }
 
-bool UGMCAbilityEffect::IsPaused()
+bool UGMCAbilityEffect::IsPaused() const
 {
 	return DoesOwnerHaveTagFromContainer(EffectData.PauseEffect);
 }
@@ -462,21 +449,12 @@ bool UGMCAbilityEffect::IsEffectModifiersRegisterInHistory() const
 	return EffectData.EffectType != EGMASEffectType::Instant && EffectData.bNegateEffectAtEnd;
 }
 
-float UGMCAbilityEffect::ProcessCustomModifier(const TSubclassOf<UGMCAttributeModifierCustom_Base>& MCClass, const FAttribute* Attribute)
+FString UGMCAbilityEffect::ToString() const
 {
-	UGMCAttributeModifierCustom_Base** MCI = CustomModifiersInstances.Find(MCClass);
-	if (MCI == nullptr)
-	{
-		MCI = &CustomModifiersInstances.Add(MCClass, NewObject<UGMCAttributeModifierCustom_Base>(this, MCClass));
-	}
-
-	if (*MCI == nullptr)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Custom Modifier Instance is null for class %s in UGMCAbilityEffect::ProcessCustomModifier"), *MCClass->GetName());
-		return 0.f;
-	}
-
-	return (*MCI)->Calculate(this, Attribute);
+	return FString::Printf(TEXT("[name: %s] (%s) | %s | %s | %s | Data: %s"), *GetName().Right(30), *EnumToString(CurrentState),
+		bHasStarted ? TEXT("Started") : TEXT("Not Started"), IsPaused() ? TEXT("Paused") : TEXT("Running"),
+		OwnerAbilityComponent ? *OwnerAbilityComponent->DescribeEffectAnswerState(EffectData.EffectID) : TEXT("no owner"),
+		*EffectData.ToString());
 }
 
 
@@ -614,7 +592,7 @@ void UGMCAbilityEffect::EndActiveAbilitiesFromOwner(const FGameplayTagContainer&
 	}
 }
 
-bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const
+bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(const FGameplayTagContainer& TagContainer) const
 {
 	for (const FGameplayTag Tag : TagContainer)
 	{

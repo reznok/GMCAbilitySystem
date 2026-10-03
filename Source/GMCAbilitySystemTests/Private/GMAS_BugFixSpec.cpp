@@ -468,69 +468,6 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// ── Bug #4: GetEffectFromHandle missing Contains guard ────────────────
-	// Before fix: ActiveEffects[NetworkId] was called even when NetworkId was
-	// absent, causing a TMap crash / undefined behaviour.
-	// After fix: Contains check guards the access.
-	Describe("GetEffectFromHandle stale handle safety", [this]()
-	{
-		It("returns false and leaves OutEffect null when handle's NetworkId is absent from ActiveEffects", [this]()
-		{
-			AbilityComp->ActionTimer = 1.0;
-
-			// Directly insert a handle entry whose NetworkId does NOT exist
-			// in ActiveEffects — simulates a handle pointing to an expired effect.
-			const int StaleNetworkId = 9999;
-			const int HandleKey      = 42;
-			FGMASQueueOperationHandle StaleHandle;
-			StaleHandle.Handle      = HandleKey;
-			StaleHandle.OperationId = -1;
-			StaleHandle.NetworkId   = StaleNetworkId;
-			AbilityComp->GetEffectHandlesForTest().Add(HandleKey, StaleHandle);
-			// ActiveEffects intentionally does NOT contain StaleNetworkId.
-
-			int32 OutNetworkId = -1;
-			UGMCAbilityEffect* OutEffect = nullptr;
-			const bool bResult = AbilityComp->GetEffectFromHandleForTest(HandleKey, OutNetworkId, OutEffect);
-
-			// The handle was found, so it returns true, but OutEffect must be null
-			// because the NetworkId is not in ActiveEffects (guard prevents crash).
-			TestTrue("Handle found (true return)", bResult);
-			TestEqual("OutNetworkId == StaleNetworkId", OutNetworkId, StaleNetworkId);
-			TestNull("OutEffect is null for a stale handle", OutEffect);
-		});
-
-		It("returns the correct effect when the handle's NetworkId is present", [this]()
-		{
-			AbilityComp->ActionTimer = 1.0;
-
-			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			Effect->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType = EGMASEffectType::Persistent;
-			Data.Duration   = 0.f;
-			AbilityComp->ApplyAbilityEffect(Effect, Data);
-
-			const int NetworkId  = Effect->EffectData.EffectID;
-			const int HandleKey  = 100;
-			FGMASQueueOperationHandle Handle;
-			Handle.Handle      = HandleKey;
-			Handle.OperationId = -1;
-			Handle.NetworkId   = NetworkId;
-			AbilityComp->GetEffectHandlesForTest().Add(HandleKey, Handle);
-
-			int32 OutNetworkId = -1;
-			UGMCAbilityEffect* OutEffect = nullptr;
-			AbilityComp->GetEffectFromHandleForTest(HandleKey, OutNetworkId, OutEffect);
-
-			TestEqual("OutNetworkId matches", OutNetworkId, NetworkId);
-			TestNotNull("OutEffect is non-null for a live handle", OutEffect);
-
-			Effect->RemoveFromRoot();
-		});
-	});
-
 	// ── Bug #5: ProcessedEffectIDs never trimmed ──────────────────────────
 	// Before fix: ProcessedEffectIDs grew unboundedly — entries added at
 	// effect creation but never removed on expiry.

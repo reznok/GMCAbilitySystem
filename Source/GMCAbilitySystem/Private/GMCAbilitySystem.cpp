@@ -2,27 +2,21 @@
 
 #include "GMCAbilitySystem.h"
 
+#include "Interfaces/IPluginManager.h"
+
 #define LOCTEXT_NAMESPACE "FGMCAbilitySystemModule"
 DEFINE_LOG_CATEGORY(LogGMCAbilitySystem);
 
 void FGMCAbilitySystemModule::StartupModule()
 {
-	// Version banner — confirms which submodule commit was actually compiled into the running binary.
-	// Bump the tag string whenever the submodule is bumped so live builds can be checked via log grep
-	// for "[GMAS-LIVE-CHECK]". The __DATE__/__TIME__ macros catch stale binaries that weren't rebuilt.
-	UE_LOG(LogGMCAbilitySystem, Warning,
-		TEXT("[GMAS-LIVE-CHECK] Module loaded — build tag: %s | compiled: %s %s"),
-		TEXT("2026-05-04-aherys-post-dbg-cleanup"),
-		TEXT(__DATE__), TEXT(__TIME__));
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("GMCAbilitySystem"));
+	UE_LOG(LogGMCAbilitySystem, Log, TEXT("GMAS %s loaded"), Plugin.IsValid() ? *Plugin->GetDescriptor().VersionName : TEXT("(unknown version)"));
 
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
-	/*...*/
 	#if WITH_GAMEPLAY_DEBUGGER
 	IGameplayDebugger& GameplayDebuggerModule = IGameplayDebugger::Get();
 	GameplayDebuggerModule.RegisterCategory("GMCAbilitySystem", IGameplayDebugger::FOnGetCategory::CreateStatic(&FGameplayDebuggerCategory_GMCAbilitySystem::MakeInstance), EGameplayDebuggerCategoryState::EnabledInGameAndSimulate, 9);
 	GameplayDebuggerModule.NotifyCategoriesChanged();
 	#endif
-	/*...*/
 }
 
 void FGMCAbilitySystemModule::ShutdownModule()

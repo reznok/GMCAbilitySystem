@@ -264,6 +264,39 @@ void FGMASComponentAuditSpec::Define()
 			AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Reset();
 		});
 	});
+
+	Describe("Deprecated APIs", [this]()
+	{
+		It("SetAttributeValueByTag changes nothing, returns false and warns once per component", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("SetAttributeValueByTag(GMAS.CompAudit.Attribute.Health) is deprecated"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			TestFalse("returns false", AbilityComp->SetAttributeValueByTag(HealthTag, 5.f));
+			TestFalse("still false, silent", AbilityComp->SetAttributeValueByTag(HealthTag, 5.f));
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			TestEqual("value untouched", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
+		});
+
+		It("GetQueuedAbilityCount returns 0 and warns once per component", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("GetQueuedAbilityCount(GMAS.CompAudit.Probe) is deprecated"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			TestEqual("0", AbilityComp->GetQueuedAbilityCount(ProbeTag), 0);
+			TestEqual("0 again", AbilityComp->GetQueuedAbilityCount(ProbeTag), 0);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		});
+
+		It("ServerAuthMove behaves as ServerAuth and warns once per component", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("ServerAuthMove is deprecated"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			AbilityComp->bForceAuthorityForTest = true;
+			FGMCAbilityEffectData Data; Data.EffectType = EGMASEffectType::Persistent; Data.EffectTag = ProbeTag;
+			int Handle = -1, Id = -1; UGMCAbilityEffect* Out = nullptr;
+			TestTrue("queued", AbilityComp->ApplyAbilityEffect(UGMCAbilityEffect::StaticClass(), Data, EGMCAbilityEffectQueueType::ServerAuthMove, Handle, Id, Out));
+			TestTrue("server-auth id", Id >= UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset && Id < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
+			TestTrue("queued again", AbilityComp->ApplyAbilityEffect(UGMCAbilityEffect::StaticClass(), Data, EGMCAbilityEffectQueueType::ServerAuthMove, Handle, Id, Out));
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER
