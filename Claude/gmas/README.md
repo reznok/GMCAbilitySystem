@@ -74,4 +74,4 @@ Changes go to `dev` as a pull request. Before opening one:
 - Skill conventions: `description` states triggers only; the two-line verification notice opens the body; long material goes to `references/`; differences on older trees are tagged `(1.4+)`; sibling skills are referenced as `gmas:<skill>`; `## Checklist` comes last.
 - Bump `version` in `.claude-plugin/plugin.json` when the change should reach installed plugins.
 
-To try your change before it is merged, add your clone as a local marketplace (`/plugin marketplace add <path to the clone>`) in a project session and install `gmas` from it. Maintainers: [`docs/BRANCHING.md`](../../docs/BRANCHING.md) and the `gmas-maintain` skill cover promotions and `Claude/`-only fixes.
+To try your change before it is merged, add your clone as a local marketplace (`/plugin marketplace add <path to the clone>`) in a project session and install `gmas` from it. Maintainers: [`docs/BRANCHING.md`](https://github.com/reznok/GMCAbilitySystem/blob/main/docs/BRANCHING.md) (the plugin ships without `docs/`) and the `gmas-maintain` skill cover promotions and `Claude/`-only fixes.

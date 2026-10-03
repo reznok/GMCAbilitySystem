@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="" rel="noopener">
+  <a href="https://github.com/reznok/GMCAbilitySystem" rel="noopener">
  <img width=200px height=200px src="https://i.imgur.com/WlQIK41.png" alt="Project logo"></a>
 </p>
 
@@ -7,7 +7,7 @@
 
 <div align="center">
 
-  [![Status](https://img.shields.io/badge/status-active-success.svg)]() 
+  [![Status](https://img.shields.io/badge/status-active-success.svg)](https://github.com/reznok/GMCAbilitySystem) 
   [![GitHub Issues](https://img.shields.io/github/issues/reznok/GMCAbilitySystem.svg)](https://github.com/reznok/GMCAbilitySystem/issues)
   [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/reznok/GMCAbilitySystem.svg)](https://github.com/reznok/GMCAbilitySystem/pulls)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](/LICENSE)
@@ -16,7 +16,7 @@
 
 ---
 
-<p align="center"> An ability system for use with the <a href="https://www.unrealengine.com/marketplace/en-US/product/general-movement-component">General Movement Component </a> <br>
+<p align="center"> An ability system for use with the <a href="https://grimtec.net/gmcv2-doc-contents">General Movement Component </a> <br>
   See the <a href="https://github.com/reznok/GMCAbilitySystem/wiki">Wiki</a> for more details
     <br> 
 </p>

@@ -65,7 +65,7 @@ One `LogAutomationController` line per test and a summary land in `Saved/Logs/<P
 
 `main`'s 1.3 history is a squash, so a plain merge of `dev` conflicts; a promotion is a merge commit that carries `dev`'s tree exactly (the 1.4 release is one: two parents, tree identical to `dev`'s). Steps:
 
-1. **Gate.** Build at least one downstream project against `dev` and run the specs headless (above); the failing set equals the known set. When anything under `Claude/` or `.claude-plugin/` changed, `bash Claude/gmas/scripts/check.sh` ends `N passed, 0 failed` (below).
+1. **Gate.** Build at least one downstream project against `dev` and run the specs headless (above); the failing set equals the known set. `bash Claude/gmas/scripts/check.sh` ends `N passed, 0 failed` (below): the plugin ships with every promotion.
 2. **Versions and plugin content, on `dev`.** Bump `VersionName` in `GMCAbilitySystem.uplugin` (`"1.4"` to `"1.5"`; the tag adds the patch). Write the release notes and, from the same header diff (`git diff v1.4.0 origin/dev -- Source/GMCAbilitySystem/Public`), extend `gmas:gmas-upgrade` with a `## 1.4 → X.Y` section (its *Later releases* section says how), re-tag `(1.4+)` facts across the skills where they changed again, update the known failing set in `gmas:gmas-testing`, and the hook's generation probe if the marker header (`Public/Utility/GMASBoundQueueV2.h`) moves. Then bump `version` in `Claude/gmas/.claude-plugin/plugin.json`: `X.Y.0` for a GMAS release, a patch bump when only documentation changed. Claude Code updates an installed plugin only when that string changes, and the marketplace is read from `main`, so a promotion without the bump ships nothing to plugin users. Push `dev`.
 3. **Promote.**
 

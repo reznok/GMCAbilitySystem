@@ -12,7 +12,7 @@ This skill gets GMAS (GMC Ability System) into a project and a first pawn wired 
 | Need | Detail |
 |---|---|
 | a GMC license | GMC (General Movement Component, GMCv2) is a paid plugin. Its source lives only in the project, under `Plugins/GMC` (module `GMCCore`); GMAS never ships it, and neither do the skills in this plugin. GMAS 1.4 is verified against GMC 2.3.x |
-| Unreal 5.4 to 5.8 | the 1.4 includes follow 5.8's `StructUtils/` layout and stay compatible with 5.4 and 5.5 |
+| Unreal 5.5 to 5.8 | 5.4 unverified: `Public/Utility/GMASBoundQueueV2.h` includes `StructUtils/InstancedStruct.h` without the `ENGINE_MINOR_VERSION >= 5` guard the other GMAS headers carry, and on 5.4 that header lives in the `StructUtils` plugin under a different path |
 | plugins enabled in `.uproject` | `GMC` and `GMCAbilitySystem`. GMAS's `.uplugin` declares `GMC`, `StructUtils` and `Niagara` (1.4+) as plugin dependencies, so enabling GMAS enables them: Niagara is on by default anyway; `StructUtils` is a real plugin on 5.4 and a deprecated shim from 5.5 that still exists in 5.8. GMC's own `.uplugin` pulls `EnhancedInput` and `OnlineSubsystemSteam` |
 | GameplayTags | an engine module, not a plugin: your `Build.cs` lists it; the tag editor plugin `GameplayTagsEditor` is enabled by default |
 | GMC controllers | player controllers derive from `AGMC_PlayerController`, AI controllers from `AGMC_AIController`, and the game mode spawns exactly one `AGMC_WorldTimeReplicator` (`gmas:gmc-prediction`) |
@@ -198,6 +198,7 @@ An ability is a `UGMCAbility` (`Public/Ability/GMCAbility.h`). Activation runs `
 ```cpp
 // MyAbility_Dash.h
 #include "Ability/GMCAbility.h"
+#include "MyAbility_Dash.generated.h"
 UCLASS()
 class UMyAbility_Dash : public UGMCAbility
 {

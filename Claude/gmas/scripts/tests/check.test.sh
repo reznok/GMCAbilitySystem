@@ -50,6 +50,8 @@ all_stubs() {
 }
 
 # S1: the real tree (with stubs for skills not written yet) passes, on the full (slow) path.
+# An inherited GMAS_CHECK_FAST would silently make it the fast path, so clear it first.
+unset GMAS_CHECK_FAST
 R="$(fresh_copy clean)"; all_stubs "$R"
 expect_pass "S1 clean tree passes" "$R"
 
