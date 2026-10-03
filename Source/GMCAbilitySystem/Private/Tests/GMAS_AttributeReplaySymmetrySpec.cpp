@@ -8,6 +8,7 @@
 #include "Attributes/GMCAttributeModifier.h"
 #include "Attributes/GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -25,7 +26,7 @@ END_DEFINE_SPEC(FGMASAttributeReplaySymmetrySpec)
 
 FAttribute FGMASAttributeReplaySymmetrySpec::MakeBoundAttr(float Init) const
 {
-	FAttribute A; A.InitialValue = Init; A.bIsGMCBound = true; A.Init(); return A;
+	FAttribute A = GMASTest::MakeAttr(Init); A.bIsGMCBound = true; return A;
 }
 FGMCAttributeModifier FGMASAttributeReplaySymmetrySpec::MakeAdd(UGMCAbilityEffect* Eff, float V, int Idx, double T) const
 {

@@ -8,6 +8,7 @@
 #include "Attributes/GMCAttributes.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -15,19 +16,10 @@ BEGIN_DEFINE_SPEC(FGMASAttributeSpec,
 	"GMAS.Unit.Attribute",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-	FAttribute MakeAttr(float InitVal) const;
 	FGMCAttributeModifier MakePermanentMod(float ModVal) const;
 	FGMCAttributeModifier MakeTemporalMod(UGMCAbilityEffect* Effect, float ModVal, int AppIdx, double ActionTimer) const;
 
 END_DEFINE_SPEC(FGMASAttributeSpec)
-
-FAttribute FGMASAttributeSpec::MakeAttr(float InitVal) const
-{
-	FAttribute Attr;
-	Attr.InitialValue = InitVal;
-	Attr.Init();
-	return Attr;
-}
 
 FGMCAttributeModifier FGMASAttributeSpec::MakePermanentMod(float ModVal) const
 {
@@ -62,6 +54,8 @@ void FGMASAttributeSpec::Define()
 		{
 			FAttribute Attr;
 			Attr.InitialValue = 150.f;
+			Attr.Clamp.bClampMin = false;
+			Attr.Clamp.bClampMax = false;
 			Attr.Init();
 			TestEqual("Value == InitialValue after Init", Attr.Value, 150.f);
 			TestEqual("RawValue == InitialValue after Init", Attr.RawValue, 150.f);
@@ -83,7 +77,7 @@ void FGMASAttributeSpec::Define()
 	{
 		It("increases RawValue and Value after AddModifier + CalculateValue", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakePermanentMod(25.f));
 			Attr.CalculateValue();
 			TestEqual("Value increased to 125", Attr.Value, 125.f);
@@ -92,7 +86,7 @@ void FGMASAttributeSpec::Define()
 
 		It("decreases Value correctly (damage / drain)", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakePermanentMod(-40.f));
 			Attr.CalculateValue();
 			TestEqual("Value decreased to 60", Attr.Value, 60.f);
@@ -100,7 +94,7 @@ void FGMASAttributeSpec::Define()
 
 		It("stacks multiple permanent modifiers cumulatively", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakePermanentMod(10.f));
 			Attr.AddModifier(MakePermanentMod(20.f));
 			Attr.AddModifier(MakePermanentMod(-5.f));
@@ -110,10 +104,7 @@ void FGMASAttributeSpec::Define()
 
 		It("respects the static clamp when adding modifiers", [this]()
 		{
-			FAttribute Attr = MakeAttr(90.f);
-			Attr.Clamp.Min = 0.f;
-			Attr.Clamp.Max = 100.f;
-			Attr.RawValue = 90.f; // Init clamps
+			FAttribute Attr = GMASTest::MakeClampedAttr(90.f, 0.f, 100.f);
 			Attr.AddModifier(MakePermanentMod(50.f)); // would push to 140
 			Attr.CalculateValue();
 			TestEqual("RawValue clamped to Max=100", Attr.RawValue, 100.f);
@@ -122,7 +113,7 @@ void FGMASAttributeSpec::Define()
 
 		It("does not affect InitialValue — only RawValue changes", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakePermanentMod(999.f));
 			Attr.CalculateValue();
 			TestEqual("InitialValue unchanged", Attr.InitialValue, 100.f);
@@ -136,7 +127,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 30.f, 1, 1.0));
 			Attr.CalculateValue();
 
@@ -153,7 +144,7 @@ void FGMASAttributeSpec::Define()
 			Eff1->AddToRoot();
 			Eff2->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Eff1, 20.f, 1, 1.0));
 			Attr.AddModifier(MakeTemporalMod(Eff2, 15.f, 2, 2.0));
 			Attr.CalculateValue();
@@ -169,7 +160,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakePermanentMod(-20.f)); // permanent drain: RawValue=80
 			Attr.AddModifier(MakeTemporalMod(Effect, 50.f, 1, 1.0)); // temp buff: +50 on top
 			Attr.CalculateValue();
@@ -185,10 +176,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(80.f);
-			Attr.Clamp.Min = 0.f;
-			Attr.Clamp.Max = 100.f;
-			Attr.RawValue = 80.f;
+			FAttribute Attr = GMASTest::MakeClampedAttr(80.f, 0.f, 100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 50.f, 1, 1.0)); // would push to 130
 			Attr.CalculateValue();
 
@@ -207,7 +195,7 @@ void FGMASAttributeSpec::Define()
 			Eff1->AddToRoot();
 			Eff2->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Eff1, 20.f, 1, 1.0)); // AppIdx=1
 			Attr.AddModifier(MakeTemporalMod(Eff2, 30.f, 2, 2.0)); // AppIdx=2
 			Attr.CalculateValue();
@@ -228,7 +216,7 @@ void FGMASAttributeSpec::Define()
 			Eff1->AddToRoot();
 			Eff2->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Eff1, 20.f, 1, 1.0));
 			Attr.CalculateValue();
 
@@ -246,7 +234,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 20.f, 1, 1.0));
 			Attr.CalculateValue();
 
@@ -268,7 +256,7 @@ void FGMASAttributeSpec::Define()
 			EarlierEff->AddToRoot();
 			LaterEff->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.bIsGMCBound = true;
 
 			// ActionTimer=0.5 → before replay point 1.0, should survive
@@ -291,7 +279,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.bIsGMCBound = true;
 			Attr.AddModifier(MakeTemporalMod(Effect, 20.f, 1, 1.0)); // ActionTimer == purge point
 			Attr.CalculateValue();
@@ -311,7 +299,7 @@ void FGMASAttributeSpec::Define()
 			Eff1->AddToRoot();
 			Eff2->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.bIsGMCBound = true;
 			Attr.AddModifier(MakeTemporalMod(Eff1, 10.f, 1, 0.1));
 			Attr.AddModifier(MakeTemporalMod(Eff2, 20.f, 2, 0.2));
@@ -328,7 +316,7 @@ void FGMASAttributeSpec::Define()
 
 		It("is a no-op when there are no temporal modifiers", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.bIsGMCBound = true;
 			Attr.AddModifier(MakePermanentMod(50.f));
 			Attr.CalculateValue();
@@ -362,7 +350,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 1, 1.0));
 			Attr.CalculateValue();
 
@@ -377,7 +365,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));         // Add +10 at t=1
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 2.0));  // Set =50 at t=2
 			Attr.CalculateValue();
@@ -392,7 +380,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 1, 1.0));  // Set =50 at t=1
 			Attr.AddModifier(MakeTemporalMod(Effect, 5.f, 2, 2.0));                  // Add +5 at t=2
 			Attr.CalculateValue();
@@ -407,7 +395,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));                       // Add +10 at t=1
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::SetReplace, 50.f, 2, 2.0)); // SetReplace =50 at t=2
 			Attr.CalculateValue();
@@ -422,7 +410,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::SetReplace, 50.f, 1, 1.0)); // SetReplace =50 at t=1
 			Attr.AddModifier(MakeTemporalMod(Effect, 7.f, 2, 2.0));                        // Add +7 at t=2
 			Attr.CalculateValue();
@@ -437,7 +425,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 30.f, 1, 1.0));  // Set =30 at t=1
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 80.f, 2, 2.0));  // Set =80 at t=2
 			Attr.CalculateValue();
@@ -452,7 +440,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 30.f, 1, 5.0));
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 80.f, 2, 5.0));
 			Attr.CalculateValue();
@@ -467,9 +455,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(50.f);
-			Attr.Clamp.Min = 0.f;
-			Attr.Clamp.Max = 100.f;
+			FAttribute Attr = GMASTest::MakeClampedAttr(50.f, 0.f, 100.f);
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 999.f, 1, 1.0));
 			Attr.CalculateValue();
 
@@ -483,7 +469,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 2.0));
 			Attr.CalculateValue();
@@ -501,7 +487,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 			Attr.bIsGMCBound = true;
 			Attr.AddModifier(MakeTemporalMod(Effect, 10.f, 1, 1.0));               // Add +10 at t=1
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 50.f, 2, 5.0)); // Set =50 at t=5
@@ -518,7 +504,7 @@ void FGMASAttributeSpec::Define()
 
 		It("Permanent Set (bRegisterInHistory=false) overwrites RawValue absolutely", [this]()
 		{
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 
 			FGMCAttributeModifier Mod;
 			Mod.Op = EModifierType::Set;
@@ -538,7 +524,7 @@ void FGMASAttributeSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			FAttribute Attr = MakeAttr(100.f);
+			FAttribute Attr = GMASTest::MakeAttr(100.f);
 
 			// Phase 1: just an Add
 			Attr.AddModifier(MakeTemporalMod(Effect, 20.f, 1, 1.0));

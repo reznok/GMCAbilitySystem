@@ -11,6 +11,7 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestAbility.h"
 #include "UGMAS_TestCostEffect.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -81,7 +82,7 @@ void FGMASBugFixSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->ActionTimer = 1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::ClientAuthActionTimer);   // positive: this spec allocates ids in the server-auth and client-auth ranges
 
 	// Configure TestAbility CDO
 	GetMutableDefault<UGMAS_TestAbility>()->CooldownTime            = 0.f;

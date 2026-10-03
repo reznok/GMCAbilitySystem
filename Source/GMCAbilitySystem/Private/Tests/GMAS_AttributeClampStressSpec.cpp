@@ -7,6 +7,7 @@
 #include "Attributes/GMCAttributeClamp.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -23,10 +24,7 @@ END_DEFINE_SPEC(FGMASAttributeClampStressSpec)
 FAttribute FGMASAttributeClampStressSpec::MakeClamped(float Init, float Min, float Max,
 	bool bClampMin, bool bClampMax) const
 {
-	FAttribute A; A.InitialValue = Init;
-	A.Clamp.Min = Min; A.Clamp.Max = Max;
-	A.Clamp.bClampMin = bClampMin; A.Clamp.bClampMax = bClampMax;
-	A.Init(); return A;
+	return GMASTest::MakeClampedAttr(Init, Min, Max, bClampMin, bClampMax);
 }
 UGMCAbilityEffect* FGMASAttributeClampStressSpec::SpawnEffect()
 {

@@ -19,6 +19,7 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "UGMAS_TestMovementCmp.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -87,11 +88,7 @@ void FGMASEffectSpec::SetupHarness()
 	// binding descriptors on the stub component — benign with no active move loop.
 	AbilityComp->BindReplicationData();
 
-	// Seed ActionTimer to a non-zero value so GetNextAvailableEffectID() works
-	// before the first GenPredictionTick.  -1.0 matches MoveMetaData.Timestamp's
-	// default value, so ActionTimer stays stable across GenPredictionTick calls
-	// (the stub always returns -1.0 from GetMoveTimestamp()).
-	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
 }
 
 void FGMASEffectSpec::TeardownHarness()

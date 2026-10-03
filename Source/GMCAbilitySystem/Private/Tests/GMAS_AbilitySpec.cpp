@@ -19,6 +19,7 @@
 #include "Components/GMCAbilityComponent.h"
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestAbility.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -73,9 +74,7 @@ void FGMASAbilitySpec::SetupHarness()
 	// No AttributeDataAssets needed — InstantiateAttributes() returns early when empty.
 	AbilityComp->BindReplicationData();
 
-	// Seed ActionTimer to -1.0 so GenerateAbilityID() and GetNextAvailableEffectID()
-	// produce non-zero IDs before the first GenPredictionTick.
-	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
 
 	// Configure the test ability CDO so all tests share the same AbilityTag.
 	// CooldownTime and bAllowMultipleInstances are reset in TeardownHarness.
@@ -213,6 +212,8 @@ void FGMASAbilitySpec::Define()
 	});
 
 	// ── Cooldown ──────────────────────────────────────────────────────────────
+	// Cooldowns store an absolute expiry in ActionTimer units; the stub clock only moves through
+	// SetActionTimerForTest.
 	Describe("Cooldown", [this]()
 	{
 		It("GetCooldownForAbility returns 0 for an unknown tag", [this]()
@@ -226,18 +227,23 @@ void FGMASAbilitySpec::Define()
 			TestEqual("cooldown stored as 5", AbilityComp->GetCooldownForAbility(AbilityTag), 5.f);
 		});
 
-		It("GenAncillaryTick decrements the cooldown by DeltaTime", [this]()
+		It("remaining cooldown follows ActionTimer", [this]()
 		{
-			AbilityComp->SetCooldownForAbility(AbilityTag, 5.f);
-			AbilityComp->GenAncillaryTick(3.f, false); // TickActiveCooldowns subtracts 3
+			AbilityComp->SetCooldownForAbility(AbilityTag, 5.f); // expiry = StableActionTimer + 5
+			AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer + 3.0);
 			TestNearlyEqual("5 - 3 = 2 remaining",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 2.f, KINDA_SMALL_NUMBER);
 		});
 
-		It("cooldown expires and is removed after sufficient DeltaTime", [this]()
+		It("cooldown expires once ActionTimer passes the expiry", [this]()
 		{
-			AbilityComp->SetCooldownForAbility(AbilityTag, 2.f);
-			AbilityComp->GenAncillaryTick(3.f, false); // exceeds cooldown → entry removed
+			AbilityComp->SetCooldownForAbility(AbilityTag, 2.f); // expiry = StableActionTimer + 2
+			TestTrue("entry stored", AbilityComp->GetActiveCooldownsForTest().Contains(AbilityTag));
+			AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer + 3.0);
+			TestTrue("expired entry lingers until the GC pass",
+				AbilityComp->GetActiveCooldownsForTest().Contains(AbilityTag));
+			AbilityComp->GenAncillaryTick(0.f, false); // TickActiveCooldowns: garbage-collects expired entries
+			TestFalse("entry garbage-collected", AbilityComp->GetActiveCooldownsForTest().Contains(AbilityTag));
 			TestEqual("expired cooldown returns 0",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 0.f);
 		});
@@ -262,8 +268,13 @@ void FGMASAbilitySpec::Define()
 
 			// After cooldown expires, a fresh activation succeeds normally.
 			AbilityComp->EndAbilitiesByTag(AbilityTag); // end the running first ability
-			AbilityComp->GenAncillaryTick(6.f, false); // tick cooldown to 0
-			AbilityComp->GenPredictionTick(0.f);       // cleanup stale Ended abilities
+			AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer + 6.0); // past expiry (+5)
+			AbilityComp->GenAncillaryTick(0.f, false);  // garbage-collect the expired entry
+			TestFalse("expired entry garbage-collected",
+				AbilityComp->GetActiveCooldownsForTest().Contains(AbilityTag));
+			// GenPredictionTick would reset the clock from the stub's move timestamp; purge the
+			// Ended instances through the seam instead so the clock stays where it was put.
+			AbilityComp->CleanupStaleAbilitiesForTest();
 			TestEqual("cooldown expired",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 0.f);
 			const bool bAfterExpiry = AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass());

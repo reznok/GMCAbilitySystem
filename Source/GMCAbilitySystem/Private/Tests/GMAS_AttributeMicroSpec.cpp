@@ -8,6 +8,7 @@
 #include "Attributes/GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
 #include <limits>
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -59,10 +60,15 @@ void FGMASAttributeMicroSpec::Define()
 			FAttribute A;
 			TestEqual("BoundIndex default", A.BoundIndex, INDEX_NONE);
 		});
-		It("Default-constructed Clamp is not set (IsSet false)", [this]()
+		It("Default-constructed Clamp is set: both flags default on, an active [0,0] pin", [this]()
 		{
+			// 1.4 contract (the 1.3 -> 1.4 upgrade hazard): a default clamp is active. Only an
+			// attribute with both flags off is unclamped.
 			FAttribute A;
-			TestFalse("Default clamp not active", A.Clamp.IsSet());
+			TestTrue("Default clamp active", A.Clamp.IsSet());
+			A.Clamp.bClampMin = false;
+			A.Clamp.bClampMax = false;
+			TestFalse("Both flags off: not set", A.Clamp.IsSet());
 		});
 	});
 
@@ -72,7 +78,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("ApplicationIndex INT_MAX works", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 5.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = INT_MAX; M.ActionTimer = 0.0;
@@ -85,7 +91,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("ApplicationIndex INT_MIN works", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 5.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = INT_MIN; M.ActionTimer = 0.0;
@@ -96,7 +102,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("ApplicationIndex 0 works (not treated as sentinel)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 5.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = 0; M.ActionTimer = 0.0;
@@ -112,7 +118,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("ActionTimer = 0.0 works", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M; M.Op = EModifierType::Set; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 50.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = 1; M.ActionTimer = 0.0;
@@ -123,7 +129,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("Negative ActionTimer entries can win Set tie-break against 0", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier MA; MA.Op = EModifierType::Set; MA.ValueType = EGMCAttributeModifierType::AMT_Value;
 			MA.ModifierValue = 30.f; MA.DeltaTime = 1.f; MA.bRegisterInHistory = true;
 			MA.SourceAbilityEffect = E; MA.ApplicationIndex = 1; MA.ActionTimer = -10.0;
@@ -135,7 +141,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("Very precise ActionTimer differences distinguish entries", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M1, M2;
 			M1.Op = M2.Op = EModifierType::Set;
 			M1.ValueType = M2.ValueType = EGMCAttributeModifierType::AMT_Value;
@@ -170,10 +176,10 @@ void FGMASAttributeMicroSpec::Define()
 			FAttributeClamp B; B.Max = 20.f;
 			TestFalse("A != B", A == B);
 		});
-		It("Both bounds zero compare as not-set + equal", [this]()
+		It("Both bounds zero compare as set + equal", [this]()
 		{
 			FAttributeClamp A, B;
-			TestFalse("Not set", A.IsSet());
+			TestTrue("Set (flags default on)", A.IsSet());
 			TestTrue("Equal", A == B);
 		});
 	});
@@ -207,6 +213,8 @@ void FGMASAttributeMicroSpec::Define()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
 			FAttribute A;   // NO Init()
+			A.Clamp.bClampMin = false;
+			A.Clamp.bClampMax = false;
 			FGMCAttributeModifier M; M.Op = EModifierType::Set; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 50.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = 1; M.ActionTimer = 1.0;
@@ -217,6 +225,8 @@ void FGMASAttributeMicroSpec::Define()
 		It("Permanent Add without Init() applies on RawValue=0", [this]()
 		{
 			FAttribute A;   // NO Init()
+			A.Clamp.bClampMin = false;
+			A.Clamp.bClampMax = false;
 			FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 25.f; M.DeltaTime = 1.f; M.bRegisterInHistory = false;
 			A.AddModifier(M); A.CalculateValue();
@@ -230,7 +240,7 @@ void FGMASAttributeMicroSpec::Define()
 		It("100 successive CalculateValue calls produce same Value", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
 			M.ModifierValue = 10.f; M.DeltaTime = 1.f; M.bRegisterInHistory = true;
 			M.SourceAbilityEffect = E; M.ApplicationIndex = 1; M.ActionTimer = 1.0;
@@ -243,7 +253,7 @@ void FGMASAttributeMicroSpec::Define()
 		});
 		It("Recalc after no changes leaves bIsDirty false", [this]()
 		{
-			FAttribute A; A.InitialValue = 100.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.CalculateValue();
 			A.CalculateValue();
 			TestFalse("Idempotent CalculateValue keeps clean", A.IsDirty());

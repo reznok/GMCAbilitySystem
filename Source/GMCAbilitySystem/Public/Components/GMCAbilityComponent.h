@@ -1311,9 +1311,10 @@ public:
 		BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
 	}
 
-	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
-	// in the headless harness always report HasAuthority()==false; setting this flag forces
-	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
+	// Test seam for the HasAuthority() guard in ServerProcessOperation and the confirm-timeout
+	// cut in UGMCAbility::Tick. Orphan components in the headless harness always report
+	// HasAuthority()==false; setting this flag forces IsAuthorityForGMASLogic() to return true
+	// so server-side dispatch paths can be exercised.
 	bool bForceAuthorityForTest = false;
 
 	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
@@ -1351,6 +1352,9 @@ public:
 	// Test seam: purge Ended instances the way GenPredictionTick does at the end of a tick.
 	void CleanupStaleAbilitiesForTest() { CleanupStaleAbilities(); }
 
+	// Test seam: cooldown GC is only observable through the private map.
+	const TMap<FGameplayTag, double>& GetActiveCooldownsForTest() const { return ActiveCooldowns; }
+
 	// Test seam for TryActivateClientAuthAbility. The function is private so tests cannot
 	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
 	// Allows headless specs to validate the helper without going through QueueAbility's
@@ -1380,8 +1384,9 @@ public:
 
 	// Centralized authority check for GMAS server-side dispatch. Production delegates to
 	// AActor::HasAuthority(); test builds layer bForceAuthorityForTest on top so that
-	// ServerProcessOperation can be exercised in the headless harness where orphan
-	// components always report HasAuthority()==false.
+	// ServerProcessOperation and the confirm-timeout cut in UGMCAbility::Tick can be
+	// exercised in the headless harness where orphan components always report
+	// HasAuthority()==false.
 	bool IsAuthorityForGMASLogic() const;
 
 	// Networked FX

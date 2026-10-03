@@ -9,6 +9,7 @@
 #include "Attributes/GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
 #include <limits>
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -16,7 +17,6 @@ BEGIN_DEFINE_SPEC(FGMASAttributeStressSpec,
 	"GMAS.Stress.Attribute",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-	FAttribute MakeAttr(float Init = 100.f) const;
 	FGMCAttributeModifier MakePerm(float V) const;
 	FGMCAttributeModifier MakeTemp(UGMCAbilityEffect* Eff, float V, int Idx, double T,
 		EModifierType Op = EModifierType::Add) const;
@@ -24,10 +24,6 @@ BEGIN_DEFINE_SPEC(FGMASAttributeStressSpec,
 
 END_DEFINE_SPEC(FGMASAttributeStressSpec)
 
-FAttribute FGMASAttributeStressSpec::MakeAttr(float Init) const
-{
-	FAttribute A; A.InitialValue = Init; A.Init(); return A;
-}
 FGMCAttributeModifier FGMASAttributeStressSpec::MakePerm(float V) const
 {
 	FGMCAttributeModifier M; M.Op = EModifierType::Add; M.ValueType = EGMCAttributeModifierType::AMT_Value;
@@ -52,7 +48,7 @@ void FGMASAttributeStressSpec::Define()
 		It("100 × +0.1 = ~10 within tolerance (no precision blowup)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 100; ++i) { A.AddModifier(MakeTemp(E, 0.1f, i, double(i))); }
 			A.CalculateValue();
 			TestNearlyEqual("100×0.1 ≈ 10", A.Value, 10.f, 1e-3f);
@@ -61,7 +57,7 @@ void FGMASAttributeStressSpec::Define()
 		It("1000 × +0.001 = ~1 within tolerance", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 1000; ++i) { A.AddModifier(MakeTemp(E, 0.001f, i, double(i))); }
 			A.CalculateValue();
 			TestNearlyEqual("1000×0.001 ≈ 1", A.Value, 1.f, 1e-2f);
@@ -70,7 +66,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Adds of FLT_EPSILON × FLT_MAX magnitude do not silently zero", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(FLT_MAX / 2.f);
+			FAttribute A = GMASTest::MakeAttr(FLT_MAX / 2.f);
 			A.AddModifier(MakeTemp(E, FLT_EPSILON, 1, 0.0));
 			A.CalculateValue();
 			TestEqual("Tiny addend on huge base preserved (or absorbed deterministically)", A.Value, FLT_MAX / 2.f);
@@ -79,7 +75,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Subnormal float modifier doesn't crash CalculateValue", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(1.f);
+			FAttribute A = GMASTest::MakeAttr(1.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::denorm_min(), 1, 0.0));
 			A.CalculateValue();
 			TestTrue("Value still finite after subnormal modifier", FMath::IsFinite(A.Value));
@@ -88,7 +84,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Repeated +0 yields baseline", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(50.f);
+			FAttribute A = GMASTest::MakeAttr(50.f);
 			for (int i = 0; i < 50; ++i) { A.AddModifier(MakeTemp(E, 0.f, i, double(i))); }
 			A.CalculateValue();
 			TestEqual("50 + 50×0 = 50", A.Value, 50.f);
@@ -104,7 +100,7 @@ void FGMASAttributeStressSpec::Define()
 			// Note: 1e10 would lose the 100 entirely (mantissa overflow).
 			// 1e6 fits within float precision while still demonstrating cancellation.
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 1e6f, 1, 1.0));
 			A.AddModifier(MakeTemp(E, -1e6f, 2, 2.0));
 			A.CalculateValue();
@@ -116,7 +112,7 @@ void FGMASAttributeStressSpec::Define()
 			// At 1e10 magnitude, float can't represent +100 — it falls below the mantissa LSB.
 			// Result: cancellation lands exactly at 0, NOT 100. This is IEEE-754 by design.
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 1e10f, 1, 1.0));
 			A.AddModifier(MakeTemp(E, -1e10f, 2, 2.0));
 			A.CalculateValue();
@@ -126,7 +122,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Removing the inverse modifier returns to original", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeTemp(E, -50.f, 2, 2.0));
 			A.CalculateValue();
@@ -140,7 +136,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Pairwise cancel of 100 adds returns near-baseline", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 100; ++i) {
 				A.AddModifier(MakeTemp(E, +1.0f, i*2, double(i*2)));
 				A.AddModifier(MakeTemp(E, -1.0f, i*2+1, double(i*2+1)));
@@ -157,7 +153,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Adding +Inf produces +Inf, not crash", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::infinity(), 1, 0.0));
 			A.CalculateValue();
 			TestTrue("Value is +Inf", A.Value > FLT_MAX);
@@ -166,7 +162,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Adding -Inf produces -Inf", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, -std::numeric_limits<float>::infinity(), 1, 0.0));
 			A.CalculateValue();
 			TestTrue("Value is -Inf", A.Value < -FLT_MAX);
@@ -175,7 +171,7 @@ void FGMASAttributeStressSpec::Define()
 		It("NaN modifier propagates to Value (NaN is sticky)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::quiet_NaN(), 1, 0.0));
 			A.CalculateValue();
 			TestTrue("Value becomes NaN", FMath::IsNaN(A.Value));
@@ -184,7 +180,7 @@ void FGMASAttributeStressSpec::Define()
 		It("+Inf then -Inf yields NaN (IEEE-754)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::infinity(), 1, 0.0));
 			A.AddModifier(MakeTemp(E, -std::numeric_limits<float>::infinity(), 2, 1.0));
 			A.CalculateValue();
@@ -194,7 +190,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Removing a NaN modifier restores finite Value", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::quiet_NaN(), 1, 0.0));
 			A.CalculateValue();
 			A.RemoveTemporalModifier(1, E); A.CalculateValue();
@@ -205,7 +201,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Set with NaN target gives NaN Value (no recovery)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::quiet_NaN(), 1, 0.0, EModifierType::Set));
 			A.CalculateValue();
 			TestTrue("Set NaN propagates", FMath::IsNaN(A.Value));
@@ -214,7 +210,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Set with +Inf target gives +Inf Value", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, std::numeric_limits<float>::infinity(), 1, 0.0, EModifierType::Set));
 			A.CalculateValue();
 			TestTrue("Set +Inf propagates", A.Value > FLT_MAX);
@@ -228,7 +224,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Add to FLT_MAX produces +Inf without crash", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(FLT_MAX);
+			FAttribute A = GMASTest::MakeAttr(FLT_MAX);
 			A.AddModifier(MakeTemp(E, FLT_MAX, 1, 0.0));
 			A.CalculateValue();
 			TestTrue("FLT_MAX + FLT_MAX overflows to +Inf", A.Value > FLT_MAX);
@@ -237,7 +233,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Stacking FLT_MAX adds clamps deterministically when no Clamp set", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 5; ++i) { A.AddModifier(MakeTemp(E, FLT_MAX, i, double(i))); }
 			A.CalculateValue();
 			TestTrue("Many FLT_MAX adds yield +Inf", A.Value > FLT_MAX);
@@ -246,7 +242,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Negative overflow on -FLT_MAX adds", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			A.AddModifier(MakeTemp(E, -FLT_MAX, 1, 0.0));
 			A.AddModifier(MakeTemp(E, -FLT_MAX, 2, 1.0));
 			A.CalculateValue();
@@ -255,13 +251,13 @@ void FGMASAttributeStressSpec::Define()
 		});
 		It("InitialValue = FLT_MAX init", [this]()
 		{
-			FAttribute A; A.InitialValue = FLT_MAX; A.Init();
+			FAttribute A = GMASTest::MakeAttr(FLT_MAX);
 			TestEqual("RawValue = FLT_MAX", A.RawValue, FLT_MAX);
 			TestEqual("Value = FLT_MAX", A.Value, FLT_MAX);
 		});
 		It("InitialValue = -FLT_MAX init", [this]()
 		{
-			FAttribute A; A.InitialValue = -FLT_MAX; A.Init();
+			FAttribute A = GMASTest::MakeAttr(-FLT_MAX);
 			TestEqual("RawValue = -FLT_MAX", A.RawValue, -FLT_MAX);
 		});
 	});
@@ -272,7 +268,7 @@ void FGMASAttributeStressSpec::Define()
 		It("1000 × +1 = 1000 exactly", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 1000; ++i) { A.AddModifier(MakeTemp(E, 1.f, i, double(i))); }
 			A.CalculateValue();
 			TestEqual("1000 × +1 = 1000", A.Value, 1000.f);
@@ -281,7 +277,7 @@ void FGMASAttributeStressSpec::Define()
 		It("1000 × +1 then 1000 × −1 = 0", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 1000; ++i) { A.AddModifier(MakeTemp(E, 1.f, i, double(i))); }
 			for (int i = 0; i < 1000; ++i) { A.AddModifier(MakeTemp(E, -1.f, 1000+i, double(1000+i))); }
 			A.CalculateValue();
@@ -291,7 +287,7 @@ void FGMASAttributeStressSpec::Define()
 		It("CalculateValue is O(n) — 10000 modifiers don't time out", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 10000; ++i) { A.AddModifier(MakeTemp(E, 0.001f, i, double(i))); }
 			const double Start = FPlatformTime::Seconds();
 			A.CalculateValue();
@@ -303,7 +299,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Removing 500 of 1000 modifiers leaves correct partial sum", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 1000; ++i) { A.AddModifier(MakeTemp(E, 1.f, i, double(i))); }
 			for (int i = 0; i < 500; ++i) { A.RemoveTemporalModifier(i, E); }
 			A.CalculateValue();
@@ -313,7 +309,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Stacking integers from 1 to 100 sums to 5050 (Gauss)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 1; i <= 100; ++i) { A.AddModifier(MakeTemp(E, float(i), i, double(i))); }
 			A.CalculateValue();
 			TestEqual("Σ 1..100 = 5050", A.Value, 5050.f);
@@ -327,7 +323,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Add A then Add B == Add B then Add A", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute X = MakeAttr(100.f), Y = MakeAttr(100.f);
+			FAttribute X = GMASTest::MakeAttr(100.f), Y = GMASTest::MakeAttr(100.f);
 			X.AddModifier(MakeTemp(E, 7.f, 1, 1.0)); X.AddModifier(MakeTemp(E, 13.f, 2, 2.0));
 			Y.AddModifier(MakeTemp(E, 13.f, 2, 2.0)); Y.AddModifier(MakeTemp(E, 7.f, 1, 1.0));
 			X.CalculateValue(); Y.CalculateValue();
@@ -337,7 +333,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Reverse-insertion-order yields same Value (10 modifiers)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute X = MakeAttr(0.f), Y = MakeAttr(0.f);
+			FAttribute X = GMASTest::MakeAttr(0.f), Y = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 10; ++i) { X.AddModifier(MakeTemp(E, float(i+1), i, double(i))); }
 			for (int i = 9; i >= 0; --i) { Y.AddModifier(MakeTemp(E, float(i+1), i, double(i))); }
 			X.CalculateValue(); Y.CalculateValue();
@@ -347,7 +343,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Removal order doesn't affect final Value when removing all", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute X = MakeAttr(100.f), Y = MakeAttr(100.f);
+			FAttribute X = GMASTest::MakeAttr(100.f), Y = GMASTest::MakeAttr(100.f);
 			for (int i = 0; i < 5; ++i) {
 				X.AddModifier(MakeTemp(E, float(i+1), i, double(i)));
 				Y.AddModifier(MakeTemp(E, float(i+1), i, double(i)));
@@ -366,7 +362,7 @@ void FGMASAttributeStressSpec::Define()
 	{
 		It("Permanent +X is reflected in RawValue and Value", [this]()
 		{
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(25.f)); A.CalculateValue();
 			TestEqual("RawValue updated", A.RawValue, 125.f);
 			TestEqual("Value updated", A.Value, 125.f);
@@ -374,7 +370,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Permanent +X then temporal +Y stack (RawValue + temporal sum)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(20.f));
 			A.AddModifier(MakeTemp(E, 5.f, 1, 1.0));
 			A.CalculateValue();
@@ -384,21 +380,21 @@ void FGMASAttributeStressSpec::Define()
 		});
 		It("Permanent +X is NOT removed by RemoveTemporalModifier", [this]()
 		{
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f)); A.CalculateValue();
 			A.RemoveTemporalModifier(0, nullptr); A.CalculateValue();
 			TestEqual("Permanent survives", A.Value, 150.f);
 		});
 		It("Permanent +X is NOT removed by PurgeTemporalModifier", [this]()
 		{
-			FAttribute A = MakeAttr(100.f); A.bIsGMCBound = true;
+			FAttribute A = GMASTest::MakeAttr(100.f); A.bIsGMCBound = true;
 			A.AddModifier(MakePerm(50.f)); A.CalculateValue();
 			A.PurgeTemporalModifier(-DBL_MAX); A.CalculateValue();
 			TestEqual("Permanent survives full purge", A.Value, 150.f);
 		});
 		It("Permanent Set wipes RawValue to absolute value", [this]()
 		{
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f)); A.CalculateValue();   // RawValue = 150
 			FGMCAttributeModifier S; S.Op = EModifierType::Set; S.ValueType = EGMCAttributeModifierType::AMT_Value;
 			S.ModifierValue = 30.f; S.DeltaTime = 1.f; S.bRegisterInHistory = false;
@@ -408,7 +404,7 @@ void FGMASAttributeStressSpec::Define()
 		});
 		It("Permanent SetReplace behaves identically to permanent Set", [this]()
 		{
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f)); A.CalculateValue();
 			FGMCAttributeModifier S; S.Op = EModifierType::SetReplace; S.ValueType = EGMCAttributeModifierType::AMT_Value;
 			S.ModifierValue = 60.f; S.DeltaTime = 1.f; S.bRegisterInHistory = false;
@@ -417,7 +413,7 @@ void FGMASAttributeStressSpec::Define()
 		});
 		It("Cumulative permanent stacking", [this]()
 		{
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 1; i <= 10; ++i) { A.AddModifier(MakePerm(float(i))); }
 			A.CalculateValue();
 			TestEqual("Σ 1..10 in RawValue", A.RawValue, 55.f);
@@ -430,7 +426,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Temporal Set hides RawValue contribution from permanent", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f)); A.CalculateValue();   // RawValue=150
 			A.AddModifier(MakeTemp(E, 30.f, 1, 1.0, EModifierType::Set));
 			A.CalculateValue();
@@ -440,7 +436,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Removing the Set restores permanent contribution", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f));
 			A.AddModifier(MakeTemp(E, 30.f, 1, 1.0, EModifierType::Set));
 			A.CalculateValue();
@@ -451,7 +447,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Temporal Add stacks on top of Set, with permanent hidden", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(50.f));
 			A.AddModifier(MakeTemp(E, 30.f, 1, 1.0, EModifierType::Set));
 			A.AddModifier(MakeTemp(E, 7.f, 2, 2.0));
@@ -497,7 +493,7 @@ void FGMASAttributeStressSpec::Define()
 		It("AddModifier sets bIsDirty", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			TestFalse("Init clean", A.IsDirty());
 			A.AddModifier(MakeTemp(E, 1.f, 1, 0.0));
 			TestTrue("Add dirties", A.IsDirty());
@@ -506,7 +502,7 @@ void FGMASAttributeStressSpec::Define()
 		It("CalculateValue clears bIsDirty", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 1.f, 1, 0.0));
 			A.CalculateValue();
 			TestFalse("Calc clears dirty", A.IsDirty());
@@ -515,7 +511,7 @@ void FGMASAttributeStressSpec::Define()
 		It("RemoveTemporalModifier sets bIsDirty (when match)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 1.f, 1, 0.0));
 			A.CalculateValue();
 			A.RemoveTemporalModifier(1, E);
@@ -524,21 +520,21 @@ void FGMASAttributeStressSpec::Define()
 		});
 		It("RemoveTemporalModifier on non-existent does NOT set bIsDirty (no match path)", [this]()
 		{
-			FAttribute A = MakeAttr(100.f); A.CalculateValue();
+			FAttribute A = GMASTest::MakeAttr(100.f); A.CalculateValue();
 			TestFalse("Init clean post-calc", A.IsDirty());
 			A.RemoveTemporalModifier(999, nullptr);
 			TestFalse("No-op remove leaves clean", A.IsDirty());
 		});
 		It("Permanent modifier dirties the attribute", [this]()
 		{
-			FAttribute A = MakeAttr(100.f); A.CalculateValue();
+			FAttribute A = GMASTest::MakeAttr(100.f); A.CalculateValue();
 			A.AddModifier(MakePerm(10.f));
 			TestTrue("Perm dirties", A.IsDirty());
 		});
 		It("PurgeTemporalModifier dirties only when something gets removed", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f); A.bIsGMCBound = true; A.CalculateValue();
+			FAttribute A = GMASTest::MakeAttr(100.f); A.bIsGMCBound = true; A.CalculateValue();
 			A.PurgeTemporalModifier(0.0);
 			TestFalse("Purge on empty list = clean", A.IsDirty());
 			A.AddModifier(MakeTemp(E, 1.f, 1, 5.0));
@@ -554,21 +550,22 @@ void FGMASAttributeStressSpec::Define()
 	{
 		It("Init() twice with same InitialValue yields same RawValue", [this]()
 		{
-			FAttribute A; A.InitialValue = 50.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(50.f);
 			const float First = A.RawValue;
+			TestEqual("first Init", First, 50.f);
 			A.Init();
 			TestEqual("Idempotent Init", A.RawValue, First);
 		});
 		It("Changing InitialValue and re-Init updates RawValue", [this]()
 		{
-			FAttribute A; A.InitialValue = 50.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(50.f);
 			A.InitialValue = 75.f; A.Init();
 			TestEqual("RawValue follows new InitialValue", A.RawValue, 75.f);
 		});
 		It("Init() does not affect existing temporal modifiers (the list is independent state)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, 10.f, 1, 0.0));
 			A.Init();   // resets RawValue to InitialValue but TemporalModifiers stay
 			A.CalculateValue();
@@ -582,19 +579,19 @@ void FGMASAttributeStressSpec::Define()
 	{
 		It("Negative InitialValue init", [this]()
 		{
-			FAttribute A; A.InitialValue = -50.f; A.Init();
+			FAttribute A = GMASTest::MakeAttr(-50.f);
 			TestEqual("Negative init survives", A.RawValue, -50.f);
 		});
 		It("Negative permanent modifier on positive base", [this]()
 		{
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakePerm(-30.f)); A.CalculateValue();
 			TestEqual("100 - 30 = 70", A.Value, 70.f);
 		});
 		It("Negative temporal modifier (debuff)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, -25.f, 1, 0.0));
 			A.CalculateValue();
 			TestEqual("100 - 25 = 75", A.Value, 75.f);
@@ -603,7 +600,7 @@ void FGMASAttributeStressSpec::Define()
 		It("Set with negative value", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeTemp(E, -42.f, 1, 0.0, EModifierType::Set));
 			A.CalculateValue();
 			TestEqual("Set -42", A.Value, -42.f);

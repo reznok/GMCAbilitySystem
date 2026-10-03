@@ -16,6 +16,7 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestAbility.h"
 #include "UGMAS_TestAbilityB.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -54,10 +55,7 @@ void FGMASClientAuthSpec::SetupHarness()
     AbilityComp->AddToRoot();
     AbilityComp->GMCMovementComponent = MoveCmp;
     AbilityComp->BindReplicationData();
-    // Positive ActionTimer required so subsequent tasks can allocate EffectIDs via
-    // ActionTimer*100 (GetNextAvailableEffectID returns -1 if ActionTimer == 0).
-    // Diverges intentionally from the -1.0 sentinel used in GMAS_ActivationSpec.
-    AbilityComp->ActionTimer = 1.0;
+    AbilityComp->SetActionTimerForTest(GMASTest::ClientAuthActionTimer);
 
     GetMutableDefault<UGMAS_TestAbility>()->AbilityTag = AbilityTagA;
     GetMutableDefault<UGMAS_TestAbility>()->CooldownTime = 0.f;

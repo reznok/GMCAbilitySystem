@@ -8,6 +8,7 @@
 #include "Attributes/GMCAttributeModifier.h"
 #include "Attributes/GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -15,7 +16,6 @@ BEGIN_DEFINE_SPEC(FGMASAttributeSetCombinatoricsSpec,
 	"GMAS.Stress.Set",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-	FAttribute MakeAttr(float Init = 100.f) const;
 	FGMCAttributeModifier MakeSetMod(UGMCAbilityEffect* Eff, float V, int Idx, double T,
 		EModifierType Op = EModifierType::Set) const;
 	FGMCAttributeModifier MakeAddMod(UGMCAbilityEffect* Eff, float V, int Idx, double T) const;
@@ -23,10 +23,6 @@ BEGIN_DEFINE_SPEC(FGMASAttributeSetCombinatoricsSpec,
 
 END_DEFINE_SPEC(FGMASAttributeSetCombinatoricsSpec)
 
-FAttribute FGMASAttributeSetCombinatoricsSpec::MakeAttr(float Init) const
-{
-	FAttribute A; A.InitialValue = Init; A.Init(); return A;
-}
 FGMCAttributeModifier FGMASAttributeSetCombinatoricsSpec::MakeSetMod(UGMCAbilityEffect* Eff, float V, int Idx, double T, EModifierType Op) const
 {
 	FGMCAttributeModifier M; M.Op = Op; M.ValueType = EGMCAttributeModifierType::AMT_Value;
@@ -52,7 +48,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Same ActionTimer, different ApplicationIndex: higher index wins", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 5.0));
 			A.AddModifier(MakeSetMod(E, 60.f, 5, 5.0));
 			A.AddModifier(MakeSetMod(E, 55.f, 3, 5.0));
@@ -63,7 +59,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Same ActionTimer + Index — first inserted is the only one (no two should coexist)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 5.0));
 			A.AddModifier(MakeSetMod(E, 80.f, 1, 5.0));
 			A.CalculateValue();
@@ -74,7 +70,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Three Sets at same ActionTimer with strictly increasing index", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 10.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 20.f, 2, 1.0));
 			A.AddModifier(MakeSetMod(E, 30.f, 3, 1.0));
@@ -85,7 +81,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Negative ApplicationIndex still participates in tie-break", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, -5, 1.0));
 			A.AddModifier(MakeSetMod(E, 40.f, 0, 1.0));
 			A.CalculateValue();
@@ -100,7 +96,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Larger ActionTimer wins regardless of insertion order (later last)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 80.f, 2, 5.0));
 			A.CalculateValue();
@@ -110,7 +106,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Larger ActionTimer wins regardless of insertion order (later first)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 80.f, 2, 5.0));
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 1.0));
 			A.CalculateValue();
@@ -120,7 +116,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Sets at ActionTimer = 0 vs ActionTimer = -1 (negative time)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, -1.0));
 			A.AddModifier(MakeSetMod(E, 40.f, 2, 0.0));
 			A.CalculateValue();
@@ -130,7 +126,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Sets at very large ActionTimer values", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 1e15));
 			A.AddModifier(MakeSetMod(E, 40.f, 2, 1e16));
 			A.CalculateValue();
@@ -140,7 +136,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Sub-millisecond difference in ActionTimer correctly orders", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 40.f, 2, 1.0001));
 			A.CalculateValue();
@@ -155,7 +151,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("SetReplace wins when more recent than Set", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 30.f, 1, 1.0, EModifierType::Set));
 			A.AddModifier(MakeSetMod(E, 80.f, 2, 5.0, EModifierType::SetReplace));
 			A.CalculateValue();
@@ -165,7 +161,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set wins when more recent than SetReplace (Adds before SetReplace are ignored, but no Set means base = Set)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 80.f, 1, 1.0, EModifierType::SetReplace));
 			A.AddModifier(MakeSetMod(E, 30.f, 2, 5.0, EModifierType::Set));
 			A.CalculateValue();
@@ -176,7 +172,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Two SetReplaces — only the more recent matters, Adds before are filtered", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 5.f, 1, 0.5));
 			A.AddModifier(MakeSetMod(E, 30.f, 2, 1.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(E, 7.f, 3, 1.5));
@@ -195,7 +191,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add → Set → Add → Set", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 10.f, 1, 1.0));   // +10
 			A.AddModifier(MakeSetMod(E, 50.f, 2, 2.0));   // base = 50
 			A.AddModifier(MakeAddMod(E, 20.f, 3, 3.0));   // +20
@@ -208,7 +204,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add → SetReplace → Add → SetReplace", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 10.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 50.f, 2, 2.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(E, 20.f, 3, 3.0));
@@ -221,7 +217,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set → Add → Set → Add (last Add survives)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 5.f, 2, 2.0));
 			A.AddModifier(MakeSetMod(E, 200.f, 3, 3.0));
@@ -239,7 +235,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add at exactly SetReplace's ActionTimer is KEPT (strict less-than filter)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 7.f, 1, 5.0));
 			A.AddModifier(MakeSetMod(E, 50.f, 2, 5.0, EModifierType::SetReplace));
 			A.CalculateValue();
@@ -249,7 +245,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add infinitesimally before SetReplace is filtered out", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 7.f, 1, 4.999999));
 			A.AddModifier(MakeSetMod(E, 50.f, 2, 5.0, EModifierType::SetReplace));
 			A.CalculateValue();
@@ -259,7 +255,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add infinitesimally after SetReplace is kept", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 5.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(E, 7.f, 2, 5.000001));
 			A.CalculateValue();
@@ -269,7 +265,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Multiple Adds straddling SetReplace's ActionTimer", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 1.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 2.f, 2, 2.0));
 			A.AddModifier(MakeAddMod(E, 3.f, 3, 3.0));
@@ -289,7 +285,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("100 Sets at distinct ActionTimers — last one wins", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			for (int i = 0; i < 100; ++i) { A.AddModifier(MakeSetMod(E, float(i), i, double(i))); }
 			A.CalculateValue();
 			TestEqual("Set with t=99 (value=99) wins", A.Value, 99.f);
@@ -298,7 +294,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("100 Sets all at same ActionTimer — highest ApplicationIndex wins", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			for (int i = 0; i < 100; ++i) { A.AddModifier(MakeSetMod(E, float(i*2), i, 5.0)); }
 			A.CalculateValue();
 			TestEqual("Index 99 → value 198", A.Value, 198.f);
@@ -307,7 +303,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Removing the winning Set elects the next-most-recent", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 10.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 20.f, 2, 2.0));
 			A.AddModifier(MakeSetMod(E, 30.f, 3, 3.0));
@@ -324,7 +320,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Mass Set insertion does not corrupt Add stacking", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 1.f, 0, 0.0));
 			A.AddModifier(MakeAddMod(E, 1.f, 1, 0.0));
 			for (int i = 0; i < 50; ++i) { A.AddModifier(MakeSetMod(E, float(i), 100+i, double(i+1))); }
@@ -342,7 +338,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		{
 			UGMCAbilityEffect* EA = SpawnEffect();
 			UGMCAbilityEffect* EB = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(EA, 30.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(EB, 50.f, 1, 2.0));   // same Index but different effect
 			A.CalculateValue();
@@ -356,7 +352,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		{
 			UGMCAbilityEffect* EA = SpawnEffect();
 			UGMCAbilityEffect* EB = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(EA, 10.f, 5, 1.0));
 			A.AddModifier(MakeAddMod(EB, 20.f, 5, 1.0));
 			A.CalculateValue();
@@ -369,7 +365,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		{
 			UGMCAbilityEffect* EA = SpawnEffect();
 			UGMCAbilityEffect* EB = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(EA, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(EB, 7.f, 1, 2.0));
 			A.CalculateValue();
@@ -380,7 +376,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		{
 			UGMCAbilityEffect* EA = SpawnEffect();
 			UGMCAbilityEffect* EB = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(EB, 10.f, 1, 0.5));   // before SetReplace
 			A.AddModifier(MakeSetMod(EA, 50.f, 1, 1.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(EB, 5.f, 2, 2.0));    // after
@@ -396,7 +392,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Remove only Add — Set + remaining Adds", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 3.f, 2, 2.0));
 			A.AddModifier(MakeAddMod(E, 4.f, 3, 3.0));
@@ -409,7 +405,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Remove all Adds, leaving lone Set", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 5.f, 2, 2.0));
 			A.AddModifier(MakeAddMod(E, 7.f, 3, 3.0));
@@ -421,7 +417,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Removing all modifiers via repeated RemoveTemporalModifier returns base", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 7.f, 2, 2.0));
 			A.RemoveTemporalModifier(1, E); A.RemoveTemporalModifier(2, E);
@@ -432,7 +428,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("RemoveTemporalModifier with non-matching ApplicationIndex is no-op", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.RemoveTemporalModifier(99, E);
 			A.CalculateValue();
@@ -443,7 +439,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		{
 			UGMCAbilityEffect* EA = SpawnEffect();
 			UGMCAbilityEffect* EB = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(EA, 50.f, 1, 1.0));
 			A.RemoveTemporalModifier(1, EB);   // wrong effect
 			A.CalculateValue();
@@ -458,7 +454,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set 0", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 0.f, 1, 1.0));
 			A.CalculateValue();
 			TestEqual("Set zero", A.Value, 0.f);
@@ -467,7 +463,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set FLT_MAX", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, FLT_MAX, 1, 1.0));
 			A.CalculateValue();
 			TestEqual("Set FLT_MAX", A.Value, FLT_MAX);
@@ -476,7 +472,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set -FLT_MAX", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, -FLT_MAX, 1, 1.0));
 			A.CalculateValue();
 			TestEqual("Set -FLT_MAX", A.Value, -FLT_MAX);
@@ -485,7 +481,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set FLT_EPSILON", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, FLT_EPSILON, 1, 1.0));
 			A.CalculateValue();
 			TestEqual("Set epsilon", A.Value, FLT_EPSILON);
@@ -494,7 +490,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set then Add overflow", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, FLT_MAX, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, FLT_MAX, 2, 2.0));
 			A.CalculateValue();
@@ -509,7 +505,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Three Adds stack on top of RawValue", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 1.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 2.f, 2, 2.0));
 			A.AddModifier(MakeAddMod(E, 3.f, 3, 3.0));
@@ -520,7 +516,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("100 Adds at random ActionTimers stack identically (commutativity)", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			const double Times[] = {17.5, 3.2, 99.9, 0.001, 42.0, 8.7, 56.1, 1.0, 23.4, 11.0};
 			for (int i = 0; i < 10; ++i) { A.AddModifier(MakeAddMod(E, 1.f, i, Times[i])); }
 			A.CalculateValue();
@@ -535,7 +531,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Set 50 → Add 10 → Set 80 → Add 5 → SetReplace 200", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0));
 			A.AddModifier(MakeAddMod(E, 10.f, 2, 2.0));
 			A.AddModifier(MakeSetMod(E, 80.f, 3, 3.0));
@@ -549,7 +545,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Cascade ends with Set (Layered) → all Adds stack", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 50.f, 1, 1.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(E, 10.f, 2, 2.0));
 			A.AddModifier(MakeSetMod(E, 80.f, 3, 3.0));   // Set Layered, more recent
@@ -562,7 +558,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Removing the SetReplace winner re-elects a Set Layered → Adds re-enter", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 10.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 80.f, 2, 2.0));               // Layered
 			A.AddModifier(MakeSetMod(E, 50.f, 3, 3.0, EModifierType::SetReplace));
@@ -575,7 +571,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Add after SetReplace isn't filtered when SetReplace gets removed", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeAddMod(E, 10.f, 1, 1.0));
 			A.AddModifier(MakeSetMod(E, 50.f, 2, 2.0, EModifierType::SetReplace));
 			A.AddModifier(MakeAddMod(E, 5.f, 3, 3.0));
@@ -593,7 +589,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("100 Adds + 10 Sets correctly resolve", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(0.f);
+			FAttribute A = GMASTest::MakeAttr(0.f);
 			for (int i = 0; i < 100; ++i) { A.AddModifier(MakeAddMod(E, 1.f, i, double(i))); }   // Adds: 100 × +1 spread t=0..99
 			for (int i = 0; i < 10; ++i)  { A.AddModifier(MakeSetMod(E, 500.f, 100+i, double(200+i))); }  // Sets: t=200..209, all value 500
 			A.CalculateValue();
@@ -604,7 +600,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("Removing all Sets leaves pure Add stack", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(50.f);
+			FAttribute A = GMASTest::MakeAttr(50.f);
 			for (int i = 0; i < 20; ++i) { A.AddModifier(MakeAddMod(E, 1.f, i, double(i))); }
 			for (int i = 0; i < 5; ++i)  { A.AddModifier(MakeSetMod(E, 1000.f, 100+i, double(200+i))); }
 			for (int i = 0; i < 5; ++i)  { A.RemoveTemporalModifier(100+i, E); }
@@ -615,7 +611,7 @@ void FGMASAttributeSetCombinatoricsSpec::Define()
 		It("SetReplace at t=0 with everything else after — nothing is filtered", [this]()
 		{
 			UGMCAbilityEffect* E = SpawnEffect();
-			FAttribute A = MakeAttr(100.f);
+			FAttribute A = GMASTest::MakeAttr(100.f);
 			A.AddModifier(MakeSetMod(E, 200.f, 1, 0.0, EModifierType::SetReplace));
 			for (int i = 0; i < 10; ++i) { A.AddModifier(MakeAddMod(E, 1.f, 2+i, double(i+1))); }
 			A.CalculateValue();

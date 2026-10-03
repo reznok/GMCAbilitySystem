@@ -29,6 +29,7 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestAbility.h"
 #include "UGMAS_TestAbilityB.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
 
@@ -80,7 +81,7 @@ void FGMASActivationSpec::SetupHarness()
 	AbilityComp->AddToRoot();
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
 
 	// Assign per-class ability tags up-front; tests override anything else they need.
 	GetMutableDefault<UGMAS_TestAbility>()->AbilityTag          = AbilityTagA;

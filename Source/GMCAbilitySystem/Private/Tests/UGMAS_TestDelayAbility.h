@@ -1,5 +1,5 @@
-// Test ability that starts a WaitDelay task and ends itself when the delay fires.
-// Used by Layer-3 functional tests to exercise the WaitDelay task in a live game world.
+// Test ability that starts a WaitDelay task and ends itself when the delay fires. Used by the
+// GMAS.Unit.Task spec through the clock seams.
 
 #pragma once
 

@@ -10,8 +10,12 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestDelayAbility.h"
 #include "UGMAS_TestBoundAttrAbility.h"
+#include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
+
+// Arithmetic origin of every clock value in this spec (not an id-range choice).
+constexpr double kStart = 1.0;
 
 BEGIN_DEFINE_SPEC(FGMASTaskSpec,
 	"GMAS.Unit.Task",
@@ -54,7 +58,7 @@ void FGMASTaskSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->SetActionTimerForTest(1.0);
+	AbilityComp->SetActionTimerForTest(kStart);
 
 	GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 0.5f;
 }
@@ -62,6 +66,7 @@ void FGMASTaskSpec::SetupHarness()
 void FGMASTaskSpec::TeardownHarness()
 {
 	GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 0.2f;
+	GetMutableDefault<UGMAS_TestBoundAttrAbility>()->StaminaMod = 25.f;
 	AttrData->RemoveFromRoot();
 	AbilityComp->RemoveFromRoot();
 	MoveCmp->RemoveFromRoot();
@@ -92,11 +97,12 @@ void FGMASTaskSpec::Define()
 			if (!TestNotNull("instance", Ability)) { return; }
 			TestEqual("one running task", Ability->RunningTasks.Num(), 1);
 
-			AbilityComp->SetActionTimerForTest(1.25);
+			AbilityComp->SetActionTimerForTest(kStart + 0.25);
 			AbilityComp->TickActiveAbilitiesForTest(0.25f);
 			TestEqual("still running before the delay elapses", Ability->AbilityState, EAbilityState::Initialized);
 
-			AbilityComp->SetActionTimerForTest(1.5);
+			// WaitDelay completes when TimeStarted + Time <= ActionTimer: the inclusive boundary is intentional.
+			AbilityComp->SetActionTimerForTest(kStart + 0.5);
 			AbilityComp->TickActiveAbilitiesForTest(0.25f);
 			TestEqual("ended once the delay elapsed", Ability->AbilityState, EAbilityState::Ended);
 			TestEqual("task unregistered", Ability->RunningTasks.Num(), 0);
@@ -104,7 +110,10 @@ void FGMASTaskSpec::Define()
 			AbilityComp->CleanupStaleAbilitiesForTest();
 			TestEqual("instance purged", AbilityComp->GetActiveAbilities().Num(), 0);
 		});
+	});
 
+	Describe("Confirm-timeout authority seam", [this]()
+	{
 		It("does not die of [AbilityCut] after ServerConfirmTimeout when authority is forced", [this]()
 		{
 			AbilityComp->bForceAuthorityForTest = true;
@@ -115,7 +124,7 @@ void FGMASTaskSpec::Define()
 
 			for (int Step = 1; Step <= 6; ++Step)
 			{
-				AbilityComp->SetActionTimerForTest(1.0 + Step * 0.5);   // reaches 4.0 > 1.0 + 2.0
+				AbilityComp->SetActionTimerForTest(kStart + Step * 0.5);   // reaches kStart + 3.0 > kStart + ServerConfirmTimeout 2.0
 				AbilityComp->TickActiveAbilitiesForTest(0.5f);
 			}
 			TestEqual("still running past the confirm timeout", Ability->AbilityState, EAbilityState::Initialized);
@@ -127,12 +136,13 @@ void FGMASTaskSpec::Define()
 			// Plain match: AddExpectedError treats its pattern as a regex, where "[AbilityCut]" is a
 			// character class and would never match the logged line.
 			AddExpectedErrorPlain(TEXT("[AbilityCut] Client removing unconfirmed ability"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddExpectedMessagePlain(TEXT("[AbilityCut] Ability ending with"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 			GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 10.f;
 			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass());
 			UGMCAbility* Ability = FirstActiveAbility();
 			if (!TestNotNull("instance", Ability)) { return; }
 
-			AbilityComp->SetActionTimerForTest(3.5);   // ClientStartTime 1.0 + ServerConfirmTimeout 2.0 < 3.5
+			AbilityComp->SetActionTimerForTest(kStart + 2.5);   // ClientStartTime kStart + ServerConfirmTimeout 2.0 < kStart + 2.5
 			AbilityComp->TickActiveAbilitiesForTest(0.5f);
 			TestEqual("ended by the confirm timeout", Ability->AbilityState, EAbilityState::Ended);
 		});
