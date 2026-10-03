@@ -188,5 +188,5 @@ Plugins/**/Intermediate/*
 
 # End of https://www.toptal.com/developers/gitignore/api/unrealengine,rider
 
-# Python bytecode from the editor toolset
+# Python bytecode
 __pycache__/
