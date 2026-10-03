@@ -73,6 +73,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write        # gh label create / --label use the Issues API
 concurrency:
   group: sync-deepworlds
   cancel-in-progress: false
@@ -185,7 +186,7 @@ Do not press "Merge" on GitHub for this PR: it would merge the unresolved fork t
 
 ### 5.6 Security
 
-- Token: `GITHUB_TOKEN` with `contents: write` and `pull-requests: write` for this job only; no stored secrets.
+- Token: `GITHUB_TOKEN` with `contents: write`, `pull-requests: write` and `issues: write` (labels live in the Issues API) for this job only; no stored secrets.
 - Triggers: `schedule` and `workflow_dispatch` only. Never `pull_request`, so no code from a fork pull request runs with write access.
 - Force-push is confined to `sync/deepworlds`, a branch nothing else uses.
 - Fork code lands in `dev` without review by design; `dev` is documented as unstable and the `dev` → `main` promotion is the review and build point.
