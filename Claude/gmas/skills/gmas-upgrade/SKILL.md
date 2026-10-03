@@ -95,7 +95,7 @@ ASC->ApplyAbilityEffect(UMyEffect_Burn::StaticClass(), Data, EGMCAbilityEffectQu
 
 **Compiles, behaves differently:**
 
-- `bActivateOnMovementTick` default `false` → `true` (`Public/Ability/GMCAbility.h`): every ability class that never set it moves from the ancillary tick (never replayed) to the prediction tick (replayed). Set it `false` explicitly on once-only abilities (weapon fire) and keep one value per input tag: the first granted candidate decides for the batch, a mismatch logs an `Error` (`gmas:gmas-ability`).
+- `bActivateOnMovementTick` default `false` → `true` (`Public/Ability/GMCAbility.h`): for every ability class that never set it, activation and task-payload dispatch move from the ancillary tick (never replayed) to the prediction tick (replayed); the ability's own `Tick` already ran in the prediction tick on both versions. Set it `false` explicitly on once-only abilities (weapon fire) and keep one value per input tag: the first granted candidate decides for the batch, a mismatch logs an `Error` (`gmas:gmas-ability`).
 - `bPreserveGrantedTagsIfMultiple` default `false` → `true`, and the test changed from "another live effect with the same `EffectTag`" to "any other live effect that still grants the tag" (`RemoveTagsFromOwner`, `Private/Effects/GMCAbilityEffect.cpp`). An effect whose end was meant to strip a tag another effect also grants sets it `false`.
 - Clamps: 1.3 ignored an all-zero clamp, 1.4 applies it. Attributes read 0 on both sides from the first frame until the rows are fixed; the debugger's Attributes row shows it at once (`gmas:gmas-debug`).
 - `ServerConfirmTimeout` 1 s → 2 s: an activation the server refuses lives twice as long on the client before `[AbilityCut]`.

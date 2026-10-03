@@ -38,7 +38,7 @@ Build locally, then push to `dev`. If a sync lands at the same moment the job re
 
 1. Build at least one downstream project against `dev` and run the GMAS specs headless:
    `UnrealEditor-Cmd.exe <Project>.uproject -ExecCmds="Automation RunTests GMAS;Quit" -unattended -nullrhi -log`
-2. Run `bash Claude/gmas/scripts/check.sh` (expect `N passed, 0 failed`) and, if anything under `Claude/` or `.claude-plugin/` changed, bump `version` in `Claude/gmas/.claude-plugin/plugin.json` (installed plugins update only when it changes).
+2. Run `bash Claude/gmas/scripts/check.sh` (expect `N passed, 0 failed`) and bump `version` in `Claude/gmas/.claude-plugin/plugin.json`: at least a patch bump whenever anything under `Claude/` or `.claude-plugin/` changed, `X.Y.0` when GMAS's minor version changes (installed plugins update only when it changes).
 3. Bump `VersionName` in `GMCAbilitySystem.uplugin` on `dev` and push.
 4. Promote with a merge commit that carries `dev`'s tree exactly (`main`'s 1.3 history is a squash, so a plain merge conflicts):
 
@@ -46,7 +46,7 @@ Build locally, then push to `dev`. If a sync lands at the same moment the job re
        NEW=$(git commit-tree origin/dev^{tree} -p origin/main -p origin/dev -m "Release X.Y: promote dev to main")
        git push origin "$NEW":main
 
-5. Tag it and publish the release notes: `git tag -a vX.Y.Z "$NEW" -m "GMAS X.Y" && git push origin vX.Y.Z`, then `gh release create vX.Y.Z --notes-file notes.md --title "GMAS X.Y"`.
+5. Tag it and publish the release notes: `git tag -a vX.Y.Z "$NEW" -m "GMAS X.Y" && git push origin vX.Y.Z`, then `gh release create vX.Y.Z --notes-file ../gmas-release-notes.md --title "GMAS X.Y"` (keep the notes file outside the clone; an untracked file makes the sync script's clean-tree check fail).
 
 ## Consuming GMAS as a submodule
 
