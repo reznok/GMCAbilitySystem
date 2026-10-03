@@ -52,3 +52,7 @@ Build locally, then push to `dev`. If a sync lands at the same moment the job re
     git submodule add -b dev https://github.com/reznok/GMCAbilitySystem.git Plugins/GMCAbilitySystem
 
 Use `-b main` for releases only. The plugin's name (`GMCAbilitySystem`) does not depend on the folder name. Fix upstream, push to `dev`, then bump the submodule pointer in your project; never keep local patches inside the submodule.
+
+## The Claude Code plugin
+
+`Claude/gmas` (and the marketplace manifest at `.claude-plugin/marketplace.json`) ships with every promotion of `dev` to `main`; users install from `main`. Before pushing a change under `Claude/`, run `bash Claude/gmas/scripts/check.sh` and bump `version` in `Claude/gmas/.claude-plugin/plugin.json` (installed plugins update only when it changes). A fix confined to `Claude/` or `.claude-plugin/` may be cherry-picked from `dev` onto `main` and pushed without a full promotion.

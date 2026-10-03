@@ -22,3 +22,5 @@
 </p>
 
 <p align="center"><code>dev</code> is the unstable integration branch; <code>main</code> is the release branch. See <a href="docs/BRANCHING.md">docs/BRANCHING.md</a>.</p>
+
+<p align="center"><b>Claude Code plugin:</b> <code>/plugin marketplace add reznok/GMCAbilitySystem</code> then <code>/plugin install gmas@reznok</code> — GMC-aware skills for authoring, debugging, reviewing and testing GMAS gameplay. See <a href="Claude/gmas/README.md">Claude/gmas/README.md</a>.</p>
