@@ -32,6 +32,13 @@ float FGMCAttributeModifier::GetValue() const
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("CustomModifierClass is null or SourceAbilityEffect/SourceAbilitySystemComponent is invalid in FAttribute::AddModifier"));
 		}
 		break;
+	case EGMCAttributeModifierType::AMT_External:
+		if (SourceAbilityEffect.IsValid() && SourceAbilityEffect->GetOwnerAbilityComponent())
+		{
+			return SourceAbilityEffect->GetOwnerAbilityComponent()->GetExternalModifierValue(ExternalTag, ExternalValueIndex);
+		}
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("SourceAbilityEffect/SourceAbilitySystemComponent is invalid for AMT_External in FGMCAttributeModifier::GetValue"));
+		return 0.f;
 	}
 
 	checkNoEntry()
@@ -40,8 +47,25 @@ float FGMCAttributeModifier::GetValue() const
 
 float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute) const
 {
-		float TargetValue = GetValue();
-	
+	float TargetValue = GetValue();
+
+	// Resolve the source ASC ONCE with the weak-ptr validated. SourceAbilityEffect is a
+	// TWeakObjectPtr: a modifier kept in the attribute's temporal history can outlive its
+	// effect (GC after EndEffect), and every attribute-driven op below used to dereference
+	// the stale pointer raw — GetValue() above guards, these branches did not.
+	UGMC_AbilitySystemComponent* SourceASC =
+		SourceAbilityEffect.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent() : nullptr;
+	const auto GetSourceAttributeValue = [SourceASC](const FGameplayTag& InAttributeTag) -> float
+	{
+		if (SourceASC)
+		{
+			return SourceASC->GetAttributeValueByTag(InAttributeTag);
+		}
+		UE_LOG(LogGMCAbilitySystem, Error,
+			TEXT("FGMCAttributeModifier::CalculateModifierValue: SourceAbilityEffect/ASC stale, attribute-driven modifier falls back to 0."));
+		return 0.f;
+	};
+
 	// First set Percentage values to a fraction
 	switch (Op)
 	{
@@ -52,10 +76,11 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 		case EModifierType::AddPercentageMinClamp:
 		case EModifierType::AddPercentageMaxClamp:
 		case EModifierType::AddPercentageOfAttributeRawValue:
+		case EModifierType::AddPercentageOfBase:
 			TargetValue /= 100.f;
 		break;
 	}
-	
+
 	switch (Op)
 	{
 		case EModifierType::Add:
@@ -63,15 +88,15 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 		case EModifierType::AddPercentageInitialValue:
 			return Attribute.InitialValue * TargetValue * DeltaTime;
 		case EModifierType::AddPercentageAttribute:
-			return SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(ValueAsAttribute) * TargetValue * DeltaTime;
+			return GetSourceAttributeValue(ValueAsAttribute) * TargetValue * DeltaTime;
 		case EModifierType::AddPercentageMaxClamp:
 			{
-				const float MaxValue = Attribute.Clamp.MaxAttributeTag.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(Attribute.Clamp.MaxAttributeTag) : Attribute.Clamp.Max;
+				const float MaxValue = Attribute.Clamp.MaxAttributeTag.IsValid() && SourceASC ? GetSourceAttributeValue(Attribute.Clamp.MaxAttributeTag) : Attribute.Clamp.Max;
 				return MaxValue * TargetValue * DeltaTime;
 			}
 		case EModifierType::AddPercentageMinClamp:
 			{
-				const float MinValue = Attribute.Clamp.MinAttributeTag.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(Attribute.Clamp.MinAttributeTag) : Attribute.Clamp.Min;
+				const float MinValue = Attribute.Clamp.MinAttributeTag.IsValid() && SourceASC ? GetSourceAttributeValue(Attribute.Clamp.MinAttributeTag) : Attribute.Clamp.Min;
 				return MinValue * TargetValue * DeltaTime;
 			}
 		case EModifierType::AddPercentageAttributeSum:
@@ -79,20 +104,20 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 				float Sum = 0.f;
 				for (auto& AttTag : Attributes)
 				{
-					Sum += SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(AttTag);
+					Sum += GetSourceAttributeValue(AttTag);
 				}
 				return TargetValue * Sum * DeltaTime;
 			}
 		case EModifierType::AddScaledBetween:
 			{
-				const float XBound = XAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(XAttribute) : X;
-				const float YBound = YAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(YAttribute) : Y;
+				const float XBound = XAsAttribute ? GetSourceAttributeValue(XAttribute) : X;
+				const float YBound = YAsAttribute ? GetSourceAttributeValue(YAttribute) : Y;
 				return FMath::Clamp(FMath::Lerp(XBound, YBound, TargetValue), X, Y) * DeltaTime;
 			}
 		case EModifierType::AddClampedBetween:
 			{
-				const float XBound = XAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(XAttribute) : X;
-				const float YBound = YAsAttribute ? SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(YAttribute) : Y;
+				const float XBound = XAsAttribute ? GetSourceAttributeValue(XAttribute) : X;
+				const float YBound = YAsAttribute ? GetSourceAttributeValue(YAttribute) : Y;
 				return FMath::Clamp(TargetValue, XBound, YBound) * DeltaTime;
 			}
 		case EModifierType::AddPercentageMissing:
@@ -102,14 +127,53 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 			}
 		case EModifierType::AddPercentageOfAttributeRawValue:
 			{
-				const float RawValue = SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeRawValue(Attribute.Tag);
+				const float RawValue = SourceASC ? SourceASC->GetAttributeRawValue(Attribute.Tag) : Attribute.Value;
 				return TargetValue * RawValue * DeltaTime;
 			}
+		case EModifierType::Set:
+		case EModifierType::SetReplace:
+			// Absolute value, no DeltaTime scaling. The two Set variants share the same payload (a target value);
+			// they differ only in how FAttribute::CalculateValue treats the surrounding Add modifiers.
+			return TargetValue;
+		case EModifierType::AddPercentageOfBase:
+			// Returns the FRACTION only. FAttribute::CalculateValue multiplies it by the resolved
+			// base layer at calc time (deferred: the base is not knowable here without a stale read).
+			return TargetValue * DeltaTime;
 	}
 
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("Unknown Modifier Type in FAttribute::AddModifier for Attribute %s, operator %d"), *Attribute.Tag.ToString(), static_cast<int32>(Op));
 	checkNoEntry();
 	return 0.f;
+}
+
+bool FGMCAttributeModifier::ResolveConditions(const UGMC_AbilitySystemComponent* ASC)
+{
+	if (Conditions.Num() == 0 || ASC == nullptr) return true;
+
+	// Bound-only view: ActiveTags is GMC-bound (rollback + replayed), so a condition evaluated
+	// here resolves identically on every replayed move. ClientAuthActiveTags is intentionally
+	// excluded — it isn't bound and would make the application non-deterministic under replay.
+	const FGameplayTagContainer& BoundTags = ASC->GetBoundActiveTags();
+	for (const FGMCModifierCondition& Rule : Conditions)
+	{
+		if (Rule.Condition.IsEmpty() || !Rule.Condition.Matches(BoundTags)) continue;
+
+		switch (Rule.Action)
+		{
+		case EGMCModifierConditionAction::Skip:
+			return false; // first match wins -> abort this application
+
+		case EGMCModifierConditionAction::OverrideValue:
+			ValueType           = Rule.ValueType;
+			ModifierValue       = Rule.ModifierValue;
+			ValueAsAttribute    = Rule.ValueAsAttribute;
+			CustomModifierClass = Rule.CustomModifierClass;
+			ExternalTag         = Rule.ExternalTag;
+			ExternalValueIndex  = Rule.ExternalValueIndex;
+			return true; // first match wins -> apply with the overridden value source
+		}
+	}
+	return true; // no rule matched -> apply with the default value source
 }
 
 void FGMCAttributeModifier::InitModifier(UGMCAbilityEffect* Effect, double InActionTimer, int InApplicationIdx, bool bInRegisterInHistory, float InDeltaTime)

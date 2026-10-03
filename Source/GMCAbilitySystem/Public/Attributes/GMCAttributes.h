@@ -2,6 +2,7 @@
 #include "GameplayTagContainer.h"
 #include "GMCAttributeClamp.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "Replication/SyncSettings.h" // EGMC_CombineMode
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
@@ -21,6 +22,24 @@ struct FModifierHistoryEntry
 	float Value = 0.f;
 };
 
+// How a temporal modifier participates in CalculateValue. Stored alongside the entry so the value pipeline
+// can layer Sets and Adds in the right order without re-querying the source modifier's Op every frame.
+// Fixed application order: base layer (Set winner or RawValue) -> PercentOfBase entries -> flat Adds.
+UENUM()
+enum class EAttributeModifierKind : uint8
+{
+	// Standard cumulative delta. Stacks with all other Adds. Compatible with the original BaseValue + Σdeltas model.
+	Add,
+	// Absolute value override. Wins over RawValue as the base layer. Active Add modifiers (any timestamp) stack on top.
+	Set,
+	// Absolute value override. Wins over RawValue as the base layer. Active Adds placed BEFORE this entry's
+	// ActionTimer are filtered out — only Adds placed afterwards stack on top. Used for "reset state" semantics.
+	SetReplace,
+	// Fraction of the resolved base layer, applied at calc time (Value stores the fraction, not a delta).
+	// Resolved AFTER the base layer and BEFORE flat Adds — never reads a stale Value, no feedback loop.
+	PercentOfBase,
+};
+
 USTRUCT(Blueprintable)
 struct FAttributeTemporaryModifier
 {
@@ -31,7 +50,7 @@ struct FAttributeTemporaryModifier
 	int ApplicationIndex = 0;
 
 	UPROPERTY()
-	// The value that we would like to apply
+	// The value that we would like to apply (delta for Add, absolute target for Set / SetReplace)
 	float Value = 0.f;
 
 	UPROPERTY()
@@ -40,6 +59,9 @@ struct FAttributeTemporaryModifier
 	// The effect that applied this modifier
 	UPROPERTY()
 	TWeakObjectPtr<UGMCAbilityEffect> InstigatorEffect = nullptr;
+
+	UPROPERTY()
+	EAttributeModifierKind Kind = EAttributeModifierKind::Add;
 };
 
 USTRUCT(BlueprintType)
@@ -50,6 +72,16 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	void Init() const
 	{
+		// When bStartFull is set, override InitialValue with the resolved upper clamp. ClampValue
+		// applied to TNumericLimits<float>::Max() returns the literal Clamp.Max or the value of
+		// Clamp.MaxAttributeTag. This only makes sense when an upper bound actually exists, so it
+		// is gated on bClampMax — without it ClampValue would return TNumericLimits<float>::Max().
+		// Two-pass init in UGMC_AbilitySystemComponent ensures MaxAttributeTag dependencies
+		// resolve correctly even if the source attribute is declared after this one.
+		if (bStartFull && Clamp.bClampMax)
+		{
+			InitialValue = Clamp.ClampValue(TNumericLimits<float>::Max());
+		}
 		RawValue = Clamp.ClampValue(InitialValue);
 		CalculateValue();
 	}
@@ -69,7 +101,10 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY(BlueprintAssignable)
 	FAttributeChanged OnAttributeChanged;
 
+	int32 BoundIndex = INDEX_NONE;
+
 	// Temporal Modifier + Accumulated Value
+	// This is replicated on Simulated proxy 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	mutable float Value{0};
 
@@ -86,12 +121,27 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
 	bool bIsGMCBound = false;
 
+	// Combine mode used when binding this attribute to the GMC (mirrors FAttributeData::ValueCombineMode; set
+	// from the data asset in InstantiateAttributes). Deliberately NOT a UPROPERTY / not replicated: every side
+	// (server, client, replay) runs BindReplicationData->InstantiateAttributes from the same local data asset,
+	// so the mode is identical everywhere without replication. Default CombineIfUnchanged = legacy behaviour;
+	// see FAttributeData::ValueCombineMode for the AlwaysCombineOverwrite safety contract.
+	EGMC_CombineMode ValueCombineMode = EGMC_CombineMode::CombineIfUnchanged;
+
+	// Runtime mirror of FAttributeData::bStartFull. When set, Init() resolves InitialValue from
+	// the upper clamp instead of using the user-set value.
+	UPROPERTY()
+	bool bStartFull = false;
+
 	// Clamp the attribute to a certain range
 	// Clamping will only happen if this is modified
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="({min}, {max} {MinAttributeTag}, {MaxAttributeTag})"))
 	FAttributeClamp Clamp{};
 
 	FString ToString() const;
+
+	// Multi-line debug dump: RawValue, clamp, each temporal entry (kind / value / instigator), final Value.
+	FString DumpDebugString() const;
 
 	bool IsDirty() const
 	{
@@ -101,12 +151,20 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	bool operator< (const FAttribute& Other) const;
 
 	// This is the sum of permanent modification applied to this attribute.
+	// Replicated to Simulated Proxy
 	UPROPERTY()
 	mutable float RawValue = 0.f;
 
 protected:
 
-		UPROPERTY()
+		// Local cache of temporal contributions to Value. Deliberately NOT replicated:
+		//  - For bound attributes (GMC-driven), each side rebuilds the list from its own Effect ticks during
+		//    PredictionTick / replay, and PurgeTemporalModifier(ActionTimer) cleans up rolled-back entries.
+		//  - For unbound attributes, the client never mutates this list (no prediction → bIsDirty stays false),
+		//    so its content on the client side is always empty. The server's Value is the only thing the client
+		//    consumes, and that arrives via the replicated UPROPERTY Value field on FAttribute itself.
+		// Replicating this array used to send up to 25 bytes per active modifier per delta update on every
+		// FAttribute change in UnBoundAttributes — pure waste for state nobody on the client reads.
 		mutable TArray<FAttributeTemporaryModifier> ValueTemporalModifiers;
 
 		mutable bool bIsDirty = false;
