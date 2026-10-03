@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 #pragma once
 
@@ -34,7 +34,7 @@ class GMCABILITYSYSTEM_API UGMCModifierCustom_Exponent : public UGMCAttributeMod
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Exponent)
 	float Max = 0.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Exponent, meta=(EditCondition = "ExponentType == EGMCMC_ExponentType::Saturated || ExponentType == EGMCMC_ExponentType::CustomPower", EditConditionHides));
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = Exponent, meta=(EditCondition = "ExponentType == EGMCMC_ExponentType::Saturated || ExponentType == EGMCMC_ExponentType::CustomPower", EditConditionHides))
 	float k = 0.f;
 
 	virtual float Calculate(UGMCAbilityEffect* SourceEffect, const FAttribute* Attribute) override;

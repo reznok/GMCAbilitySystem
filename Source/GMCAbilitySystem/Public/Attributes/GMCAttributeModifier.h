@@ -157,6 +157,11 @@ struct GMCABILITYSYSTEM_API FGMCAttributeModifier
 
 		int ApplicationIndex{0};
 
+		// Latch for ReportStaleSource: the first stale-source read of this modifier is an Error, the
+		// repeats (a duration effect reads every tick) are Verbose.
+		mutable bool bReportedStaleSource{false};
+		void ReportStaleSource(const FString& Message) const;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",
 		meta=(DisplayAfter = "ValueType", EditConditionHides, EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Custom"))
 		TSubclassOf<UGMCAttributeModifierCustom_Base> CustomModifierClass{nullptr};
@@ -188,11 +193,11 @@ struct GMCABILITYSYSTEM_API FGMCAttributeModifier
 		float Y {0.f};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", DisplayName="X As Attribute", 
-		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides));
+		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides))
 		bool XAsAttribute{false};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", DisplayName="Y As Attribute",
-		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides));
+		meta=(EditCondition = "Op == EModifierType::AddScaledBetween || Op == EModifierType::AddClampedBetween", EditConditionHides))
 		bool YAsAttribute{false};
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem",

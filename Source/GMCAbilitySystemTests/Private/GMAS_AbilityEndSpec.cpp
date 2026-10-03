@@ -19,7 +19,7 @@
 #include "UGMAS_TestEventRecorder.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASAbilityEndSpec,
 	"GMAS.Unit.AbilityEnd",
@@ -691,4 +691,4 @@ void FGMASAbilityEndSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

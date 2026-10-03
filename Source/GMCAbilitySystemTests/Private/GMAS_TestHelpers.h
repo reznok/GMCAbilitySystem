@@ -15,8 +15,8 @@ namespace GMASTest
 	// refused by the effect-id generators.
 	inline constexpr double StableActionTimer = -1.0;
 
-	// Client-auth ids are ActionTimer*100 + ClientAuthEffectIDOffset and must not drop below the
-	// offset, so client-auth specs seed a positive clock.
+	// Client-auth ids are ActionTimer*100 + ClientAuthEffectIDOffset; a positive clock keeps them
+	// inside their range without the one-time wrap report, so client-auth specs seed one.
 	inline constexpr double ClientAuthActionTimer = 1.0;
 
 	// An attribute with no clamp. FAttributeClamp defaults to both flags on with Min = Max = 0,

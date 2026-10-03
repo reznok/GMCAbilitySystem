@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
 #include "Ability/Tasks/WaitForGameplayTagChange.h"
@@ -32,7 +32,9 @@ void UGMCAbilityTask_WaitForGameplayTagChange::OnDestroy(bool bInOwnerFinished)
 void UGMCAbilityTask_WaitForGameplayTagChange::OnGameplayTagChanged(const FGameplayTagContainer& AddedTags,
 	const FGameplayTagContainer& RemovedTags)
 {
-	if (bTaskCompleted) { return; }
+	// The component broadcasts from a snapshot, so a task ended earlier in the same broadcast can
+	// still be called: Finished counts as done.
+	if (bTaskCompleted || GetState() == EGameplayTaskState::Finished) { return; }
 
 	FGameplayTagContainer MatchedTags;
 	switch (ChangeType)

@@ -8,9 +8,10 @@
 #include "Components/GMCAbilityComponent.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "Effects/GMCAbilityEffect.h"
+#include "GMAS_TestHelpers.h"
 #include "UGMAS_TestMovementCmp.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASModifierConditionsSpec,
 	"GMAS.Unit.ModifierConditions",
@@ -83,7 +84,7 @@ void FGMASModifierConditionsSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->ActionTimer = 1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::ClientAuthActionTimer);
 }
 
 void FGMASModifierConditionsSpec::TeardownHarness()
@@ -317,19 +318,19 @@ void FGMASModifierConditionsSpec::Define()
 			Mod.Conditions.Add(Skip);
 			Data.Modifiers.Add(Mod);
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->ApplyAbilityEffect(Effect, Data);     // StartEffect applies +50 (no bleed)
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("buff active at start (no bleed)", AbilityComp->GetAttributeValueByTag(HealthTag), 150.f);
 
 			AbilityComp->AddActiveTag(BleedTag);               // tag appears -> next tick suppresses
-			AbilityComp->ActionTimer = 2.0;
+			AbilityComp->SetActionTimerForTest(2.0);
 			AbilityComp->TickActiveEffects(1.0f);
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("buff suppressed while bleeding", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
 
 			AbilityComp->RemoveActiveTag(BleedTag);            // tag gone -> next tick restores
-			AbilityComp->ActionTimer = 3.0;
+			AbilityComp->SetActionTimerForTest(3.0);
 			AbilityComp->TickActiveEffects(1.0f);
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("buff restored after bleed ends", AbilityComp->GetAttributeValueByTag(HealthTag), 150.f);
@@ -356,13 +357,13 @@ void FGMASModifierConditionsSpec::Define()
 			Mod.Conditions.Add(Skip);
 			Data.Modifiers.Add(Mod);
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->ApplyAbilityEffect(Effect, Data);     // applied at start (no bleed) -> +50
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("buff active at start", AbilityComp->GetAttributeValueByTag(HealthTag), 150.f);
 
 			AbilityComp->AddActiveTag(BleedTag);               // tag appears AFTER start
-			AbilityComp->ActionTimer = 2.0;
+			AbilityComp->SetActionTimerForTest(2.0);
 			AbilityComp->TickActiveEffects(1.0f);
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("buff stays — no re-evaluation", AbilityComp->GetAttributeValueByTag(HealthTag), 150.f);
@@ -372,4 +373,4 @@ void FGMASModifierConditionsSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

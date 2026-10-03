@@ -31,7 +31,7 @@
 #include "UGMAS_TestAbilityB.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASActivationSpec,
 	"GMAS.Unit.Activation",
@@ -406,4 +406,4 @@ void FGMASActivationSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

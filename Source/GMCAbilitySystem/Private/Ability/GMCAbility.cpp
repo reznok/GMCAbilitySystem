@@ -27,7 +27,7 @@ FString UGMCAbility::GetAbilityCutDiagnostics() const
 	const double Now = FPlatformTime::Seconds();
 	const bool bAuthority = OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority();
 	const bool bReplaying = OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic();
-	const float Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.f;
+	const double Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
 
 	FString Out = FString::Printf(
 		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f Tasks=%d"),
@@ -94,10 +94,11 @@ bool UGMCAbility::IsActive() const
 void UGMCAbility::Tick(float DeltaTime)
 {
 	// Per-ability profiling scope, named by gameplay tag (class-name fallback). The FString
-	// is only built in trace-enabled configs — TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles to
-	// nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::Tick [%s]"),
-		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+	// is only built while the CPU trace channel is on; TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles
+	// to nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)
+		? FString::Printf(TEXT("Ability::Tick [%s]"), AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName())
+		: FString()));
 
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
@@ -129,8 +130,9 @@ void UGMCAbility::Tick(float DeltaTime)
 }
 
 void UGMCAbility::AncillaryTick(float DeltaTime) {
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::AncTick [%s]"),
-		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)
+		? FString::Printf(TEXT("Ability::AncTick [%s]"), AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName())
+		: FString()));
 
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
@@ -172,9 +174,6 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 				// removal) legitimately idle task-less — this is coverage info, not an accusation.
 				const FString Diag = GetAbilityCutDiagnostics();
 				UE_LOG(LogGMCAbilitySystem, Verbose,
-					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
-					Now - TasklessSinceTime, *Diag);
-				UE_LOG(LogTemp, Verbose,
 					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
 					Now - TasklessSinceTime, *Diag);
 				bTasklessCensusLogged = true;
@@ -443,7 +442,9 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 		? TaskData.GetPtr<FGMCAbilityTaskData>() : nullptr;
 	if (!Ptr)
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] HandleTaskData: payload is not a FGMCAbilityTaskData; dropped."));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] HandleTaskData: payload (struct %s) for TaskID=%d is not a FGMCAbilityTaskData; dropped (ability %s, owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("none"), TaskID,
+			*AbilityTag.ToString(), *GetNameSafe(GetOwnerActor()));
 		return;
 	}
 	const FGMCAbilityTaskData TaskDataFromInstance = *Ptr;
@@ -490,12 +491,6 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
 			TaskID, TaskIDCounter, *Diag);
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
-				TaskID, TaskIDCounter, *Diag);
-		}
 	}
 }
 
@@ -524,12 +519,6 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
 			TaskID, TaskIDCounter, *Diag);
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
-				TaskID, TaskIDCounter, *Diag);
-		}
 	}
 	else
 	{
@@ -542,7 +531,7 @@ void UGMCAbility::CancelConflictingAbilities()
 {
 	for (const auto& AbilityToCancelTag : CancelAbilitiesWithTag) {
 		if (AbilityTag == AbilityToCancelTag) {
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s is trying to cancel itself, if you attempt to reset the ability, please use //TODO instead"), *AbilityTag.ToString());
+			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability (tag) %s lists its own tag in CancelAbilitiesWithTag; an ability cannot cancel itself on activation, the entry is ignored."), *AbilityTag.ToString());
 			continue;
 		}
 
@@ -597,7 +586,7 @@ AActor* UGMCAbility::GetGameplayTaskOwner(const UGameplayTask* Task) const
 
 AActor* UGMCAbility::GetGameplayTaskAvatar(const UGameplayTask* Task) const
 {
-	// Wtf is avatar?
+	// GMAS has no separate avatar: the owner actor is the avatar.
 	if (OwnerAbilityComponent != nullptr) { return OwnerAbilityComponent->GetOwner(); }
 	return nullptr;
 }
@@ -660,14 +649,6 @@ void UGMCAbility::FinishEndAbility() {
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
 			UnfinishedTasks, *Diag);
-		// Mirror onto LogTemp: the dedicated-server log export only ships a fixed category
-		// allowlist (LogTemp included, LogGMCAbilitySystem not).
-		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
-		{
-			UE_LOG(LogTemp, Warning,
-				TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
-				UnfinishedTasks, *Diag);
-		}
 	}
 
 	// Snapshot: EndTaskGMAS -> EndTask -> OnDestroy unregisters the entry being visited,
@@ -758,7 +739,7 @@ void UGMCAbility::FinishEndAbility() {
 
 bool UGMCAbility::IsOnCooldown() const
 {
-	return OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
+	return OwnerAbilityComponent && OwnerAbilityComponent->GetCooldownForAbility(AbilityTag) > 0;
 }
 
 
@@ -988,7 +969,7 @@ void UGMCAbility::CancelAbilityEvent_Implementation()
 
 AActor* UGMCAbility::GetOwnerActor() const
 {
-	return OwnerAbilityComponent->GetOwner();
+	return OwnerAbilityComponent ? OwnerAbilityComponent->GetOwner() : nullptr;
 }
 
 AGMC_Pawn* UGMCAbility::GetOwnerPawn() const {
@@ -1009,13 +990,14 @@ AGMC_PlayerController* UGMCAbility::GetOwningPlayerController() const {
 
 float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 {
-	return OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag);
+	// 0 without an owner (a class default object), as the component returns for an unknown tag.
+	return OwnerAbilityComponent ? OwnerAbilityComponent->GetAttributeValueByTag(AttributeTag) : 0.f;
 }
 
 
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
-	OwnerAbilityComponent->bJustTeleported = bValue;
+	if (OwnerAbilityComponent) { OwnerAbilityComponent->bJustTeleported = bValue; }
 }
 
 void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)

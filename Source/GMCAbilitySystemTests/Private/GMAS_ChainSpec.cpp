@@ -17,11 +17,12 @@
 #include "Misc/AutomationTest.h"
 #include "NativeGameplayTags.h"
 #include "Components/GMCAbilityComponent.h"
+#include "GMAS_TestHelpers.h"
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestAbility.h"
 #include "UGMAS_TestAbilityB.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASChainSpec,
 	"GMAS.Unit.Chain",
@@ -80,7 +81,7 @@ void FGMASChainSpec::SetupHarness()
 	AbilityComp->AddToRoot();
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
 	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 	SimTime = 0.0;
 
@@ -136,7 +137,7 @@ void FGMASChainSpec::AdvanceTime(float Dt)
 	// tick first handles ended-ability cleanup; ancillary covers cooldowns.
 	AbilityComp->GenPredictionTick(0.f);
 	SimTime += Dt;
-	AbilityComp->ActionTimer = SimTime;
+	AbilityComp->SetActionTimerForTest(SimTime);
 	AbilityComp->TickActiveEffects(Dt);
 	AbilityComp->GenAncillaryTick(Dt, /*bIsCombinedClientMove=*/false);
 }
@@ -291,4 +292,4 @@ void FGMASChainSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

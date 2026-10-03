@@ -21,7 +21,7 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASEffectSpec,
 	"GMAS.Unit.Effect",
@@ -445,4 +445,4 @@ void FGMASEffectSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

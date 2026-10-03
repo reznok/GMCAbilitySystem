@@ -18,7 +18,7 @@
 #include "UGMAS_TestAbilityB.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASClientAuthSpec,
     "GMAS.Unit.ClientAuth",
@@ -132,7 +132,7 @@ void FGMASClientAuthSpec::Define()
 
         It("allocates a client-auth EffectID in the reserved high range", [this]()
         {
-            AbilityComp->ActionTimer = 1.0;
+            AbilityComp->SetActionTimerForTest(1.0);
             const int ID = AbilityComp->GetNextAvailableClientAuthEffectID();
             TestTrue(TEXT("Client-auth ID must be >= ClientAuthEffectIDOffset"),
                 ID >= UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
@@ -140,15 +140,15 @@ void FGMASClientAuthSpec::Define()
 
         It("returns -1 when ActionTimer is zero (cannot allocate)", [this]()
         {
-            AbilityComp->ActionTimer = 0.0;
-            AddExpectedError(TEXT("ActionTimer is 0"), EAutomationExpectedErrorFlags::Contains, 1);
+            AbilityComp->SetActionTimerForTest(0.0);
+            AddExpectedErrorPlain(TEXT("ActionTimer is 0"), EAutomationExpectedErrorFlags::Contains, 1);
             const int ID = AbilityComp->GetNextAvailableClientAuthEffectID();
             TestEqual(TEXT("ActionTimer=0 returns sentinel -1"), ID, -1);
         });
 
         It("standard EffectIDs remain in the low range", [this]()
         {
-            AbilityComp->ActionTimer = 1.0;
+            AbilityComp->SetActionTimerForTest(1.0);
             const int ID = AbilityComp->GetNextAvailableEffectID();
             TestTrue(TEXT("Standard ID must be < ClientAuthEffectIDOffset"),
                 ID < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
@@ -177,7 +177,7 @@ void FGMASClientAuthSpec::Define()
 
         It("rejects ClientAuth effect apply when not whitelisted", [this]()
         {
-            AddExpectedError(TEXT("ClientAuth apply rejected"), EAutomationExpectedErrorFlags::Contains, 1);
+            AddExpectedErrorPlain(TEXT("ClientAuth apply rejected"), EAutomationExpectedErrorFlags::Contains, 1);
 
             bool bSuccess; int Handle, Id; UGMCAbilityEffect* Effect;
             AbilityComp->ApplyAbilityEffectSafe(UGMCAbilityEffect::StaticClass(), {},
@@ -231,7 +231,7 @@ void FGMASClientAuthSpec::Define()
 
         It("rejects ClientAuth remove with standard-range ID (anti-cheat)", [this]()
         {
-            AddExpectedError(TEXT("not in client-auth range"), EAutomationExpectedErrorFlags::Contains, 1);
+            AddExpectedErrorPlain(TEXT("not in client-auth range"), EAutomationExpectedErrorFlags::Contains, 1);
 
             const bool bOk = AbilityComp->RemoveEffectByIdSafe({100}, EGMCAbilityEffectQueueType::ClientAuth);
             TestFalse(TEXT("Standard-range ID must be rejected by ClientAuth remove"), bOk);
@@ -263,7 +263,7 @@ void FGMASClientAuthSpec::Define()
 
         It("server rejects ClientAuth ability operation when class not whitelisted", [this]()
         {
-            AddExpectedError(TEXT("not whitelisted"), EAutomationExpectedErrorFlags::Contains, 1);
+            AddExpectedErrorPlain(TEXT("not whitelisted"), EAutomationExpectedErrorFlags::Contains, 1);
 
             AbilityComp->bForceAuthorityForTest = true;
             AbilityComp->SeedBoundQueueOperationDataForTest(-1);
@@ -307,7 +307,7 @@ void FGMASClientAuthSpec::Define()
 
         It("server rejects ClientAuth effect with non-client-auth ID range (anti-cheat)", [this]()
         {
-            AddExpectedError(TEXT("non-client-auth ID range"), EAutomationExpectedErrorFlags::Contains, 1);
+            AddExpectedErrorPlain(TEXT("non-client-auth ID range"), EAutomationExpectedErrorFlags::Contains, 1);
 
             // Whitelist the effect class so we reach the ID-range check (not the whitelist rejection).
             AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
@@ -497,4 +497,4 @@ void FGMASClientAuthSpec::Define()
     });
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

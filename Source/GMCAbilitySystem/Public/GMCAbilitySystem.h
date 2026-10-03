@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 #pragma once
 

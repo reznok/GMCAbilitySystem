@@ -13,9 +13,10 @@
 #include "UGMAS_TestTagWatchAbility.h"
 #include "Ability/Tasks/SetTargetDataFloat.h"
 #include "Ability/Tasks/SetTargetDataInt.h"
+#include "Ability/Tasks/WaitForInputKeyPress.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 // Arithmetic origin of every clock value in this spec (not an id-range choice).
 constexpr double kStart = 1.0;
@@ -209,6 +210,27 @@ void FGMASTaskSpec::Define()
 		});
 	});
 
+	Describe("WaitForInputKeyPress", [this]()
+	{
+		It("with no input action (and no input component) completes through its own payload", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = true;
+			GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 10.f;
+			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass());
+			UGMCAbility* Ability = FirstActiveAbility();
+			if (!TestNotNull("instance", Ability)) { return; }
+			if (!TestNull("premise: no input action", Ability->AbilityInputAction.Get())) { return; }
+
+			UGMCAbilityTask_WaitForInputKeyPress* Task = UGMCAbilityTask_WaitForInputKeyPress::WaitForKeyPress(Ability);
+			Task->ReadyForActivation();
+			TestTrue("not finished before the payload is dispatched", Task->GetState() != EGameplayTaskState::Finished);
+
+			AbilityComp->PreLocalMoveExecution();          // moves the queued payload into the bound slot
+			AbilityComp->GenPredictionTick(0.f);           // dispatch: the task's own Progress payload
+			TestTrue("task finished", Task->GetState() == EGameplayTaskState::Finished);
+		});
+	});
+
 	Describe("WaitForGameplayTagChange", [this]()
 	{
 		It("completes once on the watched tag and ignores a later change", [this]()
@@ -249,4 +271,4 @@ void FGMASTaskSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

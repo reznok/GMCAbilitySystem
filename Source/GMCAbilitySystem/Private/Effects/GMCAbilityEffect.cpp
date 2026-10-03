@@ -1,11 +1,10 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
 #include "Effects/GMCAbilityEffect.h"
 
 #include "GMCAbilitySystem.h"
 #include "Components/GMCAbilityComponent.h"
-#include "Interfaces/IPluginManager.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -250,10 +249,12 @@ void UGMCAbilityEffect::BeginDestroy() {
 
 void UGMCAbilityEffect::Tick(float DeltaTime)
 {
-	// Per-effect profiling scope, named by effect tag (class-name fallback). Zero cost in
-	// Shipping (macro + argument compiled out when CPUPROFILERTRACE_ENABLED == 0).
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Effect::Tick [%s]"),
-		EffectData.EffectTag.IsValid() ? *EffectData.EffectTag.ToString() : *GetClass()->GetName()));
+	// Per-effect profiling scope, named by effect tag (class-name fallback). The name is only
+	// formatted while the CPU trace channel is on; zero cost in Shipping (macro + argument
+	// compiled out when CPUPROFILERTRACE_ENABLED == 0).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*(UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel)
+		? FString::Printf(TEXT("Effect::Tick [%s]"), EffectData.EffectTag.IsValid() ? *EffectData.EffectTag.ToString() : *GetClass()->GetName())
+		: FString()));
 
 	// Consume the bilateral predicted-end defer. Uses an absolute ActionTimer timestamp instead of a
 	// per-tick countdown — both client and server compute the same EndAtActionTimer (same move log,

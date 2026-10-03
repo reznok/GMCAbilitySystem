@@ -2,6 +2,19 @@
 
 #include "GMCAbilityComponent.h"
 
+void FGMCAttributeModifier::ReportStaleSource(const FString& Message) const
+{
+	if (!bReportedStaleSource)
+	{
+		bReportedStaleSource = true;
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("%s (repeats for this modifier are Verbose)"), *Message);
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("%s"), *Message);
+	}
+}
+
 float FGMCAttributeModifier::GetValue() const
 {
 	// Get The Value Type
@@ -15,7 +28,7 @@ float FGMCAttributeModifier::GetValue() const
 			{
 				return SourceAbilityEffect->GetOwnerAbilityComponent()->GetAttributeValueByTag(ValueAsAttribute);
 			}
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("FGMCAttributeModifier::GetValue: AMT_Attribute modifier has no live source effect; contributes 0."));
+			ReportStaleSource(TEXT("FGMCAttributeModifier::GetValue: AMT_Attribute modifier has no live source effect; contributes 0."));
 			return 0.f;
 		}
 	case EGMCAttributeModifierType::AMT_Custom:
@@ -27,7 +40,7 @@ float FGMCAttributeModifier::GetValue() const
 			}
 			if (!SourceAbilityEffect.IsValid() || !SourceAbilityEffect->GetOwnerAbilityComponent())
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("FGMCAttributeModifier::GetValue: AMT_Custom modifier (%s) has no live source effect; contributes 0."), *CustomModifierClass->GetName());
+				ReportStaleSource(FString::Printf(TEXT("FGMCAttributeModifier::GetValue: AMT_Custom modifier (%s) has no live source effect; contributes 0."), *CustomModifierClass->GetName()));
 				return 0.f;
 			}
 			UGMCAttributeModifierCustom_Base* Calculator = CustomModifierClass->GetDefaultObject<UGMCAttributeModifierCustom_Base>();
@@ -45,7 +58,7 @@ float FGMCAttributeModifier::GetValue() const
 		{
 			return SourceAbilityEffect->GetOwnerAbilityComponent()->GetExternalModifierValue(ExternalTag, ExternalValueIndex);
 		}
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("FGMCAttributeModifier::GetValue: AMT_External modifier has no live source effect; contributes 0."));
+		ReportStaleSource(TEXT("FGMCAttributeModifier::GetValue: AMT_External modifier has no live source effect; contributes 0."));
 		return 0.f;
 	}
 
@@ -76,14 +89,13 @@ float FGMCAttributeModifier::CalculateModifierValue(const FAttribute& Attribute)
 	// the stale pointer raw — GetValue() above guards, these branches did not.
 	UGMC_AbilitySystemComponent* SourceASC =
 		SourceAbilityEffect.IsValid() ? SourceAbilityEffect->GetOwnerAbilityComponent() : nullptr;
-	const auto GetSourceAttributeValue = [SourceASC](const FGameplayTag& InAttributeTag) -> float
+	const auto GetSourceAttributeValue = [this, SourceASC](const FGameplayTag& InAttributeTag) -> float
 	{
 		if (SourceASC)
 		{
 			return SourceASC->GetAttributeValueByTag(InAttributeTag);
 		}
-		UE_LOG(LogGMCAbilitySystem, Error,
-			TEXT("FGMCAttributeModifier::CalculateModifierValue: SourceAbilityEffect/ASC stale, attribute-driven modifier falls back to 0."));
+		ReportStaleSource(TEXT("FGMCAttributeModifier::CalculateModifierValue: SourceAbilityEffect/ASC stale, attribute-driven modifier falls back to 0."));
 		return 0.f;
 	};
 
@@ -224,7 +236,7 @@ void FGMCAttributeModifier::InitModifier(UGMCAbilityEffect* Effect, double InAct
 {
 	if (!Effect)
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect or AbilitySystemComponent is null in FGMCAttributeModifier::InitModifier"));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("FGMCAttributeModifier::InitModifier: Effect is null; modifier not initialized."));
 		return;
 	}
 

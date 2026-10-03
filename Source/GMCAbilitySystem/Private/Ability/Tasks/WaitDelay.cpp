@@ -7,7 +7,7 @@ UGMCAbilityTask_WaitDelay::UGMCAbilityTask_WaitDelay(const FObjectInitializer& O
 	: Super(ObjectInitializer)
 {
 	Time = 0.f;
-	TimeStarted = 0.f;
+	TimeStarted = 0.0;
 }
 
 UGMCAbilityTask_WaitDelay* UGMCAbilityTask_WaitDelay::WaitDelay(UGMCAbility* OwningAbility, float Time)

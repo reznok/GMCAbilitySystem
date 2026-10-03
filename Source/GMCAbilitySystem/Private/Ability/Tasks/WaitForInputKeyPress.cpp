@@ -102,10 +102,12 @@ void UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed(const FInputActionValue&
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyPress::GetEnhancedInputComponent()
 {
-	InputComponent = Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
+	InputComponent = (Ability->OwnerAbilityComponent && Ability->OwnerAbilityComponent->GetOwner()) ? Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>() : nullptr;
 	if (InputComponent)
 	{
-		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
+		// Cast, not CastChecked: a legacy input component has nothing to bind, so the task falls to
+		// the "nothing to wait for" path instead of asserting.
+		if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
 		{
 			return EnhancedInputComponent;
 		}

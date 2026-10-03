@@ -13,7 +13,7 @@
 #include "UGMAS_TestCostEffect.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASBugFixSpec,
 	"GMAS.Unit.BugFix",
@@ -177,7 +177,7 @@ void FGMASBugFixSpec::Define()
 
 		It("does NOT apply the op synchronously during enqueue when there is no acking client", [this, MakeApplyEffectOp]()
 		{
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
 
 			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
@@ -202,7 +202,7 @@ void FGMASBugFixSpec::Define()
 
 		It("applies the no-client op on the very next ancillary tick (grace-force, ~1 frame)", [this, MakeApplyEffectOp]()
 		{
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
 			AbilityComp->BindServerOpForcedDelegateForTest(); // BeginPlay didn't run in the harness
 
@@ -236,7 +236,7 @@ void FGMASBugFixSpec::Define()
 
 		It("routes through the grace/ack queue when an acking client exists", [this, MakeApplyEffectOp]()
 		{
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->bForceNoAckClientForTest = false; // player target -> client will ack
 
 			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
@@ -288,7 +288,7 @@ void FGMASBugFixSpec::Define()
 				FGameplayTagContainer(BurningTag));
 
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 
@@ -318,7 +318,7 @@ void FGMASBugFixSpec::Define()
 				FGameplayTagContainer(BurningTag));
 
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 			TestFalse("Active before tag removal", AbilityComp->GetActiveEffects().IsEmpty());
@@ -326,7 +326,7 @@ void FGMASBugFixSpec::Define()
 			// Remove the tag — query is no longer satisfied.
 			AbilityComp->RemoveActiveTag(BurningTag);
 
-			AbilityComp->ActionTimer = 2.0;
+			AbilityComp->SetActionTimerForTest(2.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 
@@ -354,7 +354,7 @@ void FGMASBugFixSpec::Define()
 				FGameplayTagContainer(BurningTag));
 
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 
@@ -378,7 +378,7 @@ void FGMASBugFixSpec::Define()
 	{
 		It("keeps the shared tag until the LAST granting effect ends (different/empty EffectTag)", [this]()
 		{
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			// Long effect: grants Burning for 2s. Empty EffectTag (like the stun effect).
 			UGMCAbilityEffect* LongFx = NewObject<UGMCAbilityEffect>(GetTransientPackage());
@@ -402,13 +402,13 @@ void FGMASBugFixSpec::Define()
 			TestTrue("tag present after both applied", AbilityComp->HasActiveTag(BurningTag));
 
 			// Advance past the SHORT effect's expiry (1.0 + 0.5 = 1.5), not the long's.
-			AbilityComp->ActionTimer = 1.6;
+			AbilityComp->SetActionTimerForTest(1.6);
 			AbilityComp->TickActiveEffects(0.6f);
 			TestTrue("tag SURVIVES the short effect's expiry (the bug)",
 				AbilityComp->HasActiveTag(BurningTag));
 
 			// Advance past the LONG effect's expiry (1.0 + 2.0 = 3.0).
-			AbilityComp->ActionTimer = 3.1;
+			AbilityComp->SetActionTimerForTest(3.1);
 			AbilityComp->TickActiveEffects(1.5f);
 			TestFalse("tag dropped only after the LAST granter ends (no leak)",
 				AbilityComp->HasActiveTag(BurningTag));
@@ -419,7 +419,7 @@ void FGMASBugFixSpec::Define()
 
 		It("a single granting effect still clears its tag on its own expiry", [this]()
 		{
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			UGMCAbilityEffect* Fx = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Fx->AddToRoot();
 			FGMCAbilityEffectData Data;
@@ -429,7 +429,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->ApplyAbilityEffect(Fx, Data);
 			TestTrue("tag present", AbilityComp->HasActiveTag(BurningTag));
 
-			AbilityComp->ActionTimer = 1.6;
+			AbilityComp->SetActionTimerForTest(1.6);
 			AbilityComp->TickActiveEffects(0.6f);
 			TestFalse("single granter clears on expiry (no false preserve)",
 				AbilityComp->HasActiveTag(BurningTag));
@@ -480,7 +480,7 @@ void FGMASBugFixSpec::Define()
 			// Use ActionTimer-driven ticking so the duration can expire.
 			// ActionTimer must yield EffectID > 0: static_cast<int>(t*100) must be >= 1,
 			// so ActionTimer >= 0.01. Use 1.0 for a clean, unambiguous value.
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -499,7 +499,7 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetProcessedEffectIDsForTest().Contains(EffectID));
 
 			// Advance past duration — effect expires during TickActiveEffects.
-			AbilityComp->ActionTimer = 3.0;
+			AbilityComp->SetActionTimerForTest(3.0);
 			AbilityComp->TickActiveEffects(3.f);
 			AbilityComp->ProcessAttributes(true);
 
@@ -517,7 +517,7 @@ void FGMASBugFixSpec::Define()
 			for (int i = 0; i < 3; i++)
 			{
 				// i*10 is 0 on the first iteration — add 1 to avoid ActionTimer==0.
-			AbilityComp->ActionTimer = static_cast<double>(i * 10 + 1);
+			AbilityComp->SetActionTimerForTest(static_cast<double>(i * 10 + 1));
 
 				UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 				Effect->AddToRoot();
@@ -531,7 +531,7 @@ void FGMASBugFixSpec::Define()
 				const int EffectID = Effect->EffectData.EffectID;
 				AbilityComp->GetProcessedEffectIDsForTest().Add(EffectID, EGMCEffectAnswerState::Validated);
 
-				AbilityComp->ActionTimer = static_cast<double>(i * 10 + 5);
+				AbilityComp->SetActionTimerForTest(static_cast<double>(i * 10 + 5));
 				AbilityComp->TickActiveEffects(5.f);
 				AbilityComp->ProcessAttributes(true);
 
@@ -682,7 +682,7 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			Effect->EndAtActionTimer = 6.0;  // 1s grace ahead
 
 			Effect->Tick(0.3f);  // DeltaTime irrelevant; only ActionTimer matters
@@ -703,7 +703,7 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			AbilityComp->ActionTimer = 6.0;
+			AbilityComp->SetActionTimerForTest(6.0);
 			Effect->EndAtActionTimer = 6.0;  // boundary: >= triggers
 
 			Effect->Tick(0.f);
@@ -724,7 +724,7 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			AbilityComp->ActionTimer = 10.0;  // we landed past the latch
+			AbilityComp->SetActionTimerForTest(10.0);  // we landed past the latch
 			Effect->EndAtActionTimer = 6.0;
 
 			Effect->Tick(0.f);
@@ -747,7 +747,7 @@ void FGMASBugFixSpec::Define()
 
 			TestEqual("Default EndAt is -1.0 (unarmed)",  Effect->EndAtActionTimer, -1.0);
 
-			AbilityComp->ActionTimer = 100.0;  // huge ActionTimer must not trigger anything
+			AbilityComp->SetActionTimerForTest(100.0);  // huge ActionTimer must not trigger anything
 			Effect->Tick(0.5f);
 
 			TestFalse("Effect not completed",             Effect->bCompleted);
@@ -766,16 +766,16 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			Effect->EndAtActionTimer = 6.0;  // 1s grace
 
-			AbilityComp->ActionTimer = 5.3;  Effect->Tick(0.3f);
+			AbilityComp->SetActionTimerForTest(5.3);  Effect->Tick(0.3f);
 			TestFalse("Not yet completed (5.3 < 6.0)",  Effect->bCompleted);
 
-			AbilityComp->ActionTimer = 5.7;  Effect->Tick(0.4f);
+			AbilityComp->SetActionTimerForTest(5.7);  Effect->Tick(0.4f);
 			TestFalse("Not yet completed (5.7 < 6.0)",  Effect->bCompleted);
 
-			AbilityComp->ActionTimer = 6.1;  Effect->Tick(0.4f);
+			AbilityComp->SetActionTimerForTest(6.1);  Effect->Tick(0.4f);
 			TestTrue("Completed (6.1 >= 6.0)",          Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
@@ -1162,14 +1162,14 @@ void FGMASBugFixSpec::Define()
 			// at Error severity (GMCAbilityComponent.cpp:1247) when the post-replay timeout
 			// reap fires on the Reapable effect. UE's automation framework auto-fails any
 			// test that produces an undeclared Error log, so we declare the expected one.
-			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddExpectedErrorPlain(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
 
 			// Production invariant: while CL_IsReplaying() is true (forced here via the
 			// WITH_AUTOMATION_WORKER test seam bForceReplayingForTest), TickActiveEffects
 			// must NOT mutate ProcessedEffectIDs (no Pending → Validated promotion) and must
 			// NOT trigger the Pending+timeout reap. Both paths would otherwise corrupt
-			// non-rewinding state on rewound bound-state snapshots — the EF_Humanoid_Stamina_Recovery
-			// regression that motivated the gate.
+			// non-rewinding state on rewound bound-state snapshots — the regression (a periodic
+			// regeneration effect reaped on the live client) that motivated the gate.
 			UGMCAbilityEffect* PendingEffect  = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* ReapableEffect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			PendingEffect->AddToRoot(); ReapableEffect->AddToRoot();
@@ -1189,7 +1189,7 @@ void FGMASBugFixSpec::Define()
 			TestNotNull("Reapable effect applied", Applied2);
 			AbilityComp->GetProcessedEffectIDsForTest().Add(Applied2->EffectData.EffectID, EGMCEffectAnswerState::Pending);
 			AbilityComp->BoundActiveEffectIDs_Remove(Applied2->EffectData.EffectID);
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 
 			// Force the replay gate active. Both the polling and the reap branch should skip.
 			AbilityComp->bForceReplayingForTest = true;
@@ -1598,7 +1598,7 @@ void FGMASBugFixSpec::Define()
 			// at Error severity (GMCAbilityComponent.cpp:1247) when the timeout reap fires --
 			// which is exactly what this test exercises. Declare the expected error so the
 			// automation framework doesn't auto-fail on the legitimate diagnostic log.
-			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddExpectedErrorPlain(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
 
 			// Apply a Predicted effect locally without ever adding the ID to the
 			// bound state — server scenario where the activation never reached the
@@ -1619,10 +1619,10 @@ void FGMASBugFixSpec::Define()
 			// since the effect we just applied auto-mirrored on the client side.
 			AbilityComp->BoundActiveEffectIDs_Remove(Id);
 
-			// Push ActionTimer past the timeout window. The default
-			// ClientEffectApplicationTimeout is 1.0; effect's
+			// Push ActionTimer past the timeout window. ClientEffectApplicationTimeout
+			// is 0.5 (project settings); effect's
 			// ClientEffectApplicationTime was set to 1.0 in InitializeEffect.
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			RunPollingOnce();
 			AbilityComp->TickActiveEffects(0.f);
 
@@ -1656,7 +1656,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->BoundActiveEffectIDs_Remove(Id);
 
 			// Step 1 : ActionTimer advances but stays within timeout window.
-			AbilityComp->ActionTimer = 1.5;
+			AbilityComp->SetActionTimerForTest(1.5);
 			RunPollingOnce();
 			AbilityComp->TickActiveEffects(0.f);
 			TestEqual("Still Pending while ID absent from bound state",
@@ -1677,7 +1677,7 @@ void FGMASBugFixSpec::Define()
 
 			// Step 4 : even past the original timeout window, the Validated state
 			// shields the effect — no late removal.
-			AbilityComp->ActionTimer = 10.0;
+			AbilityComp->SetActionTimerForTest(10.0);
 			AbilityComp->TickActiveEffects(0.f);
 			TestTrue("Validated effect survives past would-be timeout",
 				AbilityComp->GetActiveEffects().Contains(Id));
@@ -1689,7 +1689,7 @@ void FGMASBugFixSpec::Define()
 		{
 			// Production code logs the diagnostic Error when the unvalidated stack member
 			// is reaped -- see Drift test above for the rationale.
-			AddExpectedError(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddExpectedErrorPlain(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
 
 			// Two predicted instances (different IDs). Server confirms only one
 			// via the bound state. After timeout window passes, the unconfirmed
@@ -1717,7 +1717,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->BoundActiveEffectIDs_Remove(IdDrop);
 
 			// Polling promotes IdOK; advance past timeout to reap IdDrop.
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			RunPollingOnce();
 			AbilityComp->TickActiveEffects(0.f);
 
@@ -1735,8 +1735,8 @@ void FGMASBugFixSpec::Define()
 			// bound-state absence (e.g. natural replication lag with Periodic_Output
 			// simulation mode) must NOT demote it back to Pending — that would expose
 			// legitimate effects to the timeout reap path during a benign 1-2 tick
-			// window after Apply, which was observed killing EF_Humanoid_Stamina_Recovery
-			// on the live client and producing chain replays as Stamina diverged.
+			// window after Apply, which was observed killing a periodic regeneration effect
+			// on the live client and producing chain replays as the attribute diverged.
 			//
 			// Server-explicit removals come through RPCClientEndEffect, not through
 			// inference on bound-state absence.
@@ -1770,7 +1770,7 @@ void FGMASBugFixSpec::Define()
 
 			// Even past the would-be timeout window, the Validated effect is shielded
 			// from the Pending+timeout reap path (which gates on Pending only).
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			AbilityComp->TickActiveEffects(0.f);
 			TestTrue("Validated effect is NOT reaped through bound-state absence + timeout",
 				AbilityComp->GetActiveEffects().Contains(Id));
@@ -1778,15 +1778,12 @@ void FGMASBugFixSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 
-		It("Effect cleanup follows the server-only contract for bound-state removal", [this]()
+		It("Effect cleanup removes a completed Instant effect even with its id in the bound state", [this]()
 		{
-			// Server-only writer contract for ActiveEffectIDsBound: only the authoritative
-			// side adds/removes IDs, the client receives the result via replication. The
-			// cleanup loop in TickActiveEffects mirrors that — `BoundActiveEffectIDs_Remove`
-			// is gated by HasAuthority() in production. The headless harness reports
-			// HasAuthority()==false on orphan components, so the in-process Remove is
-			// elided. We simulate the server-replication path explicitly by populating
-			// the bound state up front.
+			// Both sides write ActiveEffectIDsBound deterministically (the server's value wins on
+			// replication); a completed Instant effect is never added by the apply. The id is
+			// written by hand here to model a server state that still carries it: the cleanup
+			// loop in TickActiveEffects must still drop the effect from ActiveEffects.
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
@@ -1806,10 +1803,8 @@ void FGMASBugFixSpec::Define()
 
 			TestFalse("Cleanup: instant effect removed from ActiveEffects",
 				AbilityComp->GetActiveEffects().Contains(Id));
-			// Bound state stays as last-replicated until server's next sync overwrites it
-			// — the local cleanup is server-gated by design (mirrors the Apply contract).
-			// Production parity: in a networked context, the server's next move-tick output
-			// brings the client back into sync.
+			// The bound list itself is not asserted: the server's next move-tick output is what
+			// brings a client back into sync.
 
 			Effect->RemoveFromRoot();
 		});
@@ -2102,7 +2097,7 @@ void FGMASBugFixSpec::Define()
 			TestTrue ("sub-op 2 recorded as recently processed", Q.WasOperationRecentlyProcessed(ID2));
 			TestTrue ("sub-op 3 recorded as recently processed", Q.WasOperationRecentlyProcessed(ID3));
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("effects applied EXACTLY ONCE: Health 100 + 3x10 = 130",
@@ -2123,7 +2118,7 @@ void FGMASBugFixSpec::Define()
 			const bool bSecond = AbilityComp->ProcessOperationForTest(BatchStruct, false, false);
 			TestFalse("benign reprocess acks nothing", bSecond);
 
-			AbilityComp->ActionTimer = 2.0;
+			AbilityComp->SetActionTimerForTest(2.0);
 			AbilityComp->TickActiveEffects(1.f);
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("Health unchanged after benign reprocess (no double-apply)",
@@ -2146,9 +2141,8 @@ void FGMASBugFixSpec::Define()
 			const FInstancedStruct BatchStruct =
 				FInstancedStruct::Make<FGMASBoundQueueV2BatchOperation>(Batch);
 
-			// The loud diagnostic MUST fire for genuine divergence. (Harness is
-			// HasAuthority()==false, so only the LogGMCAbilitySystem error fires.)
-			AddExpectedError(TEXT("payload missing from cache"),
+			// The loud diagnostic MUST fire for genuine divergence (one line on every side).
+			AddExpectedErrorPlain(TEXT("payload missing from cache"),
 				EAutomationExpectedErrorFlags::Contains, 1);
 
 			const bool bResult = AbilityComp->ProcessOperationForTest(BatchStruct, true, false);
@@ -2184,4 +2178,4 @@ void FGMASBugFixSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

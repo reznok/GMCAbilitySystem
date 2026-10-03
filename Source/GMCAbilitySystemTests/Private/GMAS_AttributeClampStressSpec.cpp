@@ -9,7 +9,7 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "GMAS_TestHelpers.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASAttributeClampStressSpec,
 	"GMAS.Stress.Clamp",
@@ -546,4 +546,4 @@ void FGMASAttributeClampStressSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

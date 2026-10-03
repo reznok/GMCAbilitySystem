@@ -14,9 +14,10 @@
 #include "Components/GMCAbilityComponent.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Attributes/GMCAttributeModifier.h"
+#include "GMAS_TestHelpers.h"
 #include "UGMAS_TestMovementCmp.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASEffectStackingSpec,
 	"GMAS.Unit.EffectStacking",
@@ -85,7 +86,7 @@ void FGMASEffectStackingSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
 	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 }
 
@@ -330,4 +331,4 @@ void FGMASEffectStackingSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

@@ -57,7 +57,7 @@ public:
 
 	bool IsActive() const;
 
-	int GetAbilityID() const {return AbilityID;};;
+	int GetAbilityID() const {return AbilityID;};
 	
 	UPROPERTY()
 	TMap<int, UGMCAbilityTaskBase*> RunningTasks;
@@ -224,7 +224,7 @@ public:
 
 	// The GMC Movement Component on the same actor as OwnerAbilityComponent
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
-	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent->GMCMovementComponent; };
+	UGMC_MovementUtilityCmp* GetOwnerMovementComponent() const {return OwnerAbilityComponent ? OwnerAbilityComponent->GMCMovementComponent : nullptr; };
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	TObjectPtr<const UInputAction> AbilityInputAction;
@@ -353,7 +353,7 @@ public:
 
 	// Local activation time, in ActionTimer units. Diagnostics only: subtract it from the
 	// component's ActionTimer to age an instance that is holding a gate.
-	float GetClientStartTime() const { return ClientStartTime; }
+	double GetClientStartTime() const { return ClientStartTime; }
 
 protected:
 
@@ -392,7 +392,7 @@ private:
 	// per ID warrants a Warning + full dump.
 	TSet<int> WarnedDivergentTaskIDs;
 
-	float ClientStartTime = 0.f;
+	double ClientStartTime = 0.0;
 	
 
 

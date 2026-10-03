@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 #pragma once
 
@@ -350,7 +350,7 @@ public:
 
 	bool IsEffectModifiersRegisterInHistory() const;
 	
-	bool bCompleted;
+	bool bCompleted = false;
 
 	// True once StartEffect passed its gates and applied tags, abilities and the first modifiers. False on an effect refused by its application tags / ActivationQuery.
 	bool HasAppliedEffect() const { return bHasAppliedEffect; }
@@ -369,7 +369,7 @@ public:
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.
-	float ClientEffectApplicationTime;
+	double ClientEffectApplicationTime = 0.0;
 	
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	void GetOwnerActor(AActor*& OwnerActor) const;
@@ -388,8 +388,8 @@ protected:
 	virtual void StartEffect();
 
 private:
-	bool bHasStarted;
-	bool bHasAppliedEffect;
+	bool bHasStarted = false;
+	bool bHasAppliedEffect = false;
 	
 	void CheckState();
 

@@ -1,6 +1,10 @@
 ﻿#pragma once
 
-#include "StructUtils/InstancedStruct.h"
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+#include "StructUtils/InstancedStruct.h"  // UE 5.5+
+#else
+#include "InstancedStruct.h"              // UE 5.4 and earlier
+#endif
 #include "GMASBoundQueueV2_Operations.h"
 #include "GMCMovementUtilityComponent.h"
 #include "GMASBoundQueueV2.generated.h"
@@ -49,7 +53,9 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueV2
 	// Any negative ID is a client generated operation
 	int GetNextOperationID()
 	{
-		if (GMCMovementComponent->GetNetMode() != NM_Client)
+		// Reachable through MakeOperationData before BindToGMC: without a movement component this
+		// side cannot be a client, so it takes a positive (server) id.
+		if (!GMCMovementComponent || GMCMovementComponent->GetNetMode() != NM_Client)
 		{
 			return ++NextOperationID;
 		}

@@ -50,7 +50,7 @@ Untagged lines worth knowing, same category: `RPCOnServerOperationAdded: N` (Ver
 | Name | Default | Does |
 |---|---|---|
 | `GMAS.LogApplyTrace` (bool) | `false` | enables the four gated tags above. The `[ApplyTrace]` stack dump fires for every effect instance created on this machine whose class name contains the filter |
-| `GMAS.ApplyTraceFilter` (string) | `Stamina_Recovery` | class-name substring for `[ApplyTrace]` and the effect half of `[ProcessOp]`; the shipped default matches nothing in your project, so set it to your class (`GMAS.ApplyTraceFilter MyEffect_Burn`) or to an empty string for everything before enabling the trace |
+| `GMAS.ApplyTraceFilter` (string) | empty | class-name substring for `[ApplyTrace]` and the effect half of `[ProcessOp]`; empty traces every effect, so set it to your class (`GMAS.ApplyTraceFilter MyEffect_Burn`) to isolate one |
 | `BL.GMAS.DumpAttrBindMap` (command) | – | logs, for the local player's pawn, each bound attribute's float binding index (`Float[i]` = `Value`, `Float[i+1]` = `RawValue`) with its tag and combine mode. GMC's own sync-data dumps (`gmc.LogClientReplay`, `gmc.LogClientMoveTrace`) list bound values by type and index, so this is how a deviating float becomes an attribute name |
 
 **GMC console variables.** Full table, with the GMC `.cpp` files that define them: [gmc-diagnostics.md](../gmc-prediction/references/gmc-diagnostics.md). The five that matter most for GMAS work:

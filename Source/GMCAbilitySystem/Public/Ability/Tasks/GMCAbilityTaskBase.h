@@ -94,7 +94,7 @@ protected:
 	/** Task Owner that created us */
 	TWeakObjectPtr<AActor> TaskOwner;
 
-	// True on the machine that produces this pawn's moves: a client for its own pawn, standalone,
+	// True on the machine that produces this pawn's moves: any client (in practice the autonomous proxy), standalone,
 	// and a server for a pawn it controls locally (listen host, AI). False on a server for a
 	// remotely controlled pawn, which only ever waits for that client's payloads.
 	bool DrivesPawnLocally() const;

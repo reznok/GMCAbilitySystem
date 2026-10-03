@@ -19,7 +19,7 @@
 #include "Attributes/GMCAttributeModifier.h"
 #include "UGMAS_TestMovementCmp.h"
 
-#if WITH_AUTOMATION_WORKER
+#if WITH_DEV_AUTOMATION_TESTS
 
 BEGIN_DEFINE_SPEC(FGMASDurationSpec,
 	"GMAS.Unit.Duration",
@@ -73,8 +73,10 @@ void FGMASDurationSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
-	// Start at t=0 so effects can use positive timestamps.
-	AbilityComp->ActionTimer = 0.0;
+	// Start at t=0 so effects can use positive timestamps. ApplyAndTick sets the clock before every
+	// apply, so the id generators never see this value (0 is the one they refuse).
+	constexpr double HarnessStartTime = 0.0;
+	AbilityComp->SetActionTimerForTest(HarnessStartTime);
 }
 
 void FGMASDurationSpec::TeardownHarness()
@@ -101,7 +103,7 @@ UGMCAbilityEffect* FGMASDurationSpec::ApplyAndTick(EGMASEffectType Type, float D
 	UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 	Effect->AddToRoot();
 
-	AbilityComp->ActionTimer = StartT;
+	AbilityComp->SetActionTimerForTest(StartT);
 
 	FGMCAbilityEffectData Data;
 	Data.EffectType        = Type;
@@ -114,7 +116,7 @@ UGMCAbilityEffect* FGMASDurationSpec::ApplyAndTick(EGMASEffectType Type, float D
 
 	// Advance to CheckT and tick directly — bypasses GenPredictionTick's
 	// ActionTimer overwrite from GetMoveTimestamp().
-	AbilityComp->ActionTimer = CheckT;
+	AbilityComp->SetActionTimerForTest(CheckT);
 	AbilityComp->TickActiveEffects(static_cast<float>(CheckT - StartT));
 	AbilityComp->ProcessAttributes(true);  // GMC-bound path (bGMCBound=true)
 
@@ -168,7 +170,7 @@ void FGMASDurationSpec::Define()
 			UGMCAbilityEffect* EffB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffA->AddToRoot(); EffB->AddToRoot();
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			auto MakeData = [&](float Dur, float Mod) {
 				FGMCAbilityEffectData D;
@@ -183,7 +185,7 @@ void FGMASDurationSpec::Define()
 			AbilityComp->ApplyAbilityEffect(EffA, MakeData(3.f, 20.f));
 			AbilityComp->ApplyAbilityEffect(EffB, MakeData(7.f, 15.f));
 
-			AbilityComp->ActionTimer = 5.0;
+			AbilityComp->SetActionTimerForTest(5.0);
 			AbilityComp->TickActiveEffects(4.f);
 			AbilityComp->ProcessAttributes(true);
 
@@ -210,7 +212,7 @@ void FGMASDurationSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			FGMCAbilityEffectData Data;
 			Data.EffectType          = EGMASEffectType::Periodic;
@@ -226,7 +228,7 @@ void FGMASDurationSpec::Define()
 			constexpr float Step = 0.5f;
 			for (int i = 1; i <= 7; i++)
 			{
-				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->SetActionTimerForTest(1.0 + i * Step);
 				AbilityComp->TickActiveEffects(Step);
 			}
 			AbilityComp->ProcessAttributes(true);
@@ -246,7 +248,7 @@ void FGMASDurationSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			FGMCAbilityEffectData Data;
 			Data.EffectType          = EGMASEffectType::Periodic;
@@ -262,7 +264,7 @@ void FGMASDurationSpec::Define()
 			constexpr float Step = 0.5f;
 			for (int i = 1; i <= 3; i++)
 			{
-				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->SetActionTimerForTest(1.0 + i * Step);
 				AbilityComp->TickActiveEffects(Step);
 			}
 			AbilityComp->ProcessAttributes(true);
@@ -283,7 +285,7 @@ void FGMASDurationSpec::Define()
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
 
-			AbilityComp->ActionTimer = 1.0;
+			AbilityComp->SetActionTimerForTest(1.0);
 
 			FGMCAbilityEffectData Data;
 			Data.EffectType          = EGMASEffectType::Periodic;
@@ -299,7 +301,7 @@ void FGMASDurationSpec::Define()
 			constexpr float Step = 0.5f;
 			for (int i = 1; i <= 5; i++)
 			{
-				AbilityComp->ActionTimer = 1.0 + i * Step;
+				AbilityComp->SetActionTimerForTest(1.0 + i * Step);
 				AbilityComp->TickActiveEffects(Step);
 			}
 			AbilityComp->ProcessAttributes(true);
@@ -315,4 +317,4 @@ void FGMASDurationSpec::Define()
 	});
 }
 
-#endif // WITH_AUTOMATION_WORKER
+#endif // WITH_DEV_AUTOMATION_TESTS

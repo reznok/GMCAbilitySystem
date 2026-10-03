@@ -22,6 +22,9 @@ void UGMCAbilityTask_RotateYawTowardsDirection::Activate()
 {
 	Super::Activate();
 
+	// Set first: OnFinish reports a duration measured from StartTime.
+	StartTime = AbilitySystemComponent->ActionTimer;
+
 	MovementComponent = AbilitySystemComponent->GMCMovementComponent;
 
 	if (!MovementComponent)
@@ -30,8 +33,6 @@ void UGMCAbilityTask_RotateYawTowardsDirection::Activate()
 		OnFinish();
 		return;
 	}
-
-	StartTime = AbilitySystemComponent->ActionTimer;
 
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("RotateYawTowardsDirection activated with direction: %s, speed: %f"), 
 		*DesiredDirection.ToString(), RotationSpeed);

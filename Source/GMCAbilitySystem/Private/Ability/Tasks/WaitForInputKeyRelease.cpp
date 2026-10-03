@@ -97,17 +97,18 @@ void UGMCAbilityTask_WaitForInputKeyRelease::AncillaryTick(float DeltaTime)
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnKeyReleased(const FInputActionValue& InputActionValue)
 {
-	// Unbind since we're done now.
+	// ClientProgressTask unbinds (and resets the handle) before it queues the release.
 	ClientProgressTask();
-	InputBindingHandle = -1;
 }
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInputComponent() const
 {
-	UInputComponent* InputComponent = Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
+	UInputComponent* InputComponent = (Ability->OwnerAbilityComponent && Ability->OwnerAbilityComponent->GetOwner()) ? Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>() : nullptr;
 	if (InputComponent)
 	{
-		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
+		// Cast, not CastChecked: a legacy input component has nothing to bind, so the task falls to
+		// the "nothing to wait for" path instead of asserting.
+		if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
 		{
 			return EnhancedInputComponent;
 		}
@@ -169,9 +170,13 @@ void UGMCAbilityTask_WaitForInputKeyRelease::ProgressTask(FInstancedStruct& Task
 
 void UGMCAbilityTask_WaitForInputKeyRelease::ClientProgressTask()
 {
-	if (UInputComponent* const InputComponent = GetValid(GetEnhancedInputComponent()))
+	if (InputBindingHandle != -1)
 	{
-		InputComponent->RemoveActionBindingForHandle(InputBindingHandle);
+		if (UInputComponent* const InputComponent = GetValid(GetEnhancedInputComponent()))
+		{
+			InputComponent->RemoveActionBindingForHandle(InputBindingHandle);
+		}
+		InputBindingHandle = -1;
 	}
 	
 	FGMCAbilityTaskData TaskData;

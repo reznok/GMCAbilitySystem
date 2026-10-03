@@ -1,7 +1,7 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
-#include "GMCModifierCustom_Exponent.h"
+#include "Attributes/PreDefinedCustomCalculator/GMCModifierCustom_Exponent.h"
 
 #include "GMCAttributes.h"
 

@@ -161,7 +161,7 @@ enum class EGMCEffectAnswerState : uint8
 class UGMCAbility;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"), meta=(Categories="GMAS"))
-class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
+class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent
 {
 	GENERATED_BODY()
 
@@ -196,11 +196,10 @@ public:
 	// the apply pipeline (no bUniqueByEffectTag check, server EffectIDs preserved).
 	// Triggered automatically from BeginPlay on the autonomous-proxy side.
 	//
-	// Fixes the kept-pawn reconnect drift: AGameModeMaster::PostLogin_ReconnectingPlayer
-	// reuses the existing pawn (and its ASC), so bStartingEffectsApplied stays true and
-	// no per-effect RPC is broadcast to the brand-new owning connection. Without this,
-	// the new client never instantiates Recovery / Bleed / etc. locally and all bound
-	// attributes drift permanently.
+	// Fixes the kept-pawn reconnect drift: a game mode that reuses the pawn (and its ASC) for a
+	// reconnecting player leaves bStartingEffectsApplied true, so no per-effect RPC reaches the
+	// new connection and the client never instantiates the effects locally; bound attributes
+	// then drift.
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestActiveEffectsSnapshot();
 
@@ -275,14 +274,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void RemoveStartingEffects(TArray<TSubclassOf<UGMCAbilityEffect>> EffectsToRemove);
 
-	// Add an ability to the GrantedAbilities array
+	// Grant / revoke an input tag (ability-map key) on this component.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void GrantAbilityByTag(const FGameplayTag AbilityTag);
 
-	// Remove an ability from the GrantedAbilities array
+	// Grant / revoke an input tag (ability-map key) on this component.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag);
 
+	// Whether the input tag (ability-map key) is granted.
 	UFUNCTION(BlueprintPure, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	bool HasGrantedAbilityTag(const FGameplayTag GameplayTag) const;
 
@@ -589,7 +589,7 @@ public:
 	 */
 	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
-	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operatio);
+	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operation);
 	
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
@@ -1314,10 +1314,9 @@ public:
 		return ProcessOperation(OperationData, bFromMovementTick, bForce);
 	}
 
-	// Test seams for the immediate server-op-apply routing. EnqueueServerOperation and
-	// ShouldApplyServerOpImmediately are private (production callers are in-class); these
-	// thin wrappers expose them under WITH_AUTOMATION_WORKER only so the BugFix spec can
-	// drive both branches (immediate apply vs grace/ack queue) directly.
+	// Test seams for the server-op routing. EnqueueServerOperation and ShouldApplyServerOpImmediately
+	// are private; these wrappers let the BugFix spec drive both branches (next-tick force for pawns
+	// without a client vs the grace/ack queue).
 	void EnqueueServerOperationForTest(const int OperationID) { EnqueueServerOperation(OperationID); }
 	bool ShouldApplyServerOpImmediatelyForTest() const { return ShouldApplyServerOpImmediately(); }
 
@@ -1345,8 +1344,8 @@ public:
 	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
 	// (IsNetworkedServer / IsPlayerControlledPawn) can't be populated for an orphan component
 	// in the headless harness (always reports NM_Standalone). Setting this flag forces the
-	// "no acknowledging client" decision so EnqueueServerOperation's immediate-apply branch
-	// can be exercised; left false, EnqueueServerOperation takes the legacy queue path.
+	// "no acknowledging client" decision (next-tick force) can be exercised; left false,
+	// EnqueueServerOperation takes the grace/ack path.
 	bool bForceNoAckClientForTest = false;
 
 	// Test seam: pre-seed BoundQueueV2.OperationData with a valid base struct so that

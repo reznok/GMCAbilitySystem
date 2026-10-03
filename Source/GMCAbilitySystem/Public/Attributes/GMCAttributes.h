@@ -128,8 +128,8 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY()
 	bool bStartFull = false;
 
-	// Clamp the attribute to a certain range
-	// Clamping will only happen if this is modified
+	// Clamp the attribute to a certain range.
+	// Both bounds are active by default; an all-zero clamp pins the attribute at 0 (InstantiateAttributes reports it).
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="({min}, {max} {MinAttributeTag}, {MaxAttributeTag})"))
 	FAttributeClamp Clamp{};
 

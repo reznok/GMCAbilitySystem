@@ -2,6 +2,8 @@
 
 #include "Ability/Tasks/SetTargetDataObject.h"
 
+#include "Components/GMCAbilityComponent.h"
+
 
 UGMCAbilityTask_SetTargetDataObject* UGMCAbilityTask_SetTargetDataObject::SetTargetDataObject(UGMCAbility* OwningAbility,
 																								 UObject* Object)

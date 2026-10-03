@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
 #include "Components/GMCAbilityComponent.h"
@@ -25,10 +25,7 @@
 #include "GameFramework/Pawn.h"
 
 namespace GMASApplyTrace {
-	// Diagnostic: dump full C++ + script callstack on every ApplyAbilityEffect that creates a
-	// new local instance. Filters by class-name substring to keep the noise down (one effect at
-	// a time). Set to empty to log all applies. Disabled when the substring is empty AND the
-	// enable flag is off.
+	// Opt-in trace: dumps the C++ and script call stack of every local effect instantiation whose class name contains GMAS.ApplyTraceFilter (empty = all).
 	static TAutoConsoleVariable<bool> CVarLogApplyTrace(
 		TEXT("GMAS.LogApplyTrace"),
 		false,
@@ -38,9 +35,8 @@ namespace GMASApplyTrace {
 
 	static TAutoConsoleVariable<FString> CVarApplyTraceFilter(
 		TEXT("GMAS.ApplyTraceFilter"),
-		TEXT("Stamina_Recovery"),
-		TEXT("Substring matched against effect class name. Only effects whose class contains this ")
-		TEXT("substring are stack-traced when GMAS.LogApplyTrace is enabled. Empty = match all."),
+		TEXT(""),
+		TEXT("Substring matched against the effect class name for GMAS.LogApplyTrace. Empty = every effect."),
 		ECVF_Default);
 }
 
@@ -65,6 +61,7 @@ FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const 
 		if (SearchPair.Key == Tags)
 		{
 			MatchedPair = &SearchPair;
+			break;
 		}
 	}
 
@@ -107,30 +104,42 @@ void UGMC_AbilitySystemComponent::RemoveAttributeChangeDelegate(FDelegateHandle 
 }
 
 #if !UE_BUILD_SHIPPING
-// Beautiful Light diagnostic: resolves a "[BLMoveEnqueue] ... Float[N]" index (logged by GMC's BL.GMC.LogMoveEnqueue)
-// to the GMAS attribute it belongs to, for the local player's ability component. Float[BoundIndex] = <tag> Value;
-// Float[BoundIndex+1] = <tag> RawValue. An index that matches no attribute is a GMC/movement bind (montage, ladder, ...).
-static FAutoConsoleCommandWithWorld GBLDumpAttrBindMap(
+// Maps the local player's bound float indices to GMAS attribute tags. GMC's own sync-data dumps
+// list bound values by type and index; this is how a deviating Float[N] becomes an attribute name.
+// Float[BoundIndex] = <tag> Value; Float[BoundIndex+1] = <tag> RawValue. An index that matches no
+// attribute belongs to a GMC or movement binding (montage, ladder, ...).
+static void DumpAttrBindMap(UWorld* World)
+{
+	const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	const UGMC_AbilitySystemComponent* ASC = Pawn ? Pawn->FindComponentByClass<UGMC_AbilitySystemComponent>() : nullptr;
+	if (!ASC)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[AttrBindMap] no local player ability component found."));
+		return;
+	}
+	UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AttrBindMap] --- bound Float index -> attribute map (%s) ---"), *GetNameSafe(Pawn));
+	for (const FAttribute& Attr : ASC->BoundAttributes.Attributes)
+	{
+		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AttrBindMap] Float[%d]=%s (Value), Float[%d]=%s (RawValue) [combineMode=%d]"),
+			Attr.BoundIndex, *Attr.Tag.ToString(), Attr.BoundIndex + 1, *Attr.Tag.ToString(), static_cast<int32>(Attr.ValueCombineMode));
+	}
+}
+
+static FAutoConsoleCommandWithWorld GDumpAttrBindMap(
+	TEXT("GMAS.DumpAttrBindMap"),
+	TEXT("Logs the GMC bound-Float index -> GMAS attribute tag map for the local player."),
+	FConsoleCommandWithWorldDelegate::CreateStatic(&DumpAttrBindMap));
+
+// Old name, kept one minor (GMAS 1.4.1 renamed it); removed in 1.5.
+static FAutoConsoleCommandWithWorld GDumpAttrBindMapOldName(
 	TEXT("BL.GMAS.DumpAttrBindMap"),
-	TEXT("Logs the GMC bound-Float index -> GMAS attribute tag map for the local player (interprets [BLMoveEnqueue] Float[N])."),
+	TEXT("Deprecated: use GMAS.DumpAttrBindMap."),
 	FConsoleCommandWithWorldDelegate::CreateLambda([](UWorld* World)
 	{
-		const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
-		const APawn* Pawn = PC ? PC->GetPawn() : nullptr;
-		const UGMC_AbilitySystemComponent* ASC = Pawn ? Pawn->FindComponentByClass<UGMC_AbilitySystemComponent>() : nullptr;
-		if (!ASC)
-		{
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[BLMoveEnqueue] DumpAttrBindMap: no local player ability component found."));
-			return;
-		}
-		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[BLMoveEnqueue] --- Bound Float index -> attribute map (%s) ---"), *GetNameSafe(Pawn));
-		for (const FAttribute& Attr : ASC->BoundAttributes.Attributes)
-		{
-			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[BLMoveEnqueue] Float[%d]=%s (Value), Float[%d]=%s (RawValue) [combineMode=%d]"),
-				Attr.BoundIndex, *Attr.Tag.ToString(), Attr.BoundIndex + 1, *Attr.Tag.ToString(), static_cast<int32>(Attr.ValueCombineMode));
-		}
-	})
-);
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("BL.GMAS.DumpAttrBindMap is deprecated; use GMAS.DumpAttrBindMap."));
+		DumpAttrBindMap(World);
+	}));
 #endif
 
 void UGMC_AbilitySystemComponent::BindReplicationData()
@@ -880,10 +889,11 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 
 		// Hard contract: client-auth abilities MUST NOT run on the movement tick.
 		const UGMCAbility* CDO = AbilityClass->GetDefaultObject<UGMCAbility>();
-		if (!ensureMsgf(!CDO->bActivateOnMovementTick,
-			TEXT("Client-auth ability %s has bActivateOnMovementTick=true -- replay incoherence guaranteed."),
-			*AbilityClass->GetName()))
+		if (CDO->bActivateOnMovementTick)
 		{
+			UE_LOG(LogGMCAbilitySystem, Error,
+				TEXT("Client-auth ability %s has bActivateOnMovementTick=true -- replay incoherence guaranteed; skipped."),
+				*AbilityClass->GetName());
 			continue;  // skip this candidate, fall through to standard path
 		}
 
@@ -932,7 +942,7 @@ int32 UGMC_AbilitySystemComponent::GetActiveAbilityCount(TSubclassOf<UGMCAbility
 
 	for (const auto& ActiveAbilityData : ActiveAbilities)
 	{
-		if (ActiveAbilityData.Value->IsA(AbilityClass) && ActiveAbilityData.Value->AbilityState != EAbilityState::Ended) Result++;
+		if (ActiveAbilityData.Value && ActiveAbilityData.Value->IsA(AbilityClass) && ActiveAbilityData.Value->AbilityState != EAbilityState::Ended) Result++;
 	}
 
 	return Result;
@@ -1163,8 +1173,8 @@ void UGMC_AbilitySystemComponent::DrawDebugAttribute(const FGameplayTag& Attribu
 	const FAttribute* Attribute = GetAttributeByTag(AttributeTag);
 	if (!Attribute) return;
 
-	const FString Context = GMCMovementComponent->IsAutonomousProxy() ? TEXT("[AP]") : GMCMovementComponent->IsSimulatedPawn() ? TEXT("[SP]") : TEXT("[SRV]");
-	UE_LOG(LogTemp, Warning, TEXT("%s Attribute: %s"), *Context, *Attribute->ToString());
+	const FString Context = !GMCMovementComponent ? TEXT("[?]") : GMCMovementComponent->IsAutonomousProxy() ? TEXT("[AP]") : GMCMovementComponent->IsSimulatedPawn() ? TEXT("[SP]") : TEXT("[SRV]");
+	UE_LOG(LogGMCAbilitySystem, Log, TEXT("%s Attribute: %s"), *Context, *Attribute->ToString());
 }
 
 void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
@@ -1299,7 +1309,6 @@ void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
 	const FVector TargetLocation = GMCMovementComponent->MoveHistory[GMCMovementComponent->GetSmoothingTargetIdx()].OutputState.ActorLocation.Read();
 	if (bJustTeleported)
 	{
-		// UE_LOG(LogTemp, Warning, TEXT("Teleporting %f Units"), FVector::Distance(GetOwner()->GetActorLocation(), TargetLocation));
 		GetOwner()->SetActorLocation(TargetLocation);
 		bJustTeleported = false;
 	}
@@ -1321,6 +1330,12 @@ void UGMC_AbilitySystemComponent::DrainPendingPredictedOperations()
 		if (OpData.GetScriptStruct() == FGMASBoundQueueV2ApplyEffectOperation::StaticStruct())
 		{
 			const FGMASBoundQueueV2ApplyEffectOperation& ApplyOp = OpData.Get<FGMASBoundQueueV2ApplyEffectOperation>();
+			if (!ApplyOp.EffectClass)
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s: queued predicted apply without an effect class; dropped."),
+					*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()));
+				continue;
+			}
 			UGMCAbilityEffect* Effect = DuplicateObject(ApplyOp.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 			ApplyAbilityEffect(Effect, ApplyOp.EffectData);
 		}
@@ -1589,8 +1604,10 @@ void UGMC_AbilitySystemComponent::CheckActiveTagsChanged()
 
 
 void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
-	// Check Bound Attributes
-	for (int i = 0; i < BoundAttributes.Attributes.Num(); i++)
+	// Check Bound Attributes. The two lists are built together; the bound guards a call that
+	// arrives between a re-instantiation of one and the other.
+	const int32 NumComparable = FMath::Min(BoundAttributes.Attributes.Num(), OldBoundAttributes.Attributes.Num());
+	for (int i = 0; i < NumComparable; i++)
 	{
 		FAttribute& Attribute = BoundAttributes.Attributes[i];
 		FAttribute& OldAttribute = OldBoundAttributes.Attributes[i];
@@ -1649,13 +1666,23 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 {
 	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
 	{
+		// A GC-nulled entry (world teardown) owns nothing: drop it.
+		if (!It.Value())
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
 		// If the contained ability is in the Ended state, delete it
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
 			// Remember this ID so a still-in-flight client heartbeat for it reads as a benign
 			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning.
 			NoteAbilityEnded(It.Value()->GetAbilityID());
-			if (HasAuthority() && !GMCMovementComponent->IsLocallyControlledServerPawn())
+			// Raw HasAuthority() on purpose (not the test-aware IsAuthorityForGMASLogic): an
+			// ownerless component must not send an RPC. Without a movement component the pawn
+			// cannot be known to be locally controlled, so the client is told.
+			if (HasAuthority() && !(GMCMovementComponent && GMCMovementComponent->IsLocallyControlledServerPawn()))
 			{
 				// Fail safe to tell client server has ended the ability
 				RPCClientEndAbility(It.Value()->GetAbilityID());
@@ -1732,12 +1759,19 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// Mirror the snapshot pattern used for ProcessedEffectIDs above.
 	TArray<int> ActiveEffectKeys;
 	ActiveEffects.GenerateKeyArray(ActiveEffectKeys);
+	const float ClientEffectApplicationTimeout = GetDefault<UGMASNetworkTimingSettings>()->ClientEffectApplicationTimeout;
 	for (const int Key : ActiveEffectKeys)
 	{
 		UGMCAbilityEffect** EffectPtr = ActiveEffects.Find(Key);
-		if (!EffectPtr || !*EffectPtr)
+		if (!EffectPtr)
 		{
 			// Entry was removed by a re-entrant callback during a previous iteration.
+			continue;
+		}
+		if (!*EffectPtr)
+		{
+			// GC nulled the value (the effect object became garbage): reap the entry.
+			CompletedActiveEffects.Push(Key);
 			continue;
 		}
 		UGMCAbilityEffect* EffectValue = *EffectPtr;
@@ -1762,7 +1796,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			!EffectValue->EffectData.bServerAuth
 			&& ProcessedEffectIDs.Contains(Key)
 			&& ProcessedEffectIDs[Key] == EGMCEffectAnswerState::Pending
-			&& EffectValue->ClientEffectApplicationTime + GetDefault<UGMASNetworkTimingSettings>()->ClientEffectApplicationTimeout < ActionTimer)
+			&& EffectValue->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
 		{
 			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);
@@ -1940,7 +1974,7 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 		// op / op_known / op_consumed separate the three ways this side can lack the instance:
 		// the operation was never delivered here, it was delivered and refused, or it ran and
 		// ended. Without them the line cannot tell a lost payload from a refused activation.
-		UE_LOG(LogTemp, Warning,
+		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Heartbeat for unknown AbilityID=%d (TaskID=%d, %s) — client ability alive but server has no such instance. Server live abilities: %s"),
 			AbilityID, TaskID, *DescribeSourceOperation(AbilityID), *LiveIDs);
 	}
@@ -2199,13 +2233,13 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 {
 	if (!GrantedAbilityTags.HasTag(AbilityTag))
 	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Granted: %s"), *AbilityTag.ToString());
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Input tag not granted: %s"), *AbilityTag.ToString());
 		return {};
 	}
 
 	if (!AbilityMap.Contains(AbilityTag))
 	{
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability Tag Not Found: %s | Check The Component's AbilityMap"), *AbilityTag.ToString());
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Input tag not in the ability map: %s"), *AbilityTag.ToString());
 		return {};
 	}
 
@@ -2302,13 +2336,6 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 				TEXT("[TaskDiag] Progress payload lost: AbilityID=%d (TaskID=%d, %s) not in ActiveAbilities (fromMovement=%d Authority=%d Replaying=%d). Live abilities: %s"),
 				TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, *SourceOpText,
 				bFromMovement ? 1 : 0, HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0, *LiveIDs);
-			if (HasAuthority())
-			{
-				UE_LOG(LogTemp, Warning,
-					TEXT("[TaskDiag] Progress payload lost: AbilityID=%d (TaskID=%d, %s) not in ActiveAbilities (fromMovement=%d). Live abilities: %s"),
-					TaskDataFromInstance.AbilityID, TaskDataFromInstance.TaskID, *SourceOpText,
-					bFromMovement ? 1 : 0, *LiveIDs);
-			}
 		}
 	}
 }
@@ -2553,12 +2580,6 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				UE_LOG(LogGMCAbilitySystem, Error,
 					TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops, Authority=%d, Replaying=%d)."),
 					SubID, Batch.SubOperationIDs.Num(), HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0);
-				if (HasAuthority())
-				{
-					UE_LOG(LogTemp, Error,
-						TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops)."),
-						SubID, Batch.SubOperationIDs.Num());
-				}
 				continue;
 			}
 
@@ -2615,8 +2636,8 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	// SKIPPED on replay and its effect is never re-applied -> the replayed move's bound attributes diverge
 	// from the server. This is general replay-correctness for any client-op ability (anything that must
 	// survive replay has to be a self-contained bound var, not a bound-slot + a non-rewound cache lookup);
-	// it is NOT the fix for the walk/sprint-spam replay storm -- that one is move-combine vs server tickrate,
-	// fixed in HumanoidMovementComponent::UpdateSpeed via CL_DoNotCombineNextMove. Use the carried payload,
+	// it does not cure a replay storm caused by move combining (a movement component that changes a bound
+	// value between moves must call CL_DoNotCombineNextMove). Use the carried payload,
 	// scoped tightly (replay + client op + real payload) so the original run, the server, server-broadcast
 	// ops (ID>0), acks and batches are untouched.
 	const bool bCacheHit = BoundQueueV2.HasPayloadByID(OperationID);
@@ -2660,10 +2681,10 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 
 		// Diagnostic: log every ability activation that traverses ProcessOperation, including
 		// what the server side does with it. Pair with [ServerOpAccept]/[ServerOpDrop] to
-		// trace a Sprint activation from client predict → server validation → server apply.
+		// trace an activation from client predict → server validation → server apply.
 		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
 		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Log,
 				TEXT("[ProcessOp] op=%d activate_ability tag=%s auth=%d fromMove=%d force=%d"),
 				OperationID, *Data.InputTag.ToString(),
 				HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0, bForce ? 1 : 0);
@@ -2735,15 +2756,14 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		const FGMASBoundQueueV2ApplyEffectOperation Data = PayloadData.Get<FGMASBoundQueueV2ApplyEffectOperation>();
 
 		// Diagnostic: server-side or client-side Apply Effect op processing. Filtered by class
-		// name so we can isolate the Sprint/SprintCost/Recovery investigation without flooding
-		// the log with every single effect.
+		// name (GMAS.ApplyTraceFilter) so one effect can be isolated without flooding the log.
 		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
 		{
 			const FString Filter = GMASApplyTrace::CVarApplyTraceFilter.GetValueOnGameThread();
 			const FString ClassName = Data.EffectClass ? Data.EffectClass->GetName() : TEXT("null");
 			if (Filter.IsEmpty() || ClassName.Contains(Filter))
 			{
-				UE_LOG(LogGMCAbilitySystem, Warning,
+				UE_LOG(LogGMCAbilitySystem, Log,
 					TEXT("[ProcessOp] op=%d apply_effect class=%s effect_id=%d auth=%d fromMove=%d"),
 					OperationID, *ClassName, Data.EffectID,
 					HasAuthority() ? 1 : 0, bFromMovementTick ? 1 : 0);
@@ -2924,7 +2944,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			const FGMASBoundQueueV2OperationBaseData* BD = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 			if (BD && BD->OperationID != 0)
 			{
-				UE_LOG(LogGMCAbilitySystem, Warning,
+				UE_LOG(LogGMCAbilitySystem, Log,
 					TEXT("[ServerOpDrop] op=%d reason=IsValidGMASOperation_failed struct=%s"),
 					BD->OperationID,
 					OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
@@ -2936,11 +2956,14 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 	const FGMASBoundQueueV2OperationBaseData* BaseData = OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 	if (!BaseData)
 	{
-		// Defense-in-depth: IsValidGMASOperation above should already filter this,
-		// but a future caller could bypass the validator. Drop silently and log.
-		UE_LOG(LogGMCAbilitySystem, Error,
-			TEXT("[ServerOpDrop] BaseData cast failed despite IsValidGMASOperation pass (struct=%s)"),
-			OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+		// Defense-in-depth: IsValidGMASOperation above should already filter this, so this is a
+		// trace like the other [ServerOpDrop] lines.
+		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
+		{
+			UE_LOG(LogGMCAbilitySystem, Log,
+				TEXT("[ServerOpDrop] BaseData cast failed despite IsValidGMASOperation pass (struct=%s)"),
+				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+		}
 		return;
 	}
 	const int OperationID = BaseData->OperationID;
@@ -2988,7 +3011,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		// client-side Apply trace to see if the op makes it across the wire at all.
 		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
 		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Log,
 				TEXT("[ServerOpAccept] op=%d struct=%s fromMove=%d"),
 				OperationID,
 				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
@@ -3163,12 +3186,12 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 	else
 	{
 		// Diagnostic: op reached the server but failed the IsValidClientOperation security check.
-		// This is the most likely failure point for "Sprint Not Confirmed By Server" — a client
-		// op gets dropped here and never reaches ProcessOperation, so no apply happens server-side
-		// and the client's Predicted timeout fires after 1s.
+		// This is the most likely failure point for an activation the server never confirms: a
+		// client op gets dropped here and never reaches ProcessOperation, so nothing is applied
+		// server-side.
 		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
 		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Log,
 				TEXT("[ServerOpDrop] op=%d reason=IsValidClientOperation_failed struct=%s fromMove=%d"),
 				OperationID,
 				OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"),
@@ -3434,7 +3457,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 		}
 	case EGMCAbilityEffectQueueType::PredictedQueued:
 		{
-			if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
+			if ((GMCMovementComponent && GMCMovementComponent->IsExecutingMove()) || bInAncillaryTick)
 			{
 				// Inside a movement tick — apply immediately (same as Predicted).
 				UGMCAbilityEffect* Effect = DuplicateObject(EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
@@ -3593,12 +3616,19 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	}
 
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted to apply effect of type %s but something has gone BADLY wrong!"),
-		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *EffectClass->GetName())
+		*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()), *EffectClass->GetName())
 	return false;
 }
 
 UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operation)
 {
+	if (!Operation.EffectClass)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s: apply-effect operation without an effect class; ignored."),
+			*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()));
+		return nullptr;
+	}
+
 	FGMCAbilityEffectData EffectData = {};
 	if (Operation.EffectData.IsValid())
 	{
@@ -3612,10 +3642,13 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectViaOperation(c
 	
 	UGMCAbilityEffect* Effect = DuplicateObject(Operation.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 	Effect = ApplyAbilityEffect(Effect, EffectData);
-	FString isExecutingMove = GMCMovementComponent->IsExecutingMove() ? TEXT("True") : TEXT("False");
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s | IsServer: %s"),
-		ActionTimer, *isExecutingMove, HasAuthority() ? TEXT("True") : TEXT("False"));
-	
+	if (Effect)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s | IsServer: %s"),
+			ActionTimer, (GMCMovementComponent && GMCMovementComponent->IsExecutingMove()) ? TEXT("True") : TEXT("False"),
+			HasAuthority() ? TEXT("True") : TEXT("False"));
+	}
+
 	return Effect;
 }
 
@@ -3729,6 +3762,8 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		InitializationData.EffectID = GetNextAvailableEffectID();
 		if (InitializationData.EffectID == -1)
 		{
+			// The effect object is registered nowhere: the caller's reference (if any) keeps it,
+			// otherwise it is collected with the next GC (the outer callers' duplicates included).
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ApplyAbilityEffect: no id for %s (ActionTimer is 0); not applied."), *GetNameSafe(Effect));
 			return nullptr;
 		}
@@ -3807,7 +3842,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 			ANSICHAR CppStack[8192] = { 0 };
 			FPlatformStackWalk::StackWalkAndDump(CppStack, sizeof(CppStack), /*IgnoreCount=*/1);
 			const FString ScriptStack = FFrame::GetScriptCallstack(true);
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Log,
 				TEXT("[ApplyTrace] class=%s id=%d auth=%d action_t=%f netmode=%d\nC++ stack:\n%hs\nScript stack:\n%s"),
 				*ClassName, Effect->EffectData.EffectID, HasAuthority() ? 1 : 0,
 				ActionTimer, static_cast<int32>(GetNetMode()),
@@ -3867,7 +3902,7 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectByHandle(int EffectHa
 	if (Effect == nullptr)
 	{
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove effect with handle %d, but it doesn't exist!"),
-			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), EffectHandle);
+			*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()), EffectHandle);
 		return;
 	}
 
@@ -3879,10 +3914,8 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffectSafe(UGMCAbilityEffec
 {
 	if (Effect == nullptr)
 	{
-		ensureAlwaysMsgf(false, TEXT("[%20s] %s tried to remove a null effect!"),
-			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName());
-		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("[%20s] %s tried to remove a null effect!"),
-			*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName());
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s tried to remove a null effect!"),
+			*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()));
 		return;
 	}
 		
@@ -4010,13 +4043,10 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 	switch(QueueType) {
 		case EGMCAbilityEffectQueueType::Predicted:
 			{
-				if (!GMCMovementComponent->IsExecutingMove() && GetNetMode() != NM_Standalone && !bInAncillaryTick)
+				if (!(GMCMovementComponent && GMCMovementComponent->IsExecutingMove()) && GetNetMode() != NM_Standalone && !bInAncillaryTick)
 				{
-
-					ensureMsgf(false, TEXT("[%20s] %s attempted a predicted removal of effects outside of a movement cycle! (%s)"),
-						*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *GetEffectsNameAsString(GetEffectsByIds(Ids)));
 					UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted a predicted removal of effects outside of a movement cycle! (%s)"),
-						*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *GetEffectsNameAsString(GetEffectsByIds(Ids)));
+						*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()), *GetEffectsNameAsString(GetEffectsByIds(Ids)));
 					return false;
 				}
 
@@ -4030,7 +4060,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 			}
 		case EGMCAbilityEffectQueueType::PredictedQueued:
 			{
-				if (GMCMovementComponent->IsExecutingMove() || bInAncillaryTick)
+				if ((GMCMovementComponent && GMCMovementComponent->IsExecutingMove()) || bInAncillaryTick)
 				{
 					// Inside a movement tick — remove immediately.
 					TArray<UGMCAbilityEffect*> EffectsToRemove;
@@ -4129,10 +4159,8 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 			}
 	}
 
-	ensureMsgf(false, TEXT("[%20s] %s attempted a removal of effects but something went horribly wrong! (%s)"),
-		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(), *GetEffectsNameAsString(GetEffectsByIds(Ids)));
 	UE_LOG(LogGMCAbilitySystem, Error, TEXT("[%20s] %s attempted a removal of effects but something went horribly wrong! (%s)"),
-		*GetNetRoleAsString(GetOwnerRole()), *GetOwner()->GetName(),*GetEffectsNameAsString(GetEffectsByIds(Ids)))
+		*GetNetRoleAsString(GetOwnerRole()), *GetNameSafe(GetOwner()),*GetEffectsNameAsString(GetEffectsByIds(Ids)))
 	return false;
 }
 
@@ -4296,7 +4324,7 @@ FString UGMC_AbilitySystemComponent::GetActiveEffectsString() const{
 FString UGMC_AbilitySystemComponent::GetActiveAbilitiesString() const{
 	FString FinalString = TEXT("\n");
 	for(const TTuple<int, UGMCAbility*> ActiveAbility : ActiveAbilities){
-		FinalString += FString::Printf(TEXT("%d: "), ActiveAbility.Key) + ActiveAbility.Value->ToString() + TEXT("\n");
+		FinalString += FString::Printf(TEXT("%d: "), ActiveAbility.Key) + (ActiveAbility.Value ? ActiveAbility.Value->ToString() : FString(TEXT("null"))) + TEXT("\n");
 	}
 	return FinalString;
 }
@@ -4654,8 +4682,8 @@ void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()
 	RecentReplayTimestamps.Reset();
 
 	UE_LOG(LogGMCAbilitySystem, Warning,
-		TEXT("[ReplayBurst] %s observed %d replay occurrences within %.2fs (threshold=%d). ")
-		TEXT("Likely a sustained validation divergence — check recent attribute mutations or bound state writes."),
+		TEXT("[ReplayBurst] %s: %d frames with a replay within %.2fs (threshold=%d). ")
+		TEXT("The client is being corrected repeatedly; use gmc.LogClientReplay and GMAS.DumpAttrBindMap to name the value. A lag spike trips this too."),
 		*GetNameSafe(GetOwner()), BurstCount, WindowSeconds, Settings->BurstThreshold);
 
 	OnReplayBurstDetected.Broadcast(BurstCount, WindowSeconds);
