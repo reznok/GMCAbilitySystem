@@ -3,7 +3,7 @@
 void UGMAS_TestAbility::BeginAbilityEvent_Implementation()
 {
 	BeginAbilityEventCount++;
-	if (GetDefault<UGMAS_TestAbility>()->bCommitCostOnBegin)
+	if (bCommitCostOnBegin)   // the instance's own copy: TryActivateAbility copies every CDO property
 	{
 		CommitAbilityCost();
 	}

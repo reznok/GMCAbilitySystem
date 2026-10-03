@@ -447,6 +447,11 @@ public:
 	// Do not call directly on client, go through QueueAbility
 	// SourceOperationID: BoundQueueV2 operation that carried this activation (0 = none).
 	// When set, AbilityIDs are derived from it so client and server agree by construction.
+	// A server-sent activation that reaches the client batched with other operations, whose candidates
+	// all fail their tag gates there, is not acknowledged and applies on the server through the grace
+	// force (~ServerOperationGraceSeconds late). Keep the first candidate of an input tag one that
+	// passes on both sides. A candidate that activates and is then refused (cost, cooldown, pre-check)
+	// still consumes the press: it does not fall through to the next candidate.
 	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false, const int SourceOperationID = 0);
 
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
@@ -1298,6 +1303,9 @@ public:
 	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
 	// Test seam: inject entries (e.g. a null value) to exercise query guards.
 	TMap<int, UGMCAbilityEffect*>& GetActiveEffectsForTest() { return ActiveEffects; }
+	// Empties the once-per-owner-class latch of the SetCooldownForAbility empty-tag report, so a spec
+	// can expect that Error on every in-process run.
+	static void ResetCooldownTagReportForTest();
 	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
 	{
 		return GetEffectFromHandle(Handle, OutNetId, OutEffect);

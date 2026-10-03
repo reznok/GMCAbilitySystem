@@ -799,37 +799,22 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Ability Activation ID: %d"), HasAuthority(), AbilityID);
 	
-	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility);
+	// bCopyTransientsFromClassDefaults forces FObjectInitializer's full copy from the CDO (every
+	// reflected property, the engine's own skip rule, before subobject instancing). Without it a
+	// native class built from its own CDO only receives the PostConstructLink (config) properties,
+	// so a CDO value written after construction never reached an instance (Blueprint classes
+	// always got the full copy).
+	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility, NAME_None, RF_NoFlags, /*Template*/ nullptr, /*bCopyTransientsFromClassDefaults*/ true);
 	Ability->AbilityData = AbilityData;
 	Ability->AbilityData.InputTag = ActivationTag;
-
-	// Propagate class-identity and activation properties from the CDO to the instance.
-	// NewObject does not reliably copy UPROPERTY values when called without a full
-	// world context (e.g. headless automation, transient outers).  Explicit assignment
-	// ensures the instance always matches its class defaults for every property that
-	// is read on the instance rather than on the CDO.
-	Ability->AbilityTag             = AbilityCDO->AbilityTag;
-	Ability->CooldownTime           = AbilityCDO->CooldownTime;
-	Ability->AbilityCost            = AbilityCDO->AbilityCost;
-	Ability->BlockedByOtherAbility  = AbilityCDO->BlockedByOtherAbility;
-	Ability->BlockOtherAbility      = AbilityCDO->BlockOtherAbility;
-	Ability->bBlockAllOtherAbilities = AbilityCDO->bBlockAllOtherAbilities;
-	Ability->BlockAllAllowedTags    = AbilityCDO->BlockAllAllowedTags;
-	Ability->ChainWindowTag         = AbilityCDO->ChainWindowTag;
-	Ability->ChainWindowDuration    = AbilityCDO->ChainWindowDuration;
-	Ability->ChainConsumeWindowTags = AbilityCDO->ChainConsumeWindowTags;
-	Ability->CancelAbilitiesWithTag = AbilityCDO->CancelAbilitiesWithTag;
-	Ability->AbilityDefinition      = AbilityCDO->AbilityDefinition;
-	Ability->ApplyEffectOnEnd       = AbilityCDO->ApplyEffectOnEnd;
-	Ability->RemoveEffectOnEnd      = AbilityCDO->RemoveEffectOnEnd;
 
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
 
 	// Only signal "confirmed" to the client if the server-side Execute did NOT bail out
-	// during PreBeginAbility (cooldown, PreExecuteCheck, blocked-by-ability, blocked-by-tag).
-	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs; the same holds for an
-	// OnAbilityActivated listener that cancelled the ability it was handed. Without this
+	// during PreBeginAbility (cooldown, unaffordable AbilityCost, PreExecuteCheck, blocked-by-ability,
+	// blocked-by-tag, an OnAbilityActivated listener that cancelled the ability it was handed).
+	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs. Without this
 	// gate the client receives RPCConfirmAbilityActivation for an ability the server
 	// just cancelled, sets bServerConfirmed=true, and the Tick-time
 	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
@@ -851,12 +836,8 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	// Detect client-auth path before standard routing.
 	TArray<TSubclassOf<UGMCAbility>> Candidates = GetGrantedAbilitiesByTag(InputTag);
 
-	// Local concurrency gate. The parameter was declared and documented but never read, so every
-	// caller passing true was unprotected: the operation shipped, burned an OperationID, and the
-	// far side refused it at the single-instance gate with no trace.
-	// Bail only when NO candidate could activate: the operation payload carries the InputTag alone,
-	// so it cannot address a subset of the granted classes. Mirror the remote gate exactly — a
-	// stacking-enabled ability has no far-side refusal to pre-empt, so it never blocks here.
+	// Local concurrency gate: when every granted candidate already has a live instance and none
+	// stacks, do not ship an operation the far side would refuse.
 	if (bPreventConcurrentActivation && Candidates.Num() > 0)
 	{
 		bool bAnyCandidateFree = false;
@@ -1071,9 +1052,33 @@ void UGMC_AbilitySystemComponent::QueueTaskData(const FInstancedStruct& InTaskDa
 	QueuedTaskData.Push(InTaskData);
 }
 
+namespace
+{
+	// Owner classes (full path names) that already reported an empty AbilityTag in
+	// SetCooldownForAbility: once per class per process. ResetCooldownTagReportForTest empties it.
+	TSet<FString> GReportedEmptyCooldownTagOwners;
+}
+
+#if WITH_AUTOMATION_WORKER
+void UGMC_AbilitySystemComponent::ResetCooldownTagReportForTest()
+{
+	GReportedEmptyCooldownTagOwners.Empty();
+}
+#endif
+
 void UGMC_AbilitySystemComponent::SetCooldownForAbility(const FGameplayTag AbilityTag, float CooldownTime)
 {
-	if (AbilityTag == FGameplayTag::EmptyTag) return;
+	if (AbilityTag == FGameplayTag::EmptyTag)
+	{
+		// The ability class is not known here; the owner class is the next best key for the once-latch.
+		const FString Owner = GetOwner() ? GetOwner()->GetClass()->GetPathName() : FString();
+		if (!GReportedEmptyCooldownTagOwners.Contains(Owner))
+		{
+			GReportedEmptyCooldownTagOwners.Add(Owner);
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("SetCooldownForAbility on %s: empty AbilityTag; a CooldownTime without an AbilityTag never cools down. Reported once per owner class."), *GetNameSafe(GetOwner()));
+		}
+		return;
+	}
 
 	// Store absolute expiry in ActionTimer units. See ActiveCooldowns
 	// declaration for why expiry-time (vs remaining-duration) is required.
@@ -3832,7 +3837,9 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 
 void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* Effect)
 {
-	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
+	// The id alone is not enough: a stale pointer whose id now belongs to another (renumbered) effect
+	// must not end it.
+	if (!Effect || ActiveEffects.FindRef(Effect->EffectData.EffectID) != Effect) return;
 
 	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side
 	// that ends the effect later accumulates extra modifier applications (Ticking: continuous drain;

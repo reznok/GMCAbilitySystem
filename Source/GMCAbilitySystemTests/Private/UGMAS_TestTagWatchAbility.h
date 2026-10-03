@@ -15,7 +15,7 @@ class UGMAS_TestTagWatchAbility : public UGMCAbility
 	GENERATED_BODY()
 
 public:
-	// Tag to watch — configured per-test via the CDO before activation.
+	// Tag to watch — configured per-test via the CDO before activation; each instance copies it.
 	UPROPERTY(EditAnywhere, Category = "Test")
 	FGameplayTag WatchTag;
 

@@ -19,8 +19,8 @@ enum class EAbilityState : uint8
 {
 	PreExecution,
 	Initialized,
-	Running,
-	Waiting,
+	Running UMETA(Hidden, DisplayName="DEPRECATED: never assigned"),
+	Waiting UMETA(Hidden, DisplayName="DEPRECATED: never assigned"),
 	Ended
 };
 
@@ -97,8 +97,9 @@ public:
 	
 	// Entered only by an ability that survived its activation broadcast (PreBeginAbility sets Initialized,
 	// broadcasts OnAbilityActivated and refuses the activation if a listener cancelled it); a cancel from
-	// inside CancelConflictingAbilities / BeginAbilityEvent is still possible, so overrides that add work
-	// after Super may check AbilityState.
+	// inside CancelConflictingAbilities / BeginAbilityEvent is still possible and ends the ability inside
+	// Super. An override whose work after Super creates tasks, declares effects or commits a cost must
+	// check AbilityState first: `Super::BeginAbility(); if (AbilityState == EAbilityState::Ended) return;`.
 	UFUNCTION()
 	virtual void BeginAbility();
 
@@ -148,14 +149,18 @@ public:
 	UPROPERTY(EditAnywhere, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	FGameplayTag AbilityTag;
 
-	// An Effect that modifies attributes when the ability is activated
+	// An Effect that modifies attributes when the ability is activated. PreBeginAbility refuses an
+	// activation the owner cannot afford (CanAffordAbilityCost with its default DeltaTime: a Ticking or
+	// Periodic cost is judged over one second at activation). The attributes it reads and spends should
+	// be GMC-bound: the gate runs on both sides, and an unbound attribute can differ between client and
+	// server (a Warning is logged once per ability class).
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	TSubclassOf<UGMCAbilityEffect> AbilityCost;
 
 	// How long in seconds ability should go on cooldown when activated
 	// Requires AbilityTag to be set
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
-	float CooldownTime;
+	float CooldownTime = 0.f;
 
 	// If true, the ability will apply the Cooldown when activated
 	// If false, the ability will NOT apply the Cooldown when the ability begins
@@ -168,8 +173,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	bool bAllowMultipleInstances {false};
 	
-	// Check to see if affected attributes in the AbilityCost would still be >= 0 after committing the cost
-	// Delta time can be required if the cost is time based.
+	// True when every attribute the AbilityCost touches would still be >= 0 after all of its modifiers
+	// (judged per attribute over the whole cost: two drains on one attribute add up, a Set is absolute).
+	// DeltaTime scales a time-based cost; the activation gate uses the default, so a Ticking or Periodic
+	// cost is judged over one second at activation.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	virtual bool CanAffordAbilityCost(float DeltaTime = 1.f) const;
 
@@ -183,16 +190,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCooldown();
 	
-	// Apply the effects in AbilityCost
+	// Apply the effects in AbilityCost. A non-Instant cost is declared so it ends with the ability.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void CommitAbilityCost();
 
-	// Remove the ability cost effect (if applicable)
+	// Remove the ability cost effect now (if applicable); a declared cost would also end with the ability.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void RemoveAbilityCost();
-	
-	// Retrieves the attribute costs of this ability from its AbilityCost effect class.
-	// @return A map of GameplayTags (Attributes) to their respective modifier values.
+
+	// Per attribute, the sum of what the AbilityCost modifiers would apply now (attribute-sourced values
+	// and Conditions resolved against the owner). Without an owner (a class default object, e.g. for a
+	// hotbar or tooltip) each modifier's raw value is summed per attribute instead: Conditions are not
+	// resolved and an attribute-, custom- or externally-sourced value contributes 0.
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	TMap<FGameplayTag, float> GetAbilityCostValues() const;
 
@@ -394,6 +403,24 @@ private:
 	UPROPERTY()
 	UGMCAbilityEffect* AbilityCostInstance = nullptr;
 
+	// A copy of the AbilityCost CDO wired to the owner for read-only modifier math, built once per
+	// instance (both readers are BlueprintPure and may be polled every frame) and rebuilt if
+	// AbilityCost changes. Outer is this ability, so it dies with it. Never applied.
+	UPROPERTY(Transient)
+	TObjectPtr<UGMCAbilityEffect> CostQueryEffect;
+
+	// The cached query effect, built on first use. Null without a cost or owner. A (re)build warns once
+	// per ability class about cost attributes that are not GMC-bound.
+	UGMCAbilityEffect* GetCostQueryEffect();
+
+	// Logs the not-GMC-bound attributes the cached cost reads or writes, once per ability class.
+	void WarnUnboundCostAttributes() const;
+
+	// Per attribute the cost touches, the value it would leave: the current Value walked through every
+	// resolved modifier in order (Set / SetReplace absolute, AddPercentageOfBase scales, the rest
+	// accumulate), as the permanent apply path does. CanAffordAbilityCost and GetAbilityCostValues read it.
+	TMap<FGameplayTag, float> ProjectAbilityCost(float DeltaTime) const;
+
 	bool IsOnCooldown() const;
 
 public:
@@ -421,8 +448,9 @@ public:
 	// Cancel (abnormal end) every active ability whose AbilityDefinition matches when this ability begins
 	FGameplayTagQuery EndOtherAbilitiesQuery;
 
-	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Block Other Ability via Definition Query"))
-	// Block Abilities via Definition
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="End Other Abilities On Begin (Definition Query)"))
+	// At BeginAbility, every active ability whose AbilityDefinition matches is cancelled. It
+	// blocks nothing; the name is kept for asset compatibility.
 	FGameplayTagQuery BlockOtherAbilitiesQuery;
 
 	UFUNCTION(BlueprintCallable, Category = "GMAS|Abilities|Queries")

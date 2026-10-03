@@ -234,24 +234,112 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	PreBeginAbility();
 }
 
-bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
+namespace
 {
-	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return true;
+	// Ability classes (full path names) already warned about a cost attribute that is not GMC-bound:
+	// once per class per process.
+	TSet<FString> GWarnedUnboundCostAbilityClasses;
+}
 
-	UGMCAbilityEffect* AbilityEffect = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
+void UGMCAbility::WarnUnboundCostAttributes() const
+{
+	if (!CostQueryEffect || !OwnerAbilityComponent) { return; }
+	const FString ClassPath = GetClass()->GetPathName();
+	if (GWarnedUnboundCostAbilityClasses.Contains(ClassPath)) { return; }
+
+	// The activation gate reads these values on both sides; only a GMC-bound attribute is guaranteed
+	// to hold the same value on the client and the server at the same move.
+	TArray<FString> Unbound;
+	auto Check = [this, &Unbound](const FGameplayTag& Tag)
 	{
-		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(AttributeModifier.AttributeTag);
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Tag);
+		if (Attribute && !Attribute->bIsGMCBound) { Unbound.AddUnique(Tag.ToString()); }
+	};
+	for (const FGMCAttributeModifier& Modifier : CostQueryEffect->EffectData.Modifiers)
+	{
+		Check(Modifier.AttributeTag);
+		Check(Modifier.ValueAsAttribute);
+	}
+	if (Unbound.Num() == 0) { return; }
+
+	GWarnedUnboundCostAbilityClasses.Add(ClassPath);
+	UE_LOG(LogGMCAbilitySystem, Warning, TEXT("%s: cost attribute %s is not GMC-bound; client and server may disagree on affordability. Reported once per ability class."),
+		*GetClass()->GetName(), *FString::Join(Unbound, TEXT(", ")));
+}
+
+UGMCAbilityEffect* UGMCAbility::GetCostQueryEffect()
+{
+	if (!AbilityCost || !OwnerAbilityComponent) { return nullptr; }
+
+	// Built once and reused: the readers copy each modifier by value before InitModifier /
+	// ResolveConditions, so the cached effect's data stays pristine. Rebuilt if AbilityCost changed
+	// under it; re-wired if the owner did.
+	if (!CostQueryEffect || CostQueryEffect->GetClass() != AbilityCost.Get())
+	{
+		CostQueryEffect = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+	}
+	if (CostQueryEffect->GetOwnerAbilityComponent() != OwnerAbilityComponent)
+	{
+		CostQueryEffect->InitializeForQuery(OwnerAbilityComponent);
+		WarnUnboundCostAttributes();
+	}
+	return CostQueryEffect;
+}
+
+TMap<FGameplayTag, float> UGMCAbility::ProjectAbilityCost(float DeltaTime) const
+{
+	// The modifiers are evaluated through a query effect wired to the owner: an attribute-sourced
+	// value (AMT_Attribute, AddPercentageAttribute, ...) read through the bare CDO has no owner and
+	// contributes 0, which made such a cost always affordable. Per attribute, start from the current
+	// Value and walk the resolved modifiers in order the way the permanent apply path does.
+	// The projection reads Value before this move's pending Instant costs are processed, so two
+	// activations inside one move can both pass the gate on the same Value. That is deterministic on
+	// both sides (same move, same Value), so it never diverges; it only lets such a pair overdraw.
+	TMap<FGameplayTag, float> Projected;
+	// The cache is a lazily built transient object; the projection itself is read-only.
+	UGMCAbilityEffect* Query = const_cast<UGMCAbility*>(this)->GetCostQueryEffect();
+	if (!Query) return Projected;
+
+	for (FGMCAttributeModifier Modifier : Query->EffectData.Modifiers)
+	{
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Modifier.AttributeTag);
 		if (Attribute == nullptr) continue;
 
-		AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
-		if (!AttributeModifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
-		if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
+		Modifier.InitModifier(Query, OwnerAbilityComponent->ActionTimer, -1, false, DeltaTime);
+		if (!Modifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
+
+		float* Found = Projected.Find(Modifier.AttributeTag);
+		float& Value = Found ? *Found : Projected.Add(Modifier.AttributeTag, Attribute->Value);
+		const float Delta = Modifier.CalculateModifierValue(*Attribute);
+		if (Modifier.Op == EModifierType::Set || Modifier.Op == EModifierType::SetReplace)
+		{
+			Value = Delta;            // the absolute target for these ops
+		}
+		else if (Modifier.Op == EModifierType::AddPercentageOfBase)
+		{
+			// Scales the projected value: an approximation of the real apply, which scales the base layer
+			// (the two agree while no temporary modifier sits on the attribute).
+			Value *= 1.f + Delta;
+		}
+		else
+		{
+			Value += Delta;
+		}
+	}
+	return Projected;
+}
+
+bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
+{
+	// Judged per attribute over every modifier of the cost: two drains on one attribute add up and
+	// a Set is absolute.
+	for (const TPair<FGameplayTag, float>& Projected : ProjectAbilityCost(DeltaTime))
+	{
+		if (Projected.Value < 0.f)
 		{
 			return false;
 		}
 	}
-
 	return true;
 }
 
@@ -271,29 +359,64 @@ void UGMCAbility::CommitAbilityCost()
 {
 	if (AbilityCost == nullptr || OwnerAbilityComponent == nullptr) return;
 
-	const UGMCAbilityEffect* EffectCDO = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
-	FGMCAbilityEffectData EffectData = EffectCDO->EffectData;
+	UGMCAbilityEffect* CostEffect = DuplicateObject(AbilityCost->GetDefaultObject<UGMCAbilityEffect>(), this);
+	FGMCAbilityEffectData EffectData = CostEffect->EffectData;
 	EffectData.OwnerAbilityComponent = OwnerAbilityComponent;
 	EffectData.SourceAbilityComponent = OwnerAbilityComponent;
-	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(DuplicateObject(EffectCDO, this), EffectData);
+	AbilityCostInstance = OwnerAbilityComponent->ApplyAbilityEffect(CostEffect, EffectData);
+
+	// A cost that outlives this call (Ticking / Persistent / Periodic) ends with the ability on
+	// every end path, like any effect applied with HandlingAbility.
+	if (AbilityCostInstance && !AbilityCostInstance->bCompleted)
+	{
+		DeclareEffect(AbilityCostInstance->EffectData.EffectID, EGMCAbilityEffectQueueType::Predicted);
+	}
 }
 
 void UGMCAbility::RemoveAbilityCost() {
-	if (AbilityCostInstance) {
+	// An already-ended cost (Instant, or declared and ended with the ability) is a silent no-op in
+	// RemoveActiveAbilityEffect.
+	if (AbilityCostInstance && OwnerAbilityComponent) {
+		const int CostID = AbilityCostInstance->EffectData.EffectID;
 		OwnerAbilityComponent->RemoveActiveAbilityEffect(AbilityCostInstance);
+
+		// Forget the declaration: a removed cost is purged from ActiveEffects on the next effect tick,
+		// after which its id no longer resolves and FinishEndAbility would take the [EffectLeak] tag
+		// fallback, removing the first live effect with the cost's tag (another instance's cost, or
+		// any effect sharing the tag).
+		DeclaredEffect.Remove(CostID);
+		DeclaredEffectTags.Remove(CostID);
+		AbilityCostInstance = nullptr;
 	}
 }
 
 TMap<FGameplayTag, float> UGMCAbility::GetAbilityCostValues() const
 {
+	// Per attribute, the change the cost would make now: projected minus current.
 	TMap<FGameplayTag, float> CostMap;
 	if (!AbilityCost) return CostMap;
 
-	const UGMCAbilityEffect* EffectCDO = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
-    
-	for (const FGMCAttributeModifier& Modifier : EffectCDO->EffectData.Modifiers)
+	if (!OwnerAbilityComponent)
 	{
-		CostMap.Add(Modifier.AttributeTag, Modifier.GetValue()); 
+		// No owner (a class default object, typically read by hotbar or tooltip UI): the raw modifier
+		// values summed per attribute, Conditions unresolved. An attribute-, custom- or externally-sourced
+		// value has nothing to resolve against here and contributes 0 (GetValue would log an Error for
+		// it on every poll).
+		for (const FGMCAttributeModifier& Modifier : AbilityCost->GetDefaultObject<UGMCAbilityEffect>()->EffectData.Modifiers)
+		{
+			float& Sum = CostMap.FindOrAdd(Modifier.AttributeTag);
+			if (Modifier.ValueType == EGMCAttributeModifierType::AMT_Value)
+			{
+				Sum += Modifier.GetValue();
+			}
+		}
+		return CostMap;
+	}
+
+	for (const TPair<FGameplayTag, float>& Projected : ProjectAbilityCost(1.f))
+	{
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(Projected.Key);
+		CostMap.Add(Projected.Key, Projected.Value - (Attribute ? Attribute->Value : 0.f));
 	}
 	return CostMap;
 }
@@ -506,6 +629,8 @@ void UGMCAbility::FinishEndAbility() {
 
 	// Read before the state is written below: a dead-born instance (refused in PreBeginAbility) never
 	// began, and its end effects are for an ability that ran, not for a refused press.
+	// Same predicate as CancelAbility's capture; both read before any state write, so the cancel hooks
+	// and this gate always agree.
 	const bool bHadBegun = AbilityState != EAbilityState::PreExecution;
 
 	// [AbilityCut] probe: an ability ending while it still has unfinished tasks is the
@@ -645,12 +770,14 @@ void UGMCAbility::DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType 
 	DeclaredEffect.Add(OutEffectHandle, EffectType);
 
 	// Cache the tag now, while the id still resolves. FinishEndAbility needs it to reach the effect
-	// after a replay renumbered it.
+	// after a replay renumbered it. A live effect only: a completed one (Instant, or already removed
+	// by a listener) has nothing left to end, and a cached tag for it would let the [EffectLeak] tag
+	// fallback at ability end remove an unrelated live effect sharing the tag.
 	if (OwnerAbilityComponent)
 	{
 		if (const UGMCAbilityEffect* Effect = OwnerAbilityComponent->GetEffectById(OutEffectHandle))
 		{
-			if (Effect->EffectData.EffectTag.IsValid())
+			if (!Effect->bCompleted && Effect->EffectData.EffectTag.IsValid())
 			{
 				DeclaredEffectTags.Add(OutEffectHandle, Effect->EffectData.EffectTag);
 			}
@@ -663,6 +790,15 @@ bool UGMCAbility::PreBeginAbility()
 	if (IsOnCooldown())
 	{
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cooldown"), *AbilityTag.ToString());
+		CancelAbility();
+		return false;
+	}
+
+	// An AbilityCost the owner cannot pay refuses the activation here, before any event of the ability
+	// runs; CommitAbilityCost is still the ability's own call.
+	if (!CanAffordAbilityCost())
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped By Cost"), *AbilityTag.ToString());
 		CancelAbility();
 		return false;
 	}
@@ -721,17 +857,18 @@ bool UGMCAbility::PreBeginAbility()
 
 void UGMCAbility::BeginAbility()
 {
+	// End-other-on-begin query (misnamed BlockOtherAbilitiesQuery): cancel matching abilities.
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{
-		FGameplayTagQuery BlockQuery = BlockOtherAbilitiesQuery;
+		FGameplayTagQuery EndQuery = BlockOtherAbilitiesQuery;
 		for (auto& ActiveAbility : OwnerAbilityComponent->GetActiveAbilities())
 		{
 			const FGameplayTagContainer& ActiveAbilityTags = ActiveAbility.Value->AbilityDefinition;
 
-			if (BlockQuery.Matches(ActiveAbilityTags))
+			if (EndQuery.Matches(ActiveAbilityTags))
 			{
 				ActiveAbility.Value->SetPendingCancel();
-				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s blocked ability %s (matching query)"),
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s cancelled ability %s (matching query)"),
 					*AbilityTag.ToString(), *ActiveAbility.Value->AbilityTag.ToString());
 			}
 		}
@@ -883,5 +1020,5 @@ void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
 {
 	BlockOtherAbilitiesQuery = NewQuery;
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("BlockOtherAbilityByDefinitionQuery modified: %s"), *NewQuery.GetDescription());
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("EndOtherAbilitiesOnBegin query modified: %s"), *NewQuery.GetDescription());
 }

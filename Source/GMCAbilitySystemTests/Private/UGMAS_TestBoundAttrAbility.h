@@ -1,6 +1,6 @@
 // Helper ability for the task and attribute specs: BeginAbility applies an instant
 // +StaminaMod to GMAS.Test.Attribute.Stamina (a bound attribute) through the inner apply
-// path and ends at once. StaminaMod is read from the CDO so a spec can override it.
+// path and ends at once. A spec overrides StaminaMod on the CDO; the instance inherits it.
 
 #pragma once
 
@@ -23,8 +23,8 @@ public:
 		bActivateOnMovementTick = true;
 	}
 
-	// Flat add applied to Stamina in BeginAbility. Read from CDO so tests can
-	// override via GetMutableDefault<UGMAS_TestBoundAttrAbility>()->StaminaMod.
+	// Flat add applied to Stamina in BeginAbility. Tests override it via
+	// GetMutableDefault<UGMAS_TestBoundAttrAbility>()->StaminaMod; each instance copies the CDO.
 	UPROPERTY(EditAnywhere, Category = "Test")
 	float StaminaMod = 25.f;
 

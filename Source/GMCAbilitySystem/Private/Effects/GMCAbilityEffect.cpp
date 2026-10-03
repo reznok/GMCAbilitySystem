@@ -69,6 +69,13 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 }
 
+void UGMCAbilityEffect::InitializeForQuery(UGMC_AbilitySystemComponent* InOwner)
+{
+	OwnerAbilityComponent = InOwner;
+	EffectData.OwnerAbilityComponent = InOwner;
+	EffectData.SourceAbilityComponent = InOwner;
+}
+
 
 void UGMCAbilityEffect::StartEffect()
 {

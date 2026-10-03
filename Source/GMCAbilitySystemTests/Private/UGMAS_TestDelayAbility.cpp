@@ -4,10 +4,11 @@
 void UGMAS_TestDelayAbility::BeginAbility()
 {
 	Super::BeginAbility();
+	if (AbilityState == EAbilityState::Ended) return;   // cancelled inside Super: no task on an ended ability
 
-	// Read DelayTime from the CDO so per-test writes to the CDO are always
-	// picked up, even if TryActivateAbility instantiates from the CDO.
-	const float Delay = GetDefault<UGMAS_TestDelayAbility>()->DelayTime;
+	// The instance's own DelayTime: TryActivateAbility copies every CDO property, so a per-test
+	// write to the CDO reaches it.
+	const float Delay = DelayTime;
 
 	UGMCAbilityTask_WaitDelay* Task = UGMCAbilityTask_WaitDelay::WaitDelay(this, Delay);
 	Task->Completed.AddDynamic(this, &UGMAS_TestDelayAbility::OnDelayCompleted);

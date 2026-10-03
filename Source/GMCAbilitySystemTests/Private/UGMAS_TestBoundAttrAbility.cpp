@@ -10,10 +10,11 @@ static const FName StaminaTagName(TEXT("GMAS.Test.Attribute.Stamina"));
 void UGMAS_TestBoundAttrAbility::BeginAbility()
 {
 	Super::BeginAbility();
+	if (AbilityState == EAbilityState::Ended) return;   // cancelled inside Super: no effect from an ended ability
 
-	// Read StaminaMod from the CDO so per-test overrides are always honoured,
-	// even when TryActivateAbility instantiates a fresh object from the CDO.
-	const float Mod = GetDefault<UGMAS_TestBoundAttrAbility>()->StaminaMod;
+	// The instance's own StaminaMod: TryActivateAbility copies every CDO property, so a per-test
+	// override on the CDO reaches it.
+	const float Mod = StaminaMod;
 
 	// Build an instant modifier: +Mod to GMAS.Test.Attribute.Stamina.
 	// EGMASEffectType::Instant with bNegateEffectAtEnd=false → writes directly

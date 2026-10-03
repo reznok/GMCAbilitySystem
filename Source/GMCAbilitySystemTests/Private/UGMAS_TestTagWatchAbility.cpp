@@ -3,15 +3,15 @@
 void UGMAS_TestTagWatchAbility::BeginAbility()
 {
 	Super::BeginAbility();
+	if (AbilityState == EAbilityState::Ended) return;   // cancelled inside Super: no task on an ended ability
 
-	const UGMAS_TestTagWatchAbility* CDO = GetDefault<UGMAS_TestTagWatchAbility>();
-
+	// The instance's own WatchTag / WatchType: TryActivateAbility copies every CDO property.
 	FGameplayTagContainer WatchContainer;
-	WatchContainer.AddTag(CDO->WatchTag);
+	WatchContainer.AddTag(WatchTag);
 
 	UGMCAbilityTask_WaitForGameplayTagChange* Task =
 		UGMCAbilityTask_WaitForGameplayTagChange::WaitForGameplayTagChange(
-			this, WatchContainer, CDO->WatchType);
+			this, WatchContainer, WatchType);
 
 	Task->Completed.AddDynamic(this, &UGMAS_TestTagWatchAbility::OnTagChanged);
 	Task->ReadyForActivation();

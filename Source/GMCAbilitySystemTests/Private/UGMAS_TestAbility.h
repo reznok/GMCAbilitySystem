@@ -24,7 +24,8 @@ public:
 	UPROPERTY() int EndAbilityEventCount = 0;
 	UPROPERTY() int CancelAbilityEventCount = 0;
 
-	// CDO switch: commit AbilityCost in BeginAbilityEvent; staged for the cost spec (next task); unused here.
+	// Commit AbilityCost in BeginAbilityEvent. Set on the CDO by the cost specs; read on the instance,
+	// which receives every CDO property at activation.
 	UPROPERTY() bool bCommitCostOnBegin = false;
 
 	virtual void BeginAbilityEvent_Implementation() override;

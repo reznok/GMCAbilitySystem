@@ -265,6 +265,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void InitializeEffect(FGMCAbilityEffectData InitializationData);
 
+	// Wire the owner without starting the effect: for read-only queries of its modifiers (cost
+	// preview, affordability). Never apply an effect initialized this way. The query effect has no
+	// EffectID and is never started, so an AMT_Custom calculator that reads effect state may project a
+	// different value than the real apply.
+	void InitializeForQuery(UGMC_AbilitySystemComponent* InOwner);
+
 
 	/**
 	 * Called when an attribute modifier is applied.

@@ -14,7 +14,7 @@ class UGMAS_TestDelayAbility : public UGMCAbility
 
 public:
 	// How long to wait before firing Completed and ending the ability.
-	// Configured per-test by writing to the CDO before activation.
+	// Configured per-test by writing to the CDO before activation; each instance copies it.
 	UPROPERTY(EditAnywhere, Category = "Test")
 	float DelayTime = 0.2f;
 
