@@ -8,33 +8,33 @@ Names verified against GMC 2.3.x. The variables are defined at the top of the `.
 |---|---|---|
 | `gmc.StatNetMovementValues` | 0–3 | Draws the live movement values (last input vector, linear and angular velocity, actor location and rotation, control rotation) of the pawns with the chosen role on screen: 1 authority, 2 autonomous proxy, 3 simulated proxy. |
 | `gmc.StatNetContextValues` | 0–3 | Same role selector, but for the networking context: net role, world time, move history size, pending client and server moves, whether a simulated pawn is extrapolating. |
-| `gmc.ShowNetRole` | 0/1 | Floats each pawn's net role above it. First thing to turn on when a listen-server or PIE session behaves differently per machine. |
-| `gmc.ShowSimulationDelay` | 0/1 | Floats each pawn's current simulation (smoothing) delay above it: how far in the past a simulated proxy is displayed. |
-| `gmc.ShowClientCorrections` | 0/1 | On the client, draws the autonomous proxy's state before (red) and after (green) every correction. Frequent red/green pairs mean the predicted logic is not deterministic. |
-| `gmc.ShowClientErrors` | 0/1 | On the server, draws the state a remote client reported (red) against the state the server computed (green) for its pawns. |
-| `gmc.LogClientReplay` | 0/1 | Logs detailed information whenever a client replay happens (state before and after, the moves re-executed). |
-| `gmc.LogSmoothing` | 0/1 | Logs all data involved in smoothing simulated pawns (very chatty). |
-| `gmc.LogSmoothingContext` | 0/1 | Logs the context information around smoothing without the per-step data. |
-| `gmc.LogClientMoveTrace` | 0/1 | Traces one move's life: created on the client, sent, executed on the server, acknowledged back. Use it to prove whether a move reached the server at all. |
-| `gmc.LogNumExecutedRemoteMoves` | 0/1 | Logs, per frame, how many client moves the server executed. Bursts after a latency spike are normal; a steady 0 means the client is not sending. |
-| `gmc.LogNumPendingReliableClientPackets` | 0/1 | Logs how many reliable client packets still await acknowledgement each frame; relates to `UseUnreliableClientMovesThreshold`. |
-| `gmc.LogDynamicBufferTime` | 0/1 | Logs the dynamic buffer time computed for adaptive buffered interpolation, when that smoothing mode is active. |
+| `gmc.ShowNetRole` | 0/1 | Labels every pawn in the world with the role it has on *this* machine. First thing to turn on when a listen-server or PIE session behaves differently per machine. |
+| `gmc.ShowSimulationDelay` | 0/1 | Labels each pawn with how far behind the newest received state it is being drawn (its smoothing delay). Large or oscillating numbers explain "laggy" proxies. |
+| `gmc.ShowClientCorrections` | 0/1 | Marks every correction the local pawn receives: where the client had predicted it (red) against where the server put it (green). Frequent pairs mean the predicted logic is not deterministic. |
+| `gmc.ShowClientErrors` | 0/1 | The server-side mirror: for each remote pawn, where the client claimed it was (red) against where the server computed it (green). |
+| `gmc.LogClientReplay` | 0/1 | Turn on while reproducing a snap: each replay then writes what the client had, what the server sent and which history entries were re-run, so the bound value that started it can be named. |
+| `gmc.LogSmoothing` | 0/1 | Dumps every number the smoothing of simulated pawns works with, every frame. A firehose; use for a few seconds. |
+| `gmc.LogSmoothingContext` | 0/1 | The surrounding picture (which states and times smoothing chose) without the per-frame dump; the usual first step for a jittery proxy. |
+| `gmc.LogClientMoveTrace` | 0/1 | Follows individual moves around the round trip (built on the client, sent, run on the server, answered) to prove whether moves arrive at all and how late. |
+| `gmc.LogNumExecutedRemoteMoves` | 0/1 | Per-frame count of received client moves the server ran. Bursts after a latency spike are normal; a steady zero means nothing is arriving. |
+| `gmc.LogNumPendingReliableClientPackets` | 0/1 | Per-frame count of the client's move packets the server has not acknowledged yet. A climbing number is congestion; past `UseUnreliableClientMovesThreshold` GMC switches moves to unreliable sends. |
+| `gmc.LogDynamicBufferTime` | 0/1 | Shows how the adaptive smoothing mode resizes its buffer over time; only meaningful with `AdaptiveBufferedInterpolation`. |
 | `gmc.LogForcedNetUpdates` | 0/1 | Logs each time the server forces a net update to clients, with the reason: a client correction, a simulated location moving past the update threshold, a bound value whose simulation setting demands it (`PeriodicAndOnChange_*`), or a custom trigger. |
-| `gmc.LogRollbackTimeValidation` | 0/1 | Logs whether the server accepted or declined the rollback timings a client attached to its moves. |
+| `gmc.LogRollbackTimeValidation` | 0/1 | Reports each decision the server makes about the rollback timing a client attached to a move: taken as is, or replaced by the server's own estimate. |
 | `gmc.ForceFullSyncDataValidation` | 0/1 | Makes the comparison of client and server states continue past the first deviating bound value, so the log names *every* value that differs instead of only the first. Turn on when hunting an unknown desync. |
 
 ## Time and ping (`Source/GMCCore/Private/Actors/GMCPlayerController.cpp`)
 
 | Variable | Values | What it does |
 |---|---|---|
-| `gmc.StatPing` | 0/1 | Shows the local client's ping to the server on screen. Clients only. |
-| `gmc.LogNetWorldTime` | 0/1 | Logs the world time on server and client together with a UTC stamp, so the two logs can be lined up to check the clock sync (`AGMC_WorldTimeReplicator`). |
+| `gmc.StatPing` | 0/1 | On-screen round-trip time from this client to the server; does nothing on the server. |
+| `gmc.LogNetWorldTime` | 0/1 | Writes each machine's world clock next to a wall-clock (UTC) stamp, so a server log and a client log can be aligned and the offset between their clocks measured. The way to confirm `AGMC_WorldTimeReplicator` is doing its job. |
 
 ## Movement visualization (`Source/GMCCore/Private/Components/GMCMovementUtilityComponent.cpp`)
 
 | Variable | Values | What it does |
 |---|---|---|
-| `gmc.ShowMovementVectors` | 0/1 | Draws velocity and acceleration vectors for every pawn. |
+| `gmc.ShowMovementVectors` | 0/1 | Draws each pawn's velocity and acceleration as arrows in the world. |
 
 ## Organic movement only (`Source/GMCCore/Private/Components/GMCOrganicMovementComponent.cpp`)
 
@@ -43,9 +43,9 @@ Only meaningful for pawns whose movement component derives from `UGMC_OrganicMov
 | Variable | Values | What it does |
 |---|---|---|
 | `gmc.StatOrganicMovementValues` | 0/1 | On-screen readout of the organic component's motion values: movement mode, raw and processed input vector, move delta time, total/XY/Z speed, location, rotation, control rotation, velocity, acceleration, force. |
-| `gmc.LogOrganicMovementValues` | 0/1 | The same values written to the log. |
-| `gmc.ShowFloorSweep` | 0/1 | Draws the floor sweep result (hit location, normal). |
-| `gmc.VisualizeBaseEqualization` | 0/1 | Draws the actor base when base equalization applies (moving platforms). |
+| `gmc.LogOrganicMovementValues` | 0/1 | The same values written to the log instead of the screen. |
+| `gmc.ShowFloorSweep` | 0/1 | Draws what the ground probe under the pawn hit. |
+| `gmc.VisualizeBaseEqualization` | 0/1 | Draws the surface the pawn stands on as the component treats it once base equalization applies (moving platforms). |
 
 ## GoldSrc movement only (`Source/GMCCore/Private/Components/GMCGoldSrcMovementComponent.cpp`)
 
@@ -53,8 +53,8 @@ Cheat variables (`ECVF_Cheat`), server side, for the GoldSrc-style component.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `gmc.FlyMode` | 0/1 | Removes gravity from the pawn. |
-| `gmc.NoClipMode` | 0/1 | Removes the pawn's collision and allows free movement in every direction. |
+| `gmc.FlyMode` | 0/1 | Switches gravity off for the pawn. |
+| `gmc.NoClipMode` | 0/1 | Turns the pawn into a ghost: collision off, free flight along every axis. |
 
 ## Log categories (`Source/GMCCore/Public/Utility/GMCLogCategory.h`)
 
