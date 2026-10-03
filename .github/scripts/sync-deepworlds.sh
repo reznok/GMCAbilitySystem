@@ -149,7 +149,7 @@ while :; do
 		log "push rejected; refetching $TARGET_BRANCH and retrying"
 		attempt=$((attempt + 1))
 		git fetch --quiet origin "$TARGET_BRANCH"
-		git reset --quiet --hard "origin/$TARGET_BRANCH"
+		git reset --quiet --hard FETCH_HEAD
 		continue
 	fi
 

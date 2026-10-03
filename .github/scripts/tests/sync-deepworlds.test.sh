@@ -170,5 +170,19 @@ assert_contains "$(git -C "$d/canonical.git" log -1 --format=%s dev)" "Sync Deep
 assert_contains "$(cat "$GH_LOG")" "pr close 9 --comment" "T6 closes the stale PR after the clean merge"
 assert_eq "$(sync_branch_sha "$d")" "" "T6 deletes the stale sync branch"
 
+# ---- T7: a real non-fast-forward race: canonical dev moves after work was cloned,
+# so the first push is rejected; the retry refetches dev and merges from the new tip
+: >"$GH_LOG"
+d=$(make_fixture t7)
+fork_edit "$d" file.txt 's/^base$/base fork/' "fork: file"
+git clone -q -b dev "$d/canonical.git" "$d/other"
+(cd "$d/other" && sed -i 's/^line 10$/line 10 other/' shared.txt && git commit -qam "other: line 10" && git push -q origin dev)
+moved=$(git -C "$d/canonical.git" rev-parse dev)
+out=$(run_sync "$d")
+assert_contains "$out" "push rejected; refetching" "T7 first push rejected (non-fast-forward)"
+assert_contains "$out" "attempt 2" "T7 merged on the second attempt"
+assert_eq "$(git -C "$d/canonical.git" merge-base --is-ancestor "$moved" dev && echo yes)" "yes" "T7 canonical dev keeps the concurrent commit"
+assert_contains "$(git -C "$d/canonical.git" log -1 --format=%s dev)" "Sync DeepWorlds dev: 1 commits" "T7 canonical dev ends on the sync merge"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

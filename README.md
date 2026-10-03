@@ -20,3 +20,5 @@
   See the <a href="https://github.com/reznok/GMCAbilitySystem/wiki">Wiki</a> for more details
     <br> 
 </p>
+
+<p align="center"><code>dev</code> is the unstable integration branch; <code>main</code> is the release branch. See <a href="docs/BRANCHING.md">docs/BRANCHING.md</a>.</p>
