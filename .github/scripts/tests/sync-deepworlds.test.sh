@@ -110,5 +110,43 @@ assert_contains "$body" "fork: line 20" "T3 merge body lists fork commits"
 assert_not_contains "$(cat "$GH_LOG")" "pr create" "T3 opens no PR"
 assert_eq "$(sync_branch_sha "$d")" "" "T3 leaves no sync branch"
 
+# ---- T4: conflict, dry run (both sides edit line 1)
+: >"$GH_LOG"
+d=$(make_fixture t4)
+local_edit "$d" shared.txt 's/^line 1$/line 1 local/' "local: line 1"
+fork_edit "$d" shared.txt 's/^line 1$/line 1 fork/' "fork: line 1"
+out=$(run_sync "$d" DRY_RUN=true)
+assert_contains "$out" "conflict in 1 files" "T4 dry run reports the conflict"
+assert_contains "$out" "- shared.txt" "T4 lists the conflicting file"
+assert_eq "$(git -C "$d/work" status --porcelain)" "" "T4 tree clean after abort"
+assert_eq "$(sync_branch_sha "$d")" "" "T4 dry run pushes no sync branch"
+
+# ---- T5a: conflict, live: branch pushed, PR created
+: >"$GH_LOG"
+out=$(run_sync "$d")
+assert_contains "$out" "conflicts in 1 files; pull request updated" "T5a reports the PR"
+forktip=$(git -C "$d/fork.git" rev-parse dev)
+assert_eq "$(sync_branch_sha "$d")" "$forktip" "T5a sync branch equals the fork tip"
+ghlog=$(cat "$GH_LOG")
+assert_contains "$ghlog" "label create deepworlds-sync" "T5a ensures the label"
+assert_contains "$ghlog" "pr create --head sync/deepworlds --base dev --title Sync DeepWorlds dev: 1 commits, conflicts in 1 files" "T5a creates the PR with the title"
+assert_contains "$ghlog" "## Conflicting files" "T5a PR body has the conflict section"
+assert_contains "$ghlog" "git merge --no-ff origin/sync/deepworlds" "T5a PR body has the resolve recipe"
+
+# ---- T5b: conflict persists and a PR exists: edited, not created
+: >"$GH_LOG"
+out=$(run_sync "$d" GH_PR_LIST_JSON='[{"number":7}]')
+ghlog=$(cat "$GH_LOG")
+assert_contains "$ghlog" "pr edit 7 --title" "T5b edits the existing PR"
+assert_not_contains "$ghlog" "pr create" "T5b creates no second PR"
+
+# ---- T5c: resolved by hand and pushed: the next run closes the PR and deletes the branch
+(cd "$d/work" && git merge -q --no-ff -X ours -m "resolve" "$forktip" && git push -q origin dev)
+: >"$GH_LOG"
+out=$(run_sync "$d" GH_PR_LIST_JSON='[{"number":7}]')
+assert_contains "$out" "up to date" "T5c up to date after the manual resolve"
+assert_contains "$(cat "$GH_LOG")" "pr close 7 --comment" "T5c closes the PR"
+assert_eq "$(sync_branch_sha "$d")" "" "T5c deletes the sync branch"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

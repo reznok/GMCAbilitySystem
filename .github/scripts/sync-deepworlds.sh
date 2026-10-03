@@ -79,6 +79,30 @@ report_range() { # $1 = heading
 	report "$overlap_md"
 }
 
+pr_body() {
+	cat <<EOF
+Automated merge of $(upstream_label) \`$UPSTREAM_BRANCH\` ($(short "$base")..$(short "$upstream")) into \`$TARGET_BRANCH\` failed.
+
+## Conflicting files
+$(printf '%s\n' "$conflicts" | sed 's/^/- /')
+
+## Overlap with local changes since $(short "$base")
+$overlap_md
+
+## Commits
+$commits_md
+
+## Resolve locally
+    git fetch origin $TARGET_BRANCH $SYNC_BRANCH
+    git checkout $TARGET_BRANCH && git pull --ff-only
+    git merge --no-ff origin/$SYNC_BRANCH
+    # resolve conflicts, build locally, then
+    git push origin $TARGET_BRANCH
+
+Do not merge this pull request on GitHub: it carries the unresolved fork tip. The next scheduled run closes it and deletes \`$SYNC_BRANCH\` once \`$TARGET_BRANCH\` contains $(short "$upstream").
+EOF
+}
+
 # ---- preconditions
 current=$(git rev-parse --abbrev-ref HEAD)
 [ "$current" = "$TARGET_BRANCH" ] || die "on '$current'; check out '$TARGET_BRANCH' first"
@@ -117,4 +141,29 @@ if merge_out=$(git merge --no-ff --no-edit -m "$(merge_message)" "$upstream" 2>&
 	exit 0
 fi
 
-die "conflict path not implemented yet: $merge_out"
+# ---- conflict
+conflicts=$(git diff --name-only --diff-filter=U)
+git merge --abort 2>/dev/null || true
+[ -n "$conflicts" ] || die "merge failed without conflicts: $merge_out"
+conflict_count=$(printf '%s\n' "$conflicts" | grep -c .)
+conflicts_md=$(printf '%s\n' "$conflicts" | sed 's/^/- /')
+
+if is_dry; then
+	report "## Sync DeepWorlds: dry run, $count commits conflict in $conflict_count files"
+	report "$conflicts_md"
+	exit 0
+fi
+
+git push --quiet --force origin "$upstream:refs/heads/$SYNC_BRANCH"
+gh label create "$LABEL" --color C5DEF5 --description "Automated fork sync" --force >/dev/null
+title="Sync DeepWorlds $UPSTREAM_BRANCH: $count commits, conflicts in $conflict_count files"
+body=$(pr_body)
+number=$(open_pr_number)
+if [ -n "$number" ]; then
+	gh pr edit "$number" --title "$title" --body "$body" >/dev/null
+else
+	gh pr create --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --title "$title" --body "$body" --label "$LABEL" >/dev/null
+fi
+report "## Sync DeepWorlds: conflicts in $conflict_count files; pull request updated"
+report "$conflicts_md"
+exit 0
