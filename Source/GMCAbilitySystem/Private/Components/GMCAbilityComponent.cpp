@@ -1304,7 +1304,7 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 
 void UGMC_AbilitySystemComponent::OnServerOperationForced(FInstancedStruct OperationData)
 {
-	UE_LOG(LogTemp, Warning, TEXT("Forcing Operation On Server"));
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Forcing Operation On Server"));
 	ProcessOperation(OperationData, false, true);
 }
 
@@ -3495,7 +3495,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffectViaOperation(c
 	UGMCAbilityEffect* Effect = DuplicateObject(Operation.EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 	Effect = ApplyAbilityEffect(Effect, EffectData);
 	FString isExecutingMove = GMCMovementComponent->IsExecutingMove() ? TEXT("True") : TEXT("False");
-	UE_LOG(LogTemp, Warning, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s | IsServer: %s"),
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Applied Effect With Action Timer: %f | IsPredTick: %s | IsServer: %s"),
 		ActionTimer, *isExecutingMove, HasAuthority() ? TEXT("True") : TEXT("False"));
 	
 	return Effect;
