@@ -1142,7 +1142,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 				}
 			}
 
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Verbose,
 				TEXT("[AckTrace:Server:GenTick] OpData received from client output: op=%d struct=%s move_ts=%.4f%s"),
 				ClientBase ? ClientBase->OperationID : -1,
 				*ClientStruct->GetName(),
@@ -1159,7 +1159,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 			BoundQueueV2.OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
 		if (SelfBase && SelfBase->OperationID != 0)
 		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Verbose,
 				TEXT("[AckTrace:Client:GenTick] OperationData op=%d struct=%s move_ts=%.4f auth=%d"),
 				SelfBase->OperationID,
 				BoundQueueV2.OperationData.GetScriptStruct() ? *BoundQueueV2.OperationData.GetScriptStruct()->GetName() : TEXT("null"),
@@ -1285,7 +1285,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
 {
-	UE_LOG(LogTemp, Warning, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
 	BoundQueueV2.CacheOperationPayload(OperationID, Operation);
 	BoundQueueV2.ClientQueuedOperations.Add(OperationID);
 }
@@ -2436,7 +2436,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		BoundQueueV2.bInBatchDispatch = false;
 
 		// DIAGNOSTIC: log batch ack write attempt + contents
-		UE_LOG(LogGMCAbilitySystem, Warning,
+		UE_LOG(LogGMCAbilitySystem, Verbose,
 			TEXT("[AckTrace:Client:BatchEnd] auth=%d acked_count=%d ids=[%s]"),
 			HasAuthority() ? 1 : 0, AckedIDs.Num(),
 			*FString::JoinBy(AckedIDs, TEXT(","), [](int32 ID) { return FString::Printf(TEXT("%d"), ID); }));
@@ -2448,7 +2448,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			Ack.AcknowledgedIDs = MoveTemp(AckedIDs);
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2BatchAcknowledgeOperation>(Ack);
 
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Verbose,
 				TEXT("[AckTrace:Client:BatchAckWritten] OperationData now contains BatchAck"));
 			return true;
 		}
@@ -2628,7 +2628,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		const FVector VelBefore = GMCMovementComponent ? GMCMovementComponent->Velocity : FVector::ZeroVector;
 		const float MoveTs = GMCMovementComponent ? GMCMovementComponent->GetMoveTimestamp() : -1.f;
 		const bool bReplaying = GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
-		UE_LOG(LogGMCAbilitySystem, Warning,
+		UE_LOG(LogGMCAbilitySystem, Verbose,
 			TEXT("[ImpulseTrace] op=%d auth=%d replay=%d move_ts=%.4f from_movement_tick=%d vel_before=%s impulse=%s"),
 			OperationID, HasAuthority() ? 1 : 0, bReplaying ? 1 : 0, MoveTs, bFromMovementTick ? 1 : 0,
 			*VelBefore.ToCompactString(), *KBData.Impulse.ToCompactString());
@@ -2636,7 +2636,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		GMCMovementComponent->AddImpulse(KBData.Impulse, KBData.bVelocityChange);
 
 		const FVector VelAfter = GMCMovementComponent ? GMCMovementComponent->Velocity : FVector::ZeroVector;
-		UE_LOG(LogGMCAbilitySystem, Warning,
+		UE_LOG(LogGMCAbilitySystem, Verbose,
 			TEXT("[ImpulseTrace] op=%d auth=%d vel_after=%s"),
 			OperationID, HasAuthority() ? 1 : 0, *VelAfter.ToCompactString());
 
@@ -2646,7 +2646,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 
 			// DIAGNOSTIC: confirm ack was written to OperationData
-			UE_LOG(LogGMCAbilitySystem, Warning,
+			UE_LOG(LogGMCAbilitySystem, Verbose,
 				TEXT("[AckTrace:Client:WroteAck] op=%d wrote Ack to OperationData. struct_now=%s"),
 				OperationID,
 				BoundQueueV2.OperationData.GetScriptStruct() ? *BoundQueueV2.OperationData.GetScriptStruct()->GetName() : TEXT("null"));
@@ -3001,7 +3001,7 @@ void UGMC_AbilitySystemComponent::ServerProcessAcknowledgedOperation(int Operati
 	// DIAGNOSTIC: confirm entry + payload lookup result
 	const bool bHasPayload = BoundQueueV2.HasPayloadByID(OperationID);
 	const bool bHasGrace = BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID);
-	UE_LOG(LogGMCAbilitySystem, Warning,
+	UE_LOG(LogGMCAbilitySystem, Verbose,
 		TEXT("[AckTrace:Server:ProcessAck] op=%d has_payload=%d has_grace=%d fromMove=%d"),
 		OperationID, bHasPayload ? 1 : 0, bHasGrace ? 1 : 0, bFromMovementTick ? 1 : 0);
 

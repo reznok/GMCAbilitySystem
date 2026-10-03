@@ -173,10 +173,10 @@ void UGMCAbility::AncillaryTick(float DeltaTime) {
 				// Neutral wording on purpose: abilities ended externally (cancel-by-tag, effect
 				// removal) legitimately idle task-less — this is coverage info, not an accusation.
 				const FString Diag = GetAbilityCutDiagnostics();
-				UE_LOG(LogGMCAbilitySystem, Warning,
+				UE_LOG(LogGMCAbilitySystem, Verbose,
 					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
 					Now - TasklessSinceTime, *Diag);
-				UE_LOG(LogTemp, Warning,
+				UE_LOG(LogTemp, Verbose,
 					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
 					Now - TasklessSinceTime, *Diag);
 				bTasklessCensusLogged = true;
