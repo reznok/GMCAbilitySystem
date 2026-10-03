@@ -820,13 +820,16 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	Ability->ChainConsumeWindowTags = AbilityCDO->ChainConsumeWindowTags;
 	Ability->CancelAbilitiesWithTag = AbilityCDO->CancelAbilitiesWithTag;
 	Ability->AbilityDefinition      = AbilityCDO->AbilityDefinition;
+	Ability->ApplyEffectOnEnd       = AbilityCDO->ApplyEffectOnEnd;
+	Ability->RemoveEffectOnEnd      = AbilityCDO->RemoveEffectOnEnd;
 
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
 
 	// Only signal "confirmed" to the client if the server-side Execute did NOT bail out
 	// during PreBeginAbility (cooldown, PreExecuteCheck, blocked-by-ability, blocked-by-tag).
-	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs; without this
+	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs; the same holds for an
+	// OnAbilityActivated listener that cancelled the ability it was handed. Without this
 	// gate the client receives RPCConfirmAbilityActivation for an ability the server
 	// just cancelled, sets bServerConfirmed=true, and the Tick-time
 	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
@@ -959,12 +962,16 @@ bool UGMC_AbilitySystemComponent::IsAbilityTagBlocked(const FGameplayTag Ability
 
 
 int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
+	// Snapshot: EndAbility/CancelAbility reach Blueprint listeners that may activate an ability and mutate the map.
+	TArray<UGMCAbility*, TInlineAllocator<8>> Snapshot;
+	ActiveAbilities.GenerateValueArray(Snapshot);
 	int AbilitiesEnded = 0;
-	for (const auto& ActiveAbilityData : ActiveAbilities)
+	for (UGMCAbility* Ability : Snapshot)
 	{
-		if (ActiveAbilityData.Value->AbilityTag.MatchesTag(AbilityTag))
+		if (!Ability || Ability->AbilityState == EAbilityState::Ended) continue;
+		if (Ability->AbilityTag.MatchesTag(AbilityTag))
 		{
-			ActiveAbilityData.Value->EndAbility();
+			Ability->EndAbility();
 			AbilitiesEnded++;
 		}
 	}
@@ -973,12 +980,15 @@ int UGMC_AbilitySystemComponent::EndAbilitiesByTag(FGameplayTag AbilityTag) {
 
 
 int UGMC_AbilitySystemComponent::EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass) {
+	TArray<UGMCAbility*, TInlineAllocator<8>> Snapshot;
+	ActiveAbilities.GenerateValueArray(Snapshot);
 	int AbilitiesEnded = 0;
-	for (const auto& ActiveAbilityData : ActiveAbilities)
+	for (UGMCAbility* Ability : Snapshot)
 	{
-		if (ActiveAbilityData.Value->IsA(AbilityClass))
+		if (!Ability || Ability->AbilityState == EAbilityState::Ended) continue;
+		if (Ability->IsA(AbilityClass))
 		{
-			ActiveAbilityData.Value->EndAbility();
+			Ability->EndAbility();
 			AbilitiesEnded++;
 		}
 	}
@@ -994,15 +1004,53 @@ int UGMC_AbilitySystemComponent::EndAbilitiesByQuery(const FGameplayTagQuery& Qu
 	{
 		if (UGMCAbility* Ability = ActiveAbilityData.Value)
 		{
+			if (Ability->AbilityState == EAbilityState::Ended) continue;   // unpurged: not counted, like the ByTag/ByClass siblings
 			if (Query.Matches(Ability->AbilityDefinition))
 			{
 				Ability->SetPendingEnd();
 				AbilitiesEnded++;
-				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("cancelled ability %s by query"), *Ability->AbilityTag.ToString());
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("ended ability %s by query"), *Ability->AbilityTag.ToString());
 			}
 		}
 	}
 	return AbilitiesEnded;
+}
+
+
+int UGMC_AbilitySystemComponent::CancelAbilitiesByTag(FGameplayTag AbilityTag) {
+	TArray<UGMCAbility*, TInlineAllocator<8>> Snapshot;
+	ActiveAbilities.GenerateValueArray(Snapshot);
+	int AbilitiesCancelled = 0;
+	for (UGMCAbility* Ability : Snapshot)
+	{
+		if (!Ability || Ability->AbilityState == EAbilityState::Ended) continue;
+		if (Ability->AbilityTag.MatchesTag(AbilityTag))
+		{
+			Ability->CancelAbility();
+			AbilitiesCancelled++;
+		}
+	}
+	return AbilitiesCancelled;
+}
+
+
+int UGMC_AbilitySystemComponent::CancelAbilitiesByQuery(const FGameplayTagQuery& Query)
+{
+	int AbilitiesCancelled = 0;
+	for (const auto& ActiveAbilityData : ActiveAbilities)
+	{
+		if (UGMCAbility* Ability = ActiveAbilityData.Value)
+		{
+			if (Ability->AbilityState == EAbilityState::Ended) continue;
+			if (Query.Matches(Ability->AbilityDefinition))
+			{
+				Ability->SetPendingCancel();
+				AbilitiesCancelled++;
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("cancelled ability %s by query"), *Ability->AbilityTag.ToString());
+			}
+		}
+	}
+	return AbilitiesCancelled;
 }
 
 
@@ -1725,7 +1773,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 		if (HasAuthority())
 		{
 			const UGMCAbilityEffect* Ended = ActiveEffects.FindRef(EffectID);
-			if (!(Ended && Ended->EffectData.EffectType == EGMASEffectType::Instant))
+			if (!(Ended && Ended->IsValidLowLevel() && Ended->EffectData.EffectType == EGMASEffectType::Instant))
 			{
 				RPCClientEndEffect(EffectID);
 			}
@@ -1789,16 +1837,22 @@ void UGMC_AbilitySystemComponent::ProcessAttributes(bool bInGenPredictionTick)
 
 void UGMC_AbilitySystemComponent::TickActiveAbilities(float DeltaTime)
 {
-	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	TArray<UGMCAbility*, TInlineAllocator<8>> Snapshot;
+	ActiveAbilities.GenerateValueArray(Snapshot);
+	for (UGMCAbility* Ability : Snapshot)
 	{
-		Ability.Value->Tick(DeltaTime);
+		if (!Ability) continue;
+		Ability->Tick(DeltaTime);
 	}
 }
 
 void UGMC_AbilitySystemComponent::TickAncillaryActiveAbilities(float DeltaTime){
-	for (const TPair<int, UGMCAbility*>& Ability : ActiveAbilities)
+	TArray<UGMCAbility*, TInlineAllocator<8>> Snapshot;
+	ActiveAbilities.GenerateValueArray(Snapshot);
+	for (UGMCAbility* Ability : Snapshot)
 	{
-		Ability.Value->AncillaryTick(DeltaTime);
+		if (!Ability) continue;
+		Ability->AncillaryTick(DeltaTime);
 	}
 }
 
@@ -1890,11 +1944,11 @@ void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int Ability
 		if (LocalAbility && LocalAbility->AbilityState != EAbilityState::Ended)
 		{
 			UE_LOG(LogGMCAbilitySystem, Warning,
-				TEXT("[AbilityCut] Server force-ended ability that was still active locally. %s"),
+				TEXT("[AbilityCut] Server force-ended an ability that was still active locally; cancelled. %s"),
 				*LocalAbility->GetAbilityCutDiagnostics());
 		}
-		ActiveAbilities[AbilityID]->EndAbility();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Ability: %d"), AbilityID);
+		ActiveAbilities[AbilityID]->CancelAbility();
+		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server cancelled ability: %d"), AbilityID);
 	}
 }
 

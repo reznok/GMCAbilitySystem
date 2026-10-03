@@ -116,7 +116,7 @@ void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
 		  AbilitySystemComponent->GetLastReceivedTaskDataAbilityID(),
 		  *Ability->GetAbilityCutDiagnostics());
 		AbilitySystemComponent->OnTaskTimeout.Broadcast(Ability->AbilityTag);
-		Ability->EndAbility();
+		Ability->CancelAbility();
 		EndTask();
 	}
 }

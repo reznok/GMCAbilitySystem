@@ -36,6 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCustomEvent, FGameplayTag, Event
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityCancelled, UGMCAbility*, Ability);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
@@ -490,8 +491,17 @@ public:
 	int EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass);
 	
 	UFUNCTION(BlueprintCallable, DisplayName = "End Abilities (By Definition Query)", Category="GMAS|Abilities")
-	// End all abilities matching query
+	// Flag every ability whose AbilityDefinition matches for a natural end on its next Tick.
 	int EndAbilitiesByQuery(const FGameplayTagQuery& Query);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Cancel Abilities (By Tag)", Category="GMAS|Abilities")
+	// Cancel (abnormal end: no end event, no chain window) every active ability whose AbilityTag
+	// matches; returns the number cancelled. EndAbilitiesByTag is the natural end.
+	int CancelAbilitiesByTag(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Cancel Abilities (By Definition Query)", Category="GMAS|Abilities")
+	// Flag every ability whose AbilityDefinition matches for cancellation on its next Tick.
+	int CancelAbilitiesByQuery(const FGameplayTagQuery& Query);
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances (by tag)", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCountByTag(FGameplayTag AbilityTag);
@@ -705,12 +715,19 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnActiveTagsChanged OnActiveTagsChanged;
 
-	// Called when an ability is successfully activated
+	// Called when an ability is successfully activated. The ability is Initialized (IsActive() true) when
+	// this fires; cancelling it from the handler stops the activation before its cooldown and
+	// BeginAbilityEvent (the cancel hooks fire).
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityActivated OnAbilityActivated;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityEnded OnAbilityEnded;
+
+	// The abnormal-end twin of OnAbilityEnded. Not fired for an activation refused in PreBeginAbility
+	// (the ability never began).
+	UPROPERTY(BlueprintAssignable)
+	FOnAbilityCancelled OnAbilityCancelled;
 
 	// Called when a synced event is executed
 	UPROPERTY(BlueprintAssignable)

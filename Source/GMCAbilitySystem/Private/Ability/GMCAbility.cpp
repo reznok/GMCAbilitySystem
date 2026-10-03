@@ -111,17 +111,15 @@ void UGMCAbility::Tick(float DeltaTime)
 			// diverging AbilityIDs and the confirm RPC targeted an instance we don't have.
 			// Full task dump so the log shows what the prediction was doing when it died.
 			UE_LOG(LogGMCAbilitySystem, Error,
-				TEXT("[AbilityCut] Client removing unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
+				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
 				ServerConfirmTimeout, *GetAbilityCutDiagnostics());
-			EndAbility();
+			CancelAbility();
 			return;
 		}
 	}
 
-	if (bEndPending) {
-		EndAbility();
-		return;
-	}
+	if (bCancelPending) { CancelAbility(); return; }
+	if (bEndPending) { EndAbility(); return; }
 
 	TickTasks(DeltaTime);
 	// A task ending itself mid-pass (or its Completed BP) can have ended the whole ability;
@@ -418,7 +416,7 @@ void UGMCAbility::CancelConflictingAbilities()
 			continue;
 		}
 
-		if (OwnerAbilityComponent->EndAbilitiesByTag(AbilityToCancelTag)) {
+		if (OwnerAbilityComponent->CancelAbilitiesByTag(AbilityToCancelTag)) {
 			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability (tag) %s has been cancelled by (tag) %s"), *AbilityTag.ToString(), *AbilityToCancelTag.ToString());
 		}
 	}
@@ -431,7 +429,7 @@ void UGMCAbility::CancelConflictingAbilities()
 
 			if (EndOtherAbilitiesQuery.Matches(ActiveAbility.Value->AbilityDefinition))
 			{
-				ActiveAbility.Value->SetPendingEnd();
+				ActiveAbility.Value->SetPendingCancel();
 				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s cancelled ability %s (matching definition query)"),
 					*AbilityTag.ToString(), *ActiveAbility.Value->AbilityTag.ToString());
 			}
@@ -448,6 +446,10 @@ void UGMCAbility::ServerConfirm()
 
 void UGMCAbility::SetPendingEnd() {
 	bEndPending = true;
+}
+
+void UGMCAbility::SetPendingCancel() {
+	bCancelPending = true;
 }
 
 
@@ -495,6 +497,16 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 
 
 void UGMCAbility::FinishEndAbility() {
+
+	// Defensive: both callers (EndAbility, CancelAbility) are latched by bEndRequested, so a declared
+	// effect's CancelAbilityOnEnd (or any listener) targeting this ability mid-unwind never gets here;
+	// kept as the backstop that makes "the unwind runs once" true on its own.
+	if (bFinishing) { return; }
+	bFinishing = true;
+
+	// Read before the state is written below: a dead-born instance (refused in PreBeginAbility) never
+	// began, and its end effects are for an ability that ran, not for a refused press.
+	const bool bHadBegun = AbilityState != EAbilityState::PreExecution;
 
 	// [AbilityCut] probe: an ability ending while it still has unfinished tasks is the
 	// fingerprint of an abnormal cut (watchdog kill, confirm timeout, cancel-by-other,
@@ -585,7 +597,8 @@ void UGMCAbility::FinishEndAbility() {
 	// Chain hooks: apply / remove effects when this ability ends. Reuses bInsideGMCTick from the
 	// DeclaredEffect removal block above — Predicted requires being inside a GMC tick or
 	// Standalone, otherwise PredictedQueued is used to defer until the next safe window.
-	if (OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
+	// Skipped for a dead-born instance (bHadBegun above).
+	if (bHadBegun && OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
 	{
 		const EGMCAbilityEffectQueueType ChainQueueType =
 			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
@@ -687,6 +700,18 @@ bool UGMCAbility::PreBeginAbility()
 		return false;
 	}
 
+	// Begun exactly when listeners are told it activated: a listener's CancelAbility() on the ability
+	// it was handed is the cancel of a begun ability (cancel hooks fire) and refuses the activation
+	// here, before the cooldown and BeginAbilityEvent. BeginAbility and every override of it are thus
+	// entered only by an ability that survived its activation broadcast; an override that starts
+	// tasks or declares effects after Super never does so on an Ended instance.
+	AbilityState = EAbilityState::Initialized;
+	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
+	if (AbilityState == EAbilityState::Ended)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped by an OnAbilityActivated listener"), *AbilityTag.ToString());
+		return false;
+	}
 
 	BeginAbility();
 
@@ -696,10 +721,6 @@ bool UGMCAbility::PreBeginAbility()
 
 void UGMCAbility::BeginAbility()
 {
-
-
-	OwnerAbilityComponent->OnAbilityActivated.Broadcast(this, AbilityTag);
-
 	if (!BlockOtherAbilitiesQuery.IsEmpty())
 	{
 		FGameplayTagQuery BlockQuery = BlockOtherAbilitiesQuery;
@@ -709,7 +730,7 @@ void UGMCAbility::BeginAbility()
 
 			if (BlockQuery.Matches(ActiveAbilityTags))
 			{
-				ActiveAbility.Value->SetPendingEnd();
+				ActiveAbility.Value->SetPendingCancel();
 				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability %s blocked ability %s (matching query)"),
 					*AbilityTag.ToString(), *ActiveAbility.Value->AbilityTag.ToString());
 			}
@@ -740,11 +761,12 @@ void UGMCAbility::BeginAbility()
 		CommitAbilityCooldown();
 	}
 
-	// Initialize Ability
-	AbilityState = EAbilityState::Initialized;
-
 	// Cancel Abilities in CancelAbilitiesWithTag container
 	CancelConflictingAbilities();
+	// Defensive: this ability is not in ActiveAbilities yet, so a cancel from inside those hooks can only
+	// come through a reference a listener stored at the activation broadcast. It lands after the
+	// cooldown was committed; the cooldown stays, as for any cancel of a begun ability.
+	if (AbilityState == EAbilityState::Ended) return;
 
 	// Execute BP Event
 	BeginAbilityEvent();
@@ -756,47 +778,67 @@ void UGMCAbility::BeginAbilityEvent_Implementation()
 
 void UGMCAbility::EndAbility()
 {
-	if (AbilityState != EAbilityState::Ended) {
-		// Chain: grant the next stage's window on NATURAL end only —
-		// CancelAbility skips this on purpose (interrupted swings don't
-		// advance a combo).
-		if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
-		{
-			const bool bInsideGMCTick =
-				(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
-				|| OwnerAbilityComponent->IsInAncillaryTick()
-				|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
-			const EGMCAbilityEffectQueueType WindowQueueType =
-				bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+	// bEndRequested: the first end wins. A same-kind re-entry (a declared effect's CancelAbilityOnEnd,
+	// a listener on the chain window effect) is the same end; a cross-kind re-entry (an EndAbility()
+	// during a cancel's unwind, or a CancelAbility() during a natural end) is ignored on purpose, so
+	// exactly one hook set fires. AbilityState only turns Ended once FinishEndAbility returns, so the
+	// state alone cannot tell; the latch is set before anything below can reach a listener.
+	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
+	bEndRequested = true;
 
-			FGMCAbilityEffectData WindowData;
-			WindowData.EffectTag = ChainWindowTag;
-			WindowData.GrantedTags.AddTag(ChainWindowTag);
-			// Persistent (not the default Instant — that ends the same frame
-			// and the tag never survives) with a finite Duration.
-			WindowData.EffectType = EGMASEffectType::Persistent;
-			WindowData.Duration = ChainWindowDuration;
-			WindowData.bUniqueByEffectTag = true; // single instance per tag: a re-grant during an open window is rejected
+	// Chain: grant the next stage's window on NATURAL end only —
+	// CancelAbility skips this on purpose (interrupted swings don't
+	// advance a combo).
+	if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType WindowQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
 
-			int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
-			OwnerAbilityComponent->ApplyAbilityEffect(
-				UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
-		}
+		FGMCAbilityEffectData WindowData;
+		WindowData.EffectTag = ChainWindowTag;
+		WindowData.GrantedTags.AddTag(ChainWindowTag);
+		// Persistent (not the default Instant — that ends the same frame
+		// and the tag never survives) with a finite Duration.
+		WindowData.EffectType = EGMASEffectType::Persistent;
+		WindowData.Duration = ChainWindowDuration;
+		WindowData.bUniqueByEffectTag = true; // single instance per tag: a re-grant during an open window is rejected
 
-		FinishEndAbility();
-		EndAbilityEvent();
-		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);
+		int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
+		OwnerAbilityComponent->ApplyAbilityEffect(
+			UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
 	}
+
+	FinishEndAbility();
+	EndAbilityEvent();
+	if (OwnerAbilityComponent) { OwnerAbilityComponent->OnAbilityEnded.Broadcast(this); }
 }
 
 
 void UGMCAbility::CancelAbility() {
-	if (AbilityState != EAbilityState::Ended) {
-		FinishEndAbility();
+	// Same entry latch as EndAbility: the first end wins, one unwind, one hook set.
+	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
+	bEndRequested = true;
+
+	// An activation refused in PreBeginAbility (cooldown, PreExecuteCheck, blocked) is not an
+	// interruption: the ability never began, so the cancel hooks stay silent for it.
+	const bool bHadBegun = AbilityState != EAbilityState::PreExecution;
+	FinishEndAbility();
+	if (bHadBegun)
+	{
+		CancelAbilityEvent();
+		if (OwnerAbilityComponent) { OwnerAbilityComponent->OnAbilityCancelled.Broadcast(this); }
 	}
 }
 
 void UGMCAbility::EndAbilityEvent_Implementation()
+{
+}
+
+void UGMCAbility::CancelAbilityEvent_Implementation()
 {
 }
 

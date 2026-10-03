@@ -130,12 +130,12 @@ void FGMASTaskSpec::Define()
 			TestEqual("still running past the confirm timeout", Ability->AbilityState, EAbilityState::Initialized);
 		});
 
-		It("an unconfirmed client instance is removed after ServerConfirmTimeout", [this]()
+		It("an unconfirmed client instance is cancelled after ServerConfirmTimeout", [this]()
 		{
 			AbilityComp->bForceAuthorityForTest = false;
 			// Plain match: AddExpectedError treats its pattern as a regex, where "[AbilityCut]" is a
 			// character class and would never match the logged line.
-			AddExpectedErrorPlain(TEXT("[AbilityCut] Client removing unconfirmed ability"), EAutomationExpectedErrorFlags::Contains, 1);
+			AddExpectedErrorPlain(TEXT("[AbilityCut] Client cancelling unconfirmed ability"), EAutomationExpectedErrorFlags::Contains, 1);
 			AddExpectedMessagePlain(TEXT("[AbilityCut] Ability ending with"), ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
 			GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 10.f;
 			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass());

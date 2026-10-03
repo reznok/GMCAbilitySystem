@@ -95,22 +95,36 @@ public:
 	UFUNCTION()
 	virtual bool PreBeginAbility();
 	
+	// Entered only by an ability that survived its activation broadcast (PreBeginAbility sets Initialized,
+	// broadcasts OnAbilityActivated and refuses the activation if a listener cancelled it); a cancel from
+	// inside CancelConflictingAbilities / BeginAbilityEvent is still possible, so overrides that add work
+	// after Super may check AbilityState.
 	UFUNCTION()
 	virtual void BeginAbility();
-	
+
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Begin Ability", Keywords = "BeginPlay"), Category="GMCAbilitySystem|Ability")
 	void BeginAbilityEvent();
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void EndAbility();
 
-	/** End an ability without triggering the EndAbilityEvent.
-	 * This is useful for abilities that need to end immediately without any additional logic, usual for dead born abilities. */
+	/** The abnormal end: FinishEndAbility (tasks ended, declared effects removed, chain hooks
+	 * ApplyEffectOnEnd / RemoveEffectOnEnd run), then CancelAbilityEvent and OnAbilityCancelled.
+	 * No EndAbilityEvent, no OnAbilityEnded, no chain window; CancelAbilityEvent and
+	 * OnAbilityCancelled fire instead. Used by every interruption: confirm timeout, server
+	 * force-end, task watchdog, CancelAbilitiesWithTag, an effect's CancelAbilityOn*,
+	 * EndAbilityOn*Query and EndOtherAbilitiesQuery. EndAbility is for an ability that completed. */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
 	virtual void CancelAbility();
 
 	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="End Ability"), Category="GMCAbilitySystem|Ability")
 	void EndAbilityEvent();
+
+	/** Fired by CancelAbility after FinishEndAbility: the abnormal-end hook (stop loops, hide cosmetics).
+	 * EndAbilityEvent is the natural-end hook; an ability that must clean up on both paths implements both.
+	 * Not fired for an activation refused in PreBeginAbility (the ability never began). */
+	UFUNCTION(BlueprintNativeEvent, meta=(DisplayName="Cancel Ability"), Category="GMCAbilitySystem|Ability")
+	void CancelAbilityEvent();
 
 	UFUNCTION(BlueprintPure, Category="GMCAbilitySystem|Ability")
 	AActor* GetOwnerActor() const;
@@ -287,12 +301,12 @@ public:
 	 * This method performs the cancellation of abilities on the owner ability component depending on the tags specified in
 	 * `CancelAbilitiesWithTag` and `EndOtherAbilitiesQuery`. It also prevents an ability from unintentionally canceling itself.
 	 *
-	 * Abilities are checked and canceled as follows:
+	 * Abilities are checked and cancelled (abnormal end: no end event, no chain window) as follows:
 	 * - Each tag in `CancelAbilitiesWithTag` is evaluated against the current ability tag (`AbilityTag`). If the tag matches,
 	 *   the current ability is skipped.
-	 * - Calls `EndAbilitiesByTag` on the owner ability component for abilities matching a tag in `CancelAbilitiesWithTag`.
+	 * - Calls `CancelAbilitiesByTag` on the owner ability component for abilities matching a tag in `CancelAbilitiesWithTag`.
 	 * - Iterates through the active abilities in the owner ability component and checks if they match the query in
-	 *   `EndOtherAbilitiesQuery`. If a match is found, those abilities are set to pending end.
+	 *   `EndOtherAbilitiesQuery`. If a match is found, those abilities are set to pending cancel (cancelled on their next Tick).
 	 *
 	 */
 	virtual void CancelConflictingAbilities();
@@ -309,7 +323,12 @@ public:
 
 	UFUNCTION()
 	void SetPendingEnd();
-	
+
+	// Cancel on the next Tick (same deferral as SetPendingEnd, abnormal end); takes precedence over a
+	// pending natural end in the same tick.
+	UFUNCTION()
+	void SetPendingCancel();
+
 	// --------------------------------------
 	//	IGameplayTaskOwnerInterface
 	// --------------------------------------	
@@ -343,6 +362,15 @@ private:
 	bool bServerConfirmed = false;
 
 	bool bEndPending = false;
+	bool bCancelPending = false;
+
+	// Entry latch shared by EndAbility and CancelAbility, set for good at the top of the first call: the
+	// first end wins, and exactly one hook set (end or cancel) fires for an ability.
+	bool bEndRequested = false;
+
+	// Unwind guard, set for good once FinishEndAbility starts. Defensive: both callers are latched by
+	// bEndRequested, so it cannot trip today; kept as the backstop for "the unwind runs once".
+	bool bFinishing = false;
 
 	// [TaskDiag] census state (server-side diagnostics only, wall-clock): when this ability was
 	// first observed Active with no live task (0 = has live tasks / not yet observed), and a
@@ -390,7 +418,7 @@ public:
 	FGameplayTagQuery ActivationQuery;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Cancel Ability via Definition Query"))
-	// End Abilities via Definition
+	// Cancel (abnormal end) every active ability whose AbilityDefinition matches when this ability begins
 	FGameplayTagQuery EndOtherAbilitiesQuery;
 
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(DisplayName="Block Other Ability via Definition Query"))

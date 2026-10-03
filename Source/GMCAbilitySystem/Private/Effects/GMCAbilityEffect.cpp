@@ -603,7 +603,7 @@ void UGMCAbilityEffect::EndActiveAbilitiesFromOwner(const FGameplayTagContainer&
 	
 	for (const FGameplayTag Tag : TagContainer)
 	{
-		OwnerAbilityComponent->EndAbilitiesByTag(Tag);
+		OwnerAbilityComponent->CancelAbilitiesByTag(Tag);
 	}
 }
 
@@ -646,7 +646,7 @@ void UGMCAbilityEffect::EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery En
 
 	if (EndAbilityOnActivationViaDefinitionQuery.IsEmpty()) return;
 
-	int NumCancelled = OwnerAbilityComponent->EndAbilitiesByQuery(EndAbilityOnActivationViaDefinitionQuery);
+	int NumCancelled = OwnerAbilityComponent->CancelAbilitiesByQuery(EndAbilityOnActivationViaDefinitionQuery);
 
 	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Effect %s cancelled %d ability(ies) via EffectDefinition query."),
 		*EffectData.EffectTag.ToString(), NumCancelled);

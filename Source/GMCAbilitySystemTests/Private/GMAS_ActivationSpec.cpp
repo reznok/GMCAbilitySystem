@@ -375,7 +375,7 @@ void FGMASActivationSpec::Define()
 
 			AbilityComp->TryActivateAbility(UGMAS_TestAbilityB::StaticClass());
 
-			// B's CancelConflictingAbilities called EndAbilitiesByTag(AbilityTagA) → A ended.
+			// B's CancelConflictingAbilities called CancelAbilitiesByTag(AbilityTagA) → A cancelled.
 			TestEqual("A cancelled after B activates", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 0);
 			TestEqual("B active", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbilityB::StaticClass()), 1);
 		});

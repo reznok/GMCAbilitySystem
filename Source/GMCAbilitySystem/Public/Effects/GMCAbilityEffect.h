@@ -175,11 +175,11 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer PauseEffect;
 
-	// On activation, will end ability present in this container
+	// On activation, cancel (abnormal end) the active abilities whose AbilityTag matches
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer CancelAbilityOnActivation;
 
-	// When this effect end, it will end ability present in this container
+	// At end, cancel (abnormal end) the active abilities whose AbilityTag matches
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer CancelAbilityOnEnd;
 
@@ -228,12 +228,12 @@ struct FGMCAbilityEffectData
 	// query must be maintained throughout effect
 	FGameplayTagQuery MustMaintainQuery;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On Activation Via Definition Query"))
-	// end ability on effect activation if definition matches query
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "Cancel Abilities On Activation Via Definition Query"))
+	// cancel (abnormal end) abilities whose definition matches when the effect activates
 	FGameplayTagQuery EndAbilityOnActivationQuery;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "End Ability On End Via Definition Query"))
-	// end ability on effect end if definition matches query
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta = (DisplayName = "Cancel Abilities On End Via Definition Query"))
+	// cancel (abnormal end) abilities whose definition matches when the effect ends
 	FGameplayTagQuery EndAbilityOnEndQuery;
 };
 
@@ -415,6 +415,9 @@ public:
 	UFUNCTION(BlueprintNativeEvent)
 	void StartEffectEvent();
 
+	// May run without a preceding StartEffectEvent: a listener that removes the effect from inside
+	// OnEffectApplied ends it before StartEffectEvent fires. Overrides that free what
+	// StartEffectEvent allocated must guard on it.
 	UFUNCTION(BlueprintNativeEvent)
 	void EndEffectEvent();
 

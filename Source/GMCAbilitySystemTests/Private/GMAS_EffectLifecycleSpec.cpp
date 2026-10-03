@@ -302,7 +302,10 @@ void FGMASEffectLifecycleSpec::Define()
 			FGMCAbilityEffectData Data; Data.EffectType = EGMASEffectType::Persistent; Data.bNegateEffectAtEnd = true; Data.EffectTag = DrainTag;
 			Data.GrantedTags.AddTag(BuffTag); Data.Modifiers.Add(MakeHealthMod(-10.f));
 			UGMCAbilityEffect* Applied = AbilityComp->ApplyAbilityEffect(Effect, Data);
-			TestTrue("returned null or ended", Applied == nullptr || (Applied->bCompleted && Applied->CurrentState == EGMASEffectState::Ended));
+			// The apply had started (OnEffectApplied fired), so the instance is returned, ended.
+			if (!TestNotNull("returned instance", Applied)) { return; }
+			TestTrue("completed", Applied->bCompleted);
+			TestEqual("state Ended", Applied->CurrentState, EGMASEffectState::Ended);
 			TestEqual("applied event fired once", Recorder->AppliedIDs.Num(), 1);
 			TestEqual("removed event fired once", Recorder->RemovedIDs.Num(), 1);
 			TestFalse("granted tag rolled back", AbilityComp->HasActiveTag(BuffTag));
@@ -310,6 +313,22 @@ void FGMASEffectLifecycleSpec::Define()
 			TestEqual("health untouched", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
 			AbilityComp->TickActiveEffects(0.f);
 			TestFalse("id gone after the cleanup pass", AbilityComp->GetActiveEffects().Contains(Effect->EffectData.EffectID));
+		});
+
+		It("an effect that removes itself from its own StartEffectEvent ends with its modifier rolled back and no duplicate events", [this]()
+		{
+			UGMAS_TestCountingEffect* Effect = NewObject<UGMAS_TestCountingEffect>(GetTransientPackage()); Effect->AddToRoot(); Kept.Add(Effect);
+			Effect->bRemoveSelfOnStartEvent = true;
+			FGMCAbilityEffectData Data; Data.EffectType = EGMASEffectType::Persistent; Data.bNegateEffectAtEnd = true; Data.EffectTag = DrainTag;
+			Data.GrantedTags.AddTag(BuffTag); Data.Modifiers.Add(MakeHealthMod(-10.f));
+			UGMCAbilityEffect* Applied = AbilityComp->ApplyAbilityEffect(Effect, Data);
+			if (!TestNotNull("returned instance", Applied)) { return; }
+			TestTrue("completed", Applied->bCompleted);
+			TestEqual("state Ended", Applied->CurrentState, EGMASEffectState::Ended);
+			AbilityComp->ProcessAttributes(true);
+			TestEqual("modifier applied then rolled back", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
+			TestFalse("granted tag rolled back", AbilityComp->HasActiveTag(BuffTag));
+			TestEqual("events: Start then End, once each", Effect->Events, TArray<FString>({TEXT("Start"), TEXT("End")}));
 		});
 	});
 
