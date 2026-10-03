@@ -17,13 +17,18 @@ unset GITHUB_STEP_SUMMARY
 export GH_LOG="$TMP/gh.log"
 export GH_PR_LIST_JSON="[]"
 
-# gh shim: logs every call, answers `pr list` from GH_PR_LIST_JSON.
+# gh shim: logs every call, answers `pr list` from GH_PR_LIST_JSON. With --jq it
+# emulates the script's one query (first PR number, or nothing).
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/gh" <<'SHIM'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_LOG"
 case "${1:-} ${2:-}" in
-	"pr list") printf '%s\n' "$GH_PR_LIST_JSON" ;;
+	"pr list")
+		case " $* " in
+			*" --jq "*) printf '%s\n' "$GH_PR_LIST_JSON" | sed -n 's/.*"number": *\([0-9][0-9]*\).*/\1/p' | head -n 1 ;;
+			*) printf '%s\n' "$GH_PR_LIST_JSON" ;;
+		esac ;;
 	"pr create") echo "https://example.invalid/pull/1" ;;
 esac
 SHIM
@@ -59,6 +64,8 @@ make_fixture() { # name -> path
 	)
 	git clone -q --bare "$d/canonical.git" "$d/fork.git"
 	git clone -q -b dev "$d/canonical.git" "$d/work"
+	# The origin URL exactly as git recorded it (a native path on Windows).
+	git -C "$d/work" remote get-url origin >"$d/canonical.url"
 	git clone -q -b dev "$d/fork.git" "$d/forkwork"
 	printf '%s' "$d"
 }
@@ -71,7 +78,7 @@ local_edit() { # fixture file sed-expr message (committed in work, pushed to can
 run_sync() { # fixture [VAR=value ...] -> stdout+stderr; never fails the harness
 	local d="$1"
 	shift
-	(cd "$d/work" && env UPSTREAM_URL="$d/fork.git" "$@" bash "$SCRIPT" 2>&1) || printf '\n[exit %s]' "$?"
+	(cd "$d/work" && env UPSTREAM_URL="$d/fork.git" CANONICAL_URL="$(cat "$d/canonical.url")" "$@" bash "$SCRIPT" 2>&1) || printf '\n[exit %s]' "$?"
 }
 sync_branch_sha() { git -C "$1/canonical.git" rev-parse --verify -q refs/heads/sync/deepworlds || true; }
 
@@ -183,6 +190,19 @@ assert_contains "$out" "push rejected; refetching" "T7 first push rejected (non-
 assert_contains "$out" "attempt 2" "T7 merged on the second attempt"
 assert_eq "$(git -C "$d/canonical.git" merge-base --is-ancestor "$moved" dev && echo yes)" "yes" "T7 canonical dev keeps the concurrent commit"
 assert_contains "$(git -C "$d/canonical.git" log -1 --format=%s dev)" "Sync DeepWorlds dev: 1 commits" "T7 canonical dev ends on the sync merge"
+
+# ---- T8: a clone whose origin is not the canonical repository refuses a live run
+# (a dry run still works, so fixtures and forks can preview)
+: >"$GH_LOG"
+d=$(make_fixture t8)
+fork_edit "$d" file.txt 's/^base$/base fork/' "fork: file"
+git init -q --bare -b dev "$d/other.git"
+git -C "$d/work" remote set-url origin "$d/other.git"
+out=$(run_sync "$d" DRY_RUN=false)
+assert_contains "$out" "not the canonical repository" "T8 refuses a non-canonical origin"
+assert_contains "$out" "[exit 1]" "T8 exits non-zero"
+out=$(run_sync "$d" DRY_RUN=true)
+assert_not_contains "$out" "not the canonical repository" "T8 dry run is not refused"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
