@@ -1,0 +1,42 @@
+name: Sync DeepWorlds dev
+
+# Scheduled workflows run from the default branch, so this file must exist on
+# main as well as dev. It always operates on dev (see docs/BRANCHING.md).
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would happen; push nothing, open nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  # gh label create / --label use the Issues API
+  issues: write
+
+concurrency:
+  group: sync-deepworlds
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        run: bash .github/scripts/sync-deepworlds.sh
