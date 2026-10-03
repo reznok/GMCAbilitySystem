@@ -230,3 +230,11 @@ Then on GitHub: `workflow_dispatch` with `dry_run=true` (expected: up to date, s
 - Compile and spec CI on a self-hosted runner, if the maintainer ever wants it.
 - Offering the maintainer's features back to the DeepWorlds fork.
 - A Claude Code plugin for GMAS users, distributed from this repository.
+
+## Implementation notes (2026-10-02)
+
+- Reunification done as in section 4: the fork merged into `dev` (260 commits, no conflicts), then the downstream checkout's 10 commits (six header conflicts, all the shared UE 5.8 include fix or a combined `GMCAttributeModifier.h`), then the vendored-copy patches as four small commits. The downstream commits were recreated with five commit bodies reworded so that no downstream project, module, class or asset name entered this repository's history; comments carrying such names were generalized in the merge.
+- The Python ability-authoring toolset that arrived with the downstream commits was removed again before publishing (it ported a third-party plugin's editor tools and predates the engine's own ToolsetRegistry). GMAS ships no editor Python; `__pycache__/` stays ignored.
+- The workflow also needs `issues: write` (labels live in the Issues API), and the `schedule` trigger runs only from the default branch, so the workflow, its script and tests, `.gitattributes` and `docs/BRANCHING.md` were added to `main` by pull request before the first run. First dry run and first live run both reported "up to date".
+- Verification against a downstream project: the editor target built; the GMAS specs produced the identical pass/fail set before and after reunification (449 specs, 150 failing on both sides, all in the attribute specs where `FAttribute::Value` reads 0 in standalone struct tests), so the merge introduced no regression; four newer fork specs (`GMAS.Stress.Clamp.PercentOfBase layering`) pass. Those pre-existing failures are a GMAS issue to fix separately, not part of this work.
+- Twelve stale branches whose content is in `dev` were deleted; `main` keeps its protection.
