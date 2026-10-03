@@ -20,6 +20,10 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 	
 	StartTime = AbilitySystemComponent->ActionTimer;
 
+	// A server for a remote pawn never polls input, binds or queues a payload of its own (its
+	// queue is never drained for a remote pawn): it waits for the client's payload.
+	if (!DrivesPawnLocally()) { return; }
+
 	UEnhancedInputComponent* const InputComponent = GetEnhancedInputComponent();
 	
 	if (Ability->AbilityInputAction != nullptr && InputComponent != nullptr)
@@ -30,11 +34,9 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 
 		InputBindingHandle = Binding.GetHandle();
 		
-		// Check that the value isn't currently false.
-		// Only the locally-controlled client (or listen server host) can read the real key state.
-		// On a dedicated server / remote pawn, PC->GetLocalPlayer() is null, the magnitude check
-		// silently sees 0, and we'd queue a Progress payload server-side that ends the task before
-		// the client's release ever arrives — the task would never be "confirmed" by the server.
+		// Check that the value isn't currently false. Only the driving machine reaches this point
+		// (the early return above): a server for a remote pawn has no local player, would read 0
+		// and queue a payload that ends the task before the client's release ever arrives.
 		//
 		// Replay-safety: during a GMC replay the ability re-activates from move history, but the
 		// EnhancedInput read below reflects the LIVE key state (now released), not the state at the
@@ -44,8 +46,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		// replay cascade. The legitimate end is already captured: the original activation queued a
 		// Progress via ClientProgressTask (QueueTaskData), which replays deterministically. So skip
 		// the live poll while replaying.
-		if (bShouldCheckForReleaseDuringActivation && IsClientOrRemoteListenServerPawn()
-			&& !AbilitySystemComponent->IsReplayingForGMASLogic())
+		if (bShouldCheckForReleaseDuringActivation && !AbilitySystemComponent->IsReplayingForGMASLogic())
 		{
 			FInputActionValue ActionValue = FInputActionValue();
 			// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
@@ -57,7 +58,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 
 			if (ActionValue.GetMagnitude() == 0)
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_WaitForInputKeyRelease::Activate: EndOnStart!"));
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("WaitForInputKeyRelease: key already released at activation; completing."));
 				// We'll want to immediately unbind the binding.
 				InputComponent->RemoveActionBindingForHandle(Binding.GetHandle());
 				InputBindingHandle = -1;
@@ -86,7 +87,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::AncillaryTick(float DeltaTime)
 		// never drained for remote pawns — unbounded growth for the remaining ability life.
 		// bTimedOut must still latch server-side so the payload-driven OnTaskCompleted picks
 		// the TimedOut broadcast on both machines.
-		if (IsClientOrRemoteListenServerPawn())
+		if (DrivesPawnLocally())
 		{
 			ClientProgressTask();
 		}

@@ -11,7 +11,7 @@ UGMCAbilityTask_SetTargetDataGameplayTag* UGMCAbilityTask_SetTargetDataGameplayT
 void UGMCAbilityTask_SetTargetDataGameplayTag::Activate(){
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -19,8 +19,14 @@ void UGMCAbilityTask_SetTargetDataGameplayTag::Activate(){
 
 void UGMCAbilityTask_SetTargetDataGameplayTag::ProgressTask(FInstancedStruct& TaskData){
 	Super::ProgressTask(TaskData);
+	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataGameplayTag::StaticStruct())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataGameplayTag::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataGameplayTag; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
+		EndTask();
+		return;
+	}
 	const FGMCAbilityTaskTargetDataGameplayTag Data = TaskData.Get<FGMCAbilityTaskTargetDataGameplayTag>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }

@@ -94,8 +94,13 @@ protected:
 	/** Task Owner that created us */
 	TWeakObjectPtr<AActor> TaskOwner;
 
-	// Whether this task is running on a client or a client on a listen server
-	bool IsClientOrRemoteListenServerPawn() const;
+	// True on the machine that produces this pawn's moves: a client for its own pawn, standalone,
+	// and a server for a pawn it controls locally (listen host, AI). False on a server for a
+	// remotely controlled pawn, which only ever waits for that client's payloads.
+	bool DrivesPawnLocally() const;
+
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: the name inverted the meaning; use DrivesPawnLocally()")
+	bool IsClientOrRemoteListenServerPawn() const { return DrivesPawnLocally(); }
 
 private:
 	// How often the client sends heartbeats to the server, in real seconds.

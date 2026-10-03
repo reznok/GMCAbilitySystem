@@ -140,7 +140,7 @@ void UGMCAbilityTaskBase::Heartbeat()
 	HeartbeatReceivedCount++;
 }
 
-bool UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn() const
+bool UGMCAbilityTaskBase::DrivesPawnLocally() const
 {
 	// Null-safe: derived AncillaryTick bodies keep executing after the base early-returns on a
 	// dead component, so this helper must not assume the weak-ptr guard already passed.

@@ -16,7 +16,7 @@ void UGMCAbilityTask_SetTargetDataVector3::Activate()
 {
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -27,13 +27,12 @@ void UGMCAbilityTask_SetTargetDataVector3::ProgressTask(FInstancedStruct& TaskDa
 	Super::ProgressTask(TaskData);
 	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataVector3::StaticStruct())
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataVector3::ProgressTask: Invalid TaskData"));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataVector3::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataVector3; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
 		EndTask();
 		return;
 	}
-	
 	const FGMCAbilityTaskTargetDataVector3 Data = TaskData.Get<FGMCAbilityTaskTargetDataVector3>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }

@@ -439,7 +439,14 @@ void UGMCAbility::ResetBlockOtherAbility() {
 
 void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 {
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.Get<FGMCAbilityTaskData>();
+	const FGMCAbilityTaskData* Ptr = TaskData.IsValid() && TaskData.GetScriptStruct()->IsChildOf(FGMCAbilityTaskData::StaticStruct())
+		? TaskData.GetPtr<FGMCAbilityTaskData>() : nullptr;
+	if (!Ptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] HandleTaskData: payload is not a FGMCAbilityTaskData; dropped."));
+		return;
+	}
+	const FGMCAbilityTaskData TaskDataFromInstance = *Ptr;
 	if (RunningTasks.Contains(TaskID) && RunningTasks[TaskID] != nullptr)
 	{
 		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Progress)

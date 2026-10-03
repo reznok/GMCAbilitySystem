@@ -10,6 +10,8 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestDelayAbility.h"
 #include "UGMAS_TestBoundAttrAbility.h"
+#include "Ability/Tasks/SetTargetDataFloat.h"
+#include "Ability/Tasks/SetTargetDataInt.h"
 #include "GMAS_TestHelpers.h"
 
 #if WITH_AUTOMATION_WORKER
@@ -158,6 +160,43 @@ void FGMASTaskSpec::Define()
 			AbilityComp->ProcessAttributes(true);
 			TestEqual("RawValue 125", AbilityComp->GetAttributeRawValue(StaminaTag), 125.f);
 			TestEqual("no live instance", AbilityComp->GetActiveAbilityCount(UGMAS_TestBoundAttrAbility::StaticClass()), 0);
+		});
+	});
+
+	Describe("Payload type checks", [this]()
+	{
+		It("a bound payload that is not a task struct is dropped with one Error", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("not a FGMCAbilityTaskData"), EAutomationExpectedErrorFlags::Contains, 1);
+			AbilityComp->bForceAuthorityForTest = true;
+			GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 10.f;
+			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass());
+			AbilityComp->QueueTaskData(FInstancedStruct::Make(FGMCAbilityEffectData{}));
+			AbilityComp->PreLocalMoveExecution();          // moves the queued payload into the bound slot
+			AbilityComp->GenPredictionTick(0.f);           // dispatch: dropped, not read as a task payload
+			TestEqual("ability still running", AbilityComp->GetActiveAbilityCount(UGMAS_TestDelayAbility::StaticClass()), 1);
+		});
+
+		It("a SetTargetData task given another task's payload struct drops it with one Error and ends", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("expected FGMCAbilityTaskTargetDataFloat; dropped"), EAutomationExpectedErrorFlags::Contains, 1);
+			AbilityComp->bForceAuthorityForTest = true;
+			GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 10.f;
+			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass());
+			UGMCAbility* Ability = FirstActiveAbility();
+			if (!TestNotNull("instance", Ability)) { return; }
+
+			UGMCAbilityTask_SetTargetDataFloat* Task = UGMCAbilityTask_SetTargetDataFloat::SetTargetDataFloat(Ability, 3.f);
+			Task->ReadyForActivation();
+			if (!TestTrue("task registered", Ability->RunningTasks.FindRef(Task->TaskID) == Task)) { return; }
+
+			FGMCAbilityTaskTargetDataInt Wrong;
+			Wrong.TaskType = EGMCAbilityTaskDataType::Progress;
+			Wrong.AbilityID = Ability->GetAbilityID();
+			Wrong.TaskID = Task->TaskID;
+			Wrong.Target = 7;
+			Ability->HandleTaskData(Task->TaskID, FInstancedStruct::Make(Wrong));
+			TestTrue("task ended", Task->GetState() == EGameplayTaskState::Finished);
 		});
 	});
 }

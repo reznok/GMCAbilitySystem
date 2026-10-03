@@ -2213,7 +2213,18 @@ void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 
 void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
 
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.IsValid() ? TaskData.Get<FGMCAbilityTaskData>() : FGMCAbilityTaskData{};
+	// The bound slot carries whatever a client queued: check the struct before reading it as a
+	// task payload (FInstancedStruct::Get asserts on a mismatch). Nothing is cleared here; the
+	// slot is reset by ClearAbilityAndTaskData at the end of the ancillary tick either way.
+	const FGMCAbilityTaskData* TaskDataPtr = TaskData.IsValid() && TaskData.GetScriptStruct()->IsChildOf(FGMCAbilityTaskData::StaticStruct())
+		? TaskData.GetPtr<FGMCAbilityTaskData>() : nullptr;
+	if (TaskData.IsValid() && !TaskDataPtr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] Bound task payload is %s, not a FGMCAbilityTaskData; dropped (owner %s, Authority=%d)."),
+			*TaskData.GetScriptStruct()->GetName(), *GetNameSafe(GetOwner()), HasAuthority() ? 1 : 0);
+		return;
+	}
+	const FGMCAbilityTaskData TaskDataFromInstance = TaskDataPtr ? *TaskDataPtr : FGMCAbilityTaskData{};
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
 		// Recorded before any branch: the watchdog needs the id the sender addressed even when
