@@ -22,25 +22,21 @@ float UGMCModifierCustom_Exponent::Calculate(UGMCAbilityEffect* SourceEffect, co
 				constexpr float MaxExp = 0x1.42096ff2afc4p+4; // exp(3)
 		
 				return Min + ((rawExp - minExp) / (MaxExp - minExp)) * (Max - Min);
-				break;
 			}
 		case EGMCMC_ExponentType::Easing:
 			{
 				const float easedT = Attribute->Value == 0 ? 0 : FMath::Pow(2, 10 *(Attribute->Value - 1.f));
 				return Min + easedT * (Max - Min);
-				break;
 			}
 		case EGMCMC_ExponentType::CustomPower:
 			{
 				const float poweredT = FMath::Pow(Attribute->Value, k);
 				return Min + poweredT * (Max - Min);
-				break;
 			}
 		case EGMCMC_ExponentType::Saturated:
 			{
 				const float expValue = 1 - FMath::Exp(-k * Attribute->Value);
 				return Min + expValue * (Max - Min);
-				break;
 			}
 	}
 
