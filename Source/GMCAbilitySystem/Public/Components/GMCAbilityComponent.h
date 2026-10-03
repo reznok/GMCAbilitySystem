@@ -212,13 +212,11 @@ public:
 	// All ids are ActionTimer*100 (centiseconds), so each range's capacity is time-bound: it is
 	// exhausted only after (range_size / 100) seconds of continuous ActionTimer, independent of
 	// effect count. The positive int32 space is split into three EQUAL thirds → each branch holds
-	// ~715.8M ids ≈ 82.8 days of continuous ActionTimer. A match uses ~0.1%.
+	// ~715.8M ids ≈ 82.8 days of continuous ActionTimer. Past the range the generator wraps to its start (one Error) instead of asserting.
 	static constexpr int32 ServerAuthEffectIDOffset = 0x2AAAAAAA; // 715827882   (~ INT32_MAX / 3)
 	static constexpr int32 ClientAuthEffectIDOffset = 0x55555554; // 1431655764  (~ 2 * INT32_MAX / 3)
 
-	// Will apply the starting effects and abilities to the component,
-	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
-	// Must be called on the server only
+	// Applies StartingEffects (ServerAuth) once the owner pawn has a controller; polled from the server's ancillary tick, never the prediction tick. bForce re-applies (after a reset such as a death).
 	virtual void ApplyStartingEffects(bool bForce = false);
 
 	// Reconnection rehydration. The owning client requests a snapshot of every
@@ -802,6 +800,7 @@ public:
 	// context" vs "outside any tick" to pick the right effect-removal path.
 	bool IsInAncillaryTick() const { return bInAncillaryTick; }
 	
+	// The GMC movement component the ability component binds to. Set it before BindReplicationData, or leave it null and the owner's UGMC_MovementUtilityCmp is used.
 	UPROPERTY(BlueprintReadWrite, AdvancedDisplay, Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
@@ -936,6 +935,12 @@ private:
 
 	bool bStartingEffectsApplied = false;
 
+	// Shared allocator behind the three GetNextAvailable*EffectID generators: ActionTimer in
+	// centiseconds offset into [RangeStart, RangeEnd), wrapping (one Error) past the end. -1 when
+	// ActionTimer is 0.
+	int AllocateEffectIDInRange(int32 RangeStart, int32 RangeEnd, const TCHAR* Generator) const;
+	mutable bool bEffectIDWrapReported = false;
+
 	// Reconnect-snapshot client-pull state. The Server RPC requires the actor to
 	// have an established owning connection AND the local role to be AutonomousProxy
 	// — neither is guaranteed at component-BeginPlay time on a freshly-replicated
@@ -1060,8 +1065,9 @@ private:
 	//     enqueue via BoundQueueV2.QueueServerOperation -> Client RPC + grace window,
 	//     client acks via its move stream within RTT (unchanged legacy behaviour).
 	//   - NO acking client (AI / level-placed / server-controlled pawn with no owning
-	//     client connection): the Client RPC has no recipient, so with the 1.0s grace
-	//     window the op would only apply when the grace timeout forced it (~1s late).
+	//     client connection): the Client RPC has no recipient, so with the server-operation
+	//     grace (`ServerOperationGraceSeconds`) the op would only apply when the grace
+	//     timeout forced it (that late).
 	//     Queue it with a ZERO grace timeout instead: the pawn's next
 	//     BoundQueueV2.GenAncillaryTick forces it (OnServerOperationForced ->
 	//     ProcessOperation(bForce=true)), ~1 frame later and outside any other pawn's
@@ -1194,12 +1200,6 @@ private:
 
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);
-
-	// Legacy field — runtime reads `UGMASNetworkTimingSettings::ClientEffectApplicationTimeout`
-	// (Project Settings → GMC Ability System → Network Timing, default 0.5s). Kept here for
-	// back-compat with any external code that may still reference it; mutating it has no effect
-	// on the predicted-effect timeout check, which reads the project settings directly.
-	float ClientEffectApplicationTimeout = 0.5f;
 
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;

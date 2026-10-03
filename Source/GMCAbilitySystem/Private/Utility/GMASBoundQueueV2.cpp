@@ -260,30 +260,37 @@ bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
 
 void FGMASBoundQueueV2::CheckValidState() const
 {
-	// Server Logic
 	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
-		// Check Client Queued Operations is empty
 		if (ClientQueuedOperations.Num() > 0)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientQueuedOperations has %d pending operations on server"), ClientQueuedOperations.Num());
-		}
-
-		// Check OperationPayloads for invalid IDs (-1 is reserved for client-made operations)
-		for (auto operation : OperationPayloads)
-		{
-			if (operation.Key < 0)
+			if (!bReportedClientQueuedOnServer)
 			{
-				UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationPayloads has invalid operation ID %d on server"), operation.Key);
+				bReportedClientQueuedOnServer = true;
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientQueuedOperations has %d pending operations on server (reported once until it clears)"), ClientQueuedOperations.Num());
+			}
+		}
+		else { bReportedClientQueuedOnServer = false; }
+
+		for (const auto& Operation : OperationPayloads)
+		{
+			if (Operation.Key < 0 && !ReportedInvalidPayloadIDs.Contains(Operation.Key))
+			{
+				ReportedInvalidPayloadIDs.Add(Operation.Key);
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationPayloads has a client-made operation id %d on the server (reported once)"), Operation.Key);
 			}
 		}
 	}
 	else
 	{
-		// Check Server Queued Operations is empty
 		if (ServerQueuedBoundOperationsGracePeriods.Num() > 0)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ServerQueuedBoundOperationsGracePeriods has %d pending operations on client"), ServerQueuedBoundOperationsGracePeriods.Num());;
+			if (!bReportedServerQueuedOnClient)
+			{
+				bReportedServerQueuedOnClient = true;
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("ServerQueuedBoundOperationsGracePeriods has %d pending operations on client (reported once until it clears)"), ServerQueuedBoundOperationsGracePeriods.Num());
+			}
 		}
+		else { bReportedServerQueuedOnClient = false; }
 	}
 }

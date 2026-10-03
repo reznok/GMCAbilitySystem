@@ -9,7 +9,7 @@
 /**
  * Server-wise tunables for the network-timing safety windows used by GMAS effects.
  *
- * Two parameters live here:
+ * Three parameters live here:
  *  - `ClientEffectApplicationTimeout`: how long the client holds a Predicted effect
  *    waiting for server confirmation before rolling it back.
  *  - `DefaultClientGraceTime`: the bilateral defer window used at Remove time for
@@ -18,6 +18,8 @@
  *    `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default on a per-instance
  *    basis (designers can extend the window for slow drains, or defer one effect while the
  *    project default is 0).
+ *  - `ServerOperationGraceSeconds`: how long the server waits for the owning client to
+ *    acknowledge a server operation before applying it on the server anyway.
  *
  * Defaults are sized for typical RTT (30-150 ms) + jitter + one server tick at 30 Hz
  * (≈33 ms). Raise above 0.5 s if shipping to high-latency regions (sat / 200+ ms RTT)
@@ -62,4 +64,13 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
 	float DefaultClientGraceTime = 0.5f;
+
+	/**
+	 * Seconds the server waits for the owning client to acknowledge a server operation (effect
+	 * apply/removal, impulse, custom event) through its move stream before applying it on the
+	 * server anyway, outside any move. Pawns without an acknowledging client (AI, unpossessed)
+	 * use 0 and apply on their next ancillary tick regardless of this value.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
+	float ServerOperationGraceSeconds = 1.0f;
 };

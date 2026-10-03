@@ -135,6 +135,18 @@ static FAutoConsoleCommandWithWorld GBLDumpAttrBindMap(
 
 void UGMC_AbilitySystemComponent::BindReplicationData()
 {
+	// The pointer is normally set by the owner before this call; resolve it from the owner when
+	// it is not, and refuse to bind (with a loud log) when there is nothing to bind to.
+	if (!GMCMovementComponent && GetOwner())
+	{
+		GMCMovementComponent = GetOwner()->FindComponentByClass<UGMC_MovementUtilityCmp>();
+	}
+	if (!GMCMovementComponent)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("BindReplicationData on %s: no GMCMovementComponent (set it or add a UGMC_MovementUtilityCmp to the owner); nothing bound."), *GetNameSafe(GetOwner()));
+		return;
+	}
+
 	// Attribute Binds
 	//
 	InstantiateAttributes();
@@ -286,7 +298,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		//   empty base, destroying the deferred ability payload (the bug).
 		// - Server-side ClientQueuedOperations cannot be populated (all 4 callers
 		//   gated by !HasAuthority(), and RPCOnServerOperationAdded is Client-RPC).
-		//   CheckValidState (line 178 of GMASBoundQueueV2.cpp) already logs an
+		//   CheckValidState (GMASBoundQueueV2.cpp) already logs an
 		//   Error if it ever happens -- the drain was idempotent defensive code.
 		//
 		// Route by who FILLS the live slot, because that decides whether the payload is
@@ -301,7 +313,7 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		// client payload under its own negative id so a later re-entry can find it, but the live
 		// slot is refilled from EVERY client move, and an operation that then leaves ProcessOperation
 		// through the `!bFromMovementTick && !bForce` guard is never purged. The cache fills up with
-		// ids the server cannot drop and CheckValidState reports each one every tick, forever.
+		// ids the server cannot drop (CheckValidState reports each one once).
 		//
 		// An empty slot and a client-direction batch wrapper both carry OperationID 0, so both are
 		// skipped quietly: the batch is server-direction only, and its ack reaches us through the
@@ -329,6 +341,11 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Anc_CheckActiveTagsChanged)
 		CheckActiveTagsChanged();
+	}
+
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Anc_ApplyStartingEffects)
+		ApplyStartingEffects();
 	}
 
 	{
@@ -1227,11 +1244,6 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	}
 	} // GMAS_Pred_ProcessOperation
 
-	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_ApplyStartingEffects)
-		ApplyStartingEffects();
-	}
-
 	// Purge "future" temporary modifiers on replay
 	if (GMCMovementComponent->CL_IsReplaying())
 	{
@@ -1353,6 +1365,7 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 		FGMASBoundQueueV2ApplyEffectOperation EffectActivationData;
 		EffectActivationData.EffectClass = Effect;
 		EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
+		if (EffectActivationData.EffectID == -1) { return; }
 		int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 		EnqueueServerOperation(OperationID);
 	}
@@ -2642,7 +2655,18 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			&& OperationData.GetScriptStruct() != FGMASBoundQueueV2OperationBaseData::StaticStruct();
 		if (!(bIsReplaying && bCarriesPayload && OperationID < 0))
 		{
-			// UE_LOG(LogGMCAbilitySystem, Error, TEXT("OperationID %d not found in OperationPayloads"), OperationID);
+			// A client operation (negative id) the server never cached is a lost operation: the
+			// slot carried only the base struct. Everything else is a benign re-read of an already
+			// processed slot (the authority drains the payload the first time, then re-reads the
+			// same bound slot until the next client move).
+			if (IsAuthorityForGMASLogic() && OperationID < 0 && !bIsReplaying
+				&& !BoundQueueV2.WasOperationRecentlyProcessed(OperationID))
+			{
+				UE_LOG(LogGMCAbilitySystem, Error, TEXT("[OperationLost] Operation %d has no payload on %s (struct=%s); not applied."),
+					OperationID, *GetNameSafe(GetOwner()),
+					OperationData.GetScriptStruct() ? *OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+				BoundQueueV2.MarkOperationProcessed(OperationID);   // report once
+			}
 			return false;
 		}
 	}
@@ -2682,6 +2706,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		// A net gain also under-reports when the new ability cancels another — acceptable for a probe.
 		const int32 LiveAbilitiesBefore = ActiveAbilities.Num();
 		const bool bActivated = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
+		if (bActivated) { BoundQueueV2.MarkOperationProcessed(OperationID); }
 
 		// A FIRST delivery landing during a replay builds an instance the remote side may never
 		// have had — its original move was discarded, or refused there. The consumed-op ring
@@ -2700,7 +2725,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			const bool bPreserveForAncillaryTick = !bActivated && bFromMovementTick;
 			if (!bPreserveForAncillaryTick)
 			{
+				// Drained (activated or refused): a later re-read of the same slot is not a lost operation.
 				BoundQueueV2.RemovePayloadByID(OperationID);
+				BoundQueueV2.MarkOperationProcessed(OperationID);
 			}
 		}
 
@@ -2757,6 +2784,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			// Make an operation to confirm the effect application
 			BoundQueueV2.OperationData  = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
+		BoundQueueV2.MarkOperationProcessed(OperationID);
 		return true;
 	}
 
@@ -2772,6 +2800,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			BoundQueueV2.OperationData  = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
 
+		BoundQueueV2.MarkOperationProcessed(OperationID);
 		return true;
 	}
 
@@ -2811,6 +2840,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				OperationID,
 				BoundQueueV2.OperationData.GetScriptStruct() ? *BoundQueueV2.OperationData.GetScriptStruct()->GetName() : TEXT("null"));
 		}
+		BoundQueueV2.MarkOperationProcessed(OperationID);
 		return true;
 	}
 
@@ -2829,6 +2859,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		{
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
+		BoundQueueV2.MarkOperationProcessed(OperationID);
 		return true;
 	}
 
@@ -2842,6 +2873,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			// Make an operation to confirm the location change
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
+		BoundQueueV2.MarkOperationProcessed(OperationID);
 		return true;
 	}
 
@@ -3270,90 +3302,52 @@ void UGMC_AbilitySystemComponent::CheckUnBoundAttributeChanged()
 	}
 }
 
-int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
+int UGMC_AbilitySystemComponent::AllocateEffectIDInRange(int32 RangeStart, int32 RangeEnd, const TCHAR* Generator) const
 {
 	if (ActionTimer == 0)
 	{
-		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[ApplyAbilityEffect] Action Timer is 0, cannot generate Effect ID. Is it a listen server smoothed pawn?"));
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[EffectID] %s: ActionTimer is 0, cannot generate an effect id. Is it a listen server smoothed pawn?"), Generator);
 		return -1;
 	}
-		
-	int NewEffectID = static_cast<int>(ActionTimer * 100);
-	if (NewEffectID >= ServerAuthEffectIDOffset)
+
+	// Ids are ActionTimer in centiseconds offset into the range. A session long enough to run
+	// past the range wraps to its start and says so once; the bump loop below keeps ids unique
+	// among the live and reserved ones. Negative clocks (headless specs) stay below the range.
+	const int64 RangeSize = static_cast<int64>(RangeEnd) - RangeStart;
+	int64 Candidate = static_cast<int64>(RangeStart) + static_cast<int64>(ActionTimer * 100.0);
+	if (Candidate >= RangeEnd)
 	{
-		// Session has been running long enough that the standard (Predicted) ID range overlaps
-		// with the server-auth reserved range. Fail-fast — silent overlap would let a predicted
-		// id collide with a server-auth id and corrupt dispatch in ServerProcessOperation.
-		UE_LOG(LogGMCAbilitySystem, Fatal,
-			TEXT("[GetNextAvailableEffectID] ActionTimer overflow into server-auth range. "
-			     "ActionTimer=%f -> ID=%d >= Offset=%d. Session too long?"),
-			ActionTimer, NewEffectID, ServerAuthEffectIDOffset);
+		Candidate = RangeStart + ((Candidate - RangeStart) % RangeSize);
+		if (!bEffectIDWrapReported)
+		{
+			bEffectIDWrapReported = true;
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[EffectID] %s: ActionTimer %f exceeds the id range [%d, %d); ids wrap within the range from here on."), Generator, ActionTimer, RangeStart, RangeEnd);
+		}
 	}
+	if (Candidate == 0) { Candidate = 1; }   // 0 means "unassigned"
+
+	int NewEffectID = static_cast<int>(Candidate);
 	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
 	{
 		NewEffectID++;
 	}
-	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[Server: %hhd] Generated Effect ID: %d"), HasAuthority(), NewEffectID);
-
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[EffectID] %s: %d (authority %d)"), Generator, NewEffectID, HasAuthority() ? 1 : 0);
 	return NewEffectID;
+}
+
+int UGMC_AbilitySystemComponent::GetNextAvailableEffectID() const
+{
+	return AllocateEffectIDInRange(0, ServerAuthEffectIDOffset, TEXT("Predicted"));
 }
 
 int UGMC_AbilitySystemComponent::GetNextAvailableServerAuthEffectID() const
 {
-	if (ActionTimer == 0)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error,
-			TEXT("[GetNextAvailableServerAuthEffectID] ActionTimer is 0, cannot generate Effect ID."));
-		return -1;
-	}
-
-	int NewEffectID = static_cast<int>(ActionTimer * 100) + ServerAuthEffectIDOffset;
-	if (NewEffectID >= ClientAuthEffectIDOffset)
-	{
-		// Server-auth range exhausted — would overflow up into the client-auth range. Same
-		// fail-fast policy as the other helpers: a silent overlap corrupts the dispatcher logic.
-		UE_LOG(LogGMCAbilitySystem, Fatal,
-			TEXT("[GetNextAvailableServerAuthEffectID] EffectID overflow into client-auth range. "
-			     "ActionTimer=%f -> ID=%d >= Offset=%d. Session too long?"),
-			ActionTimer, NewEffectID, ClientAuthEffectIDOffset);
-	}
-	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
-	{
-		NewEffectID++;
-	}
-	UE_LOG(LogGMCAbilitySystem, VeryVerbose,
-		TEXT("[Server: %hhd] Generated ServerAuth Effect ID: %d"), HasAuthority(), NewEffectID);
-
-	return NewEffectID;
+	return AllocateEffectIDInRange(ServerAuthEffectIDOffset, ClientAuthEffectIDOffset, TEXT("ServerAuth"));
 }
 
 int UGMC_AbilitySystemComponent::GetNextAvailableClientAuthEffectID() const
 {
-	if (ActionTimer == 0)
-	{
-		UE_LOG(LogGMCAbilitySystem, Error,
-			TEXT("[GetNextAvailableClientAuthEffectID] ActionTimer is 0, cannot generate Effect ID."));
-		return -1;
-	}
-
-	int NewEffectID = static_cast<int>(ActionTimer * 100) + ClientAuthEffectIDOffset;
-	if (NewEffectID < ClientAuthEffectIDOffset)
-	{
-		// Wrap into negative (or back into the standard range) — session has been running
-		// beyond the client-auth ID capacity. Same fail-fast policy as the standard helper:
-		// silent overlap would corrupt the dispatcher logic.
-		UE_LOG(LogGMCAbilitySystem, Fatal,
-			TEXT("[GetNextAvailableClientAuthEffectID] EffectID overflow. "
-			     "ActionTimer=%f -> ID=%d wrapped below Offset=%d."),
-			ActionTimer, NewEffectID, ClientAuthEffectIDOffset);
-	}
-	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
-	{
-		NewEffectID++;
-	}
-	UE_LOG(LogGMCAbilitySystem, VeryVerbose,
-		TEXT("[Server: %hhd] Generated ClientAuth Effect ID: %d"), HasAuthority(), NewEffectID);
-	return NewEffectID;
+	return AllocateEffectIDInRange(ClientAuthEffectIDOffset, MAX_int32, TEXT("ClientAuth"));
 }
 
 int32 UGMC_AbilitySystemComponent::GetNextAvailableEffectHandle() const
@@ -3523,6 +3517,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			EffectActivationData.EffectClass = EffectClass;
 			EffectActivationData.EffectData = InitializationData;
 			EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
+			if (EffectActivationData.EffectID == -1) { return false; }
 			ReservedEffectIDs.Add(EffectActivationData.EffectID);
 
 			// We return back the Operation ID instead of the Effect ID which isn't great
@@ -4641,7 +4636,8 @@ bool UGMC_AbilitySystemComponent::ShouldApplyServerOpImmediately() const
 	// RPCOnServerOperationAdded and acks it via its move stream within RTT, so the
 	// grace window stays its safety net (unchanged). Only AI / level-placed /
 	// unpossessed pawns have no owning client connection: their Client RPC has no
-	// recipient, so the op would otherwise apply only via the 1.0s grace force.
+	// recipient, so the op would otherwise apply only via the grace force
+	// (ServerOperationGraceSeconds).
 	return !GMCMovementComponent->IsPlayerControlledPawn();
 }
 
@@ -4649,15 +4645,17 @@ void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
 {
 	if (!ShouldApplyServerOpImmediately())
 	{
-		// Legacy path: Client RPC to the owning client + 1.0s grace window; the client
-		// acks via its move stream (or the grace timeout forces it on the server).
-		BoundQueueV2.QueueServerOperation(OperationID);
+		// Legacy path: Client RPC to the owning client + the server-operation grace
+		// (`ServerOperationGraceSeconds`); the client acks via its move stream (or the grace
+		// timeout forces it on the server).
+		BoundQueueV2.QueueServerOperation(OperationID, GetDefault<UGMASNetworkTimingSettings>()->ServerOperationGraceSeconds);
 		return;
 	}
 
 	// No autonomous-proxy client will ever ack this op (AI / level-placed /
 	// server-controlled pawn): the Client RPC has no recipient, so the legacy path would
-	// only apply the op when the 1.0s grace timeout forced it (visible ~1s delay).
+	// only apply the op when the server-operation grace (`ServerOperationGraceSeconds`)
+	// timeout forced it (a visible delay).
 	//
 	// Do NOT apply it inline here. EnqueueServerOperation can run RE-ENTRANTLY inside
 	// ANOTHER pawn's movement tick -- e.g. an attacker's GenPredictionTick lands a hit and
@@ -4672,7 +4670,7 @@ void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
 	// -- the VICTIM's OWN ancillary tick, a clean context outside any other pawn's
 	// movement tick -- decrements (0 - DeltaTime <= 0) and force-applies via
 	// OnServerOperationForced -> ProcessOperation(bForce=true). That is the exact
-	// proven-correct path the grace timeout always used, now ~1 frame instead of ~1s.
+	// proven-correct path the grace timeout always used, now ~1 frame instead of the full grace.
 	// QueueServerOperation also fires the Client RPC, which is a harmless no-op for a
 	// pawn with no owning connection. ProcessOperation drains the cached payload and
 	// the grace tick removes the grace-map entry, so the op applies exactly once.

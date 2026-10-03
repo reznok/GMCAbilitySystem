@@ -69,6 +69,7 @@ public:
 		{
 			OperationPayloads.Remove(OperationID);
 		}
+		ReportedInvalidPayloadIDs.Remove(OperationID);
 	}
 
 	// Make a GetOperationByID
@@ -147,8 +148,8 @@ public:
 	// Queue a Client operation
 	void QueueClientOperation(const int OperationID);
 
-	// Queue a ServerAuth operation
-	void QueueServerOperation(const int OperationID, const float Timeout = 1.0f);
+	// Queue a server operation; Timeout is the ack grace in seconds (UGMASNetworkTimingSettings::ServerOperationGraceSeconds for pawns with a client, 0 otherwise).
+	void QueueServerOperation(const int OperationID, const float Timeout);
 	
 	bool CurrentOperationIsOfType(const UScriptStruct* T) const
 	{
@@ -202,8 +203,12 @@ public:
 	// the end of the batch, carrying every successfully-processed sub-op ID.
 	bool bInBatchDispatch = false;
 
-	// Runs checks on the current state of the queue and logs any issues found
+	// Runs checks on the current state of the queue and logs any issues found. Each issue is
+	// reported once (per id, or until the offending queue clears) instead of every tick.
 	void CheckValidState() const;
+	mutable TSet<int> ReportedInvalidPayloadIDs;
+	mutable bool bReportedClientQueuedOnServer = false;
+	mutable bool bReportedServerQueuedOnClient = false;
 };
 
 // Operations
