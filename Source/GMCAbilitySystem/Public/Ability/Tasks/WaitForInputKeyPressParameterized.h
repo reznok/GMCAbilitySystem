@@ -4,7 +4,13 @@
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "EnhancedInputComponent.h"
 #include "Ability/GMCAbility.h"
-#include "InstancedStruct.h"
+
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+	#include "StructUtils/InstancedStruct.h"  // UE 5.5+
+#else
+	#include "InstancedStruct.h"              // UE 5.4 and earlier
+#endif
+
 #include "LatentActions.h"
 #include "WaitForInputKeyPressParameterized.generated.h"
 

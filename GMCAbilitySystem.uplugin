@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.3",
+	"VersionName": "1.4",
 	"FriendlyName": "GMAS - GMC Ability System",
 	"Description": "An ability system for GMC (General Movement Component)",
 	"Category": "GMAS",
@@ -33,6 +33,10 @@
 		},
 		{
 			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
 			"Enabled": true
 		}
 	]

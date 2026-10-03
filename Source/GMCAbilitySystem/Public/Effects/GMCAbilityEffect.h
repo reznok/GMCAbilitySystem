@@ -66,6 +66,14 @@ struct FGMCAbilityEffectData
 	UPROPERTY()
 	uint8 bServerAuth : 1 {false}; // The server will never be acknowledge/predicted
 
+	// True iff this effect was applied via the EGMCAbilityEffectQueueType::ClientAuth path.
+	// Mutually exclusive with bServerAuth. Routes GrantedTags to the non-bound
+	// ClientAuthActiveTags container so they don't trigger GMC state divergence.
+	// Set automatically by ApplyAbilityEffect's case ClientAuth (client side) and by
+	// ServerProcessOperation's ClientAuthEffectOperation handler (server side).
+	UPROPERTY()
+	uint8 bClientAuth : 1 {false};
+
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	double StartTime;
 	
@@ -81,6 +89,13 @@ struct FGMCAbilityEffectData
 	// Apply an inversed version of the modifiers at effect end
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	bool bNegateEffectAtEnd = false;
+
+	// Persistent only: re-evaluate each modifier's Conditions every tick and refresh its contribution
+	// (a constant buff/debuff that toggles on/off, or swaps its value source, with a tag — without
+	// re-applying the effect). Requires bNegateEffectAtEnd: the modifiers must be temporal/removable,
+	// not baked into RawValue. No effect on Instant/Ticking/Periodic.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(DisplayName="Recheck Conditions Each Tick (Persistent)", ToolTip="Persistent effects only: re-checks every modifier's Conditions each tick and applies or removes the buff as they change, without re-applying the effect. Requires 'Negate Effect At End'.", EditCondition = "EffectType == EGMASEffectType::Persistent && bNegateEffectAtEnd", EditConditionHides))
+	bool bReevaluateConditionsWhilePersistent = false;
 
 	// Delay before the effect starts
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -98,9 +113,17 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem", meta=(EditCondition = "EffectType == EGMASEffectType::Ticking || EffectType == EGMASEffectType::Persistent || EffectType == EGMASEffectType::Periodic", EditConditionHides))
 	double Duration = 0;
 	
-	// Time in seconds that the client has to apply itself an external effect before the server will force it. If this time is reach, a rollback is likely to happen.
+	// Per-effect override for the bilateral defer window (seconds) applied when a Ticking/Periodic
+	// effect is removed: both client and server arm EndAtActionTimer = ActionTimer + this value so
+	// each side ends on the same logical move tick.
+	//
+	// Sentinel semantics: 0 means "use the project-wide default" from
+	// `UGMASNetworkTimingSettings::DefaultClientGraceTime` (Project Settings → GMC Ability System →
+	// Network Timing, default 0.5s — sized for typical RTT + jitter + one server tick at 30 Hz).
+	// Set this to >0 only when an individual effect needs a different window (e.g. a slow drain
+	// that needs more time for client/server convergence).
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
-	float ClientGraceTime = 1.f;
+	float ClientGraceTime = 0.f;
 
 	// Tag to identify this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -109,10 +132,26 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedTags;
 
-	// Whether to preserve the granted tags if multiple instances of the same effect are applied
-	// If false, will remove all stacks of the tag
+	// When true (default), GrantedTags survive on the owner while any other same-EffectTag
+	// instance is still alive — only the last instance to end clears the tags. Required for
+	// stackable effects: FGameplayTagContainer is set-like and can't track stack counts, so
+	// per-instance tag removal would yank the tag while siblings still depend on it.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
-	bool bPreserveGrantedTagsIfMultiple = false;
+	bool bPreserveGrantedTagsIfMultiple = true;
+
+	// Opt-in single-instance protection by EffectTag (exact match). New Apply is
+	// rejected if a same-tag effect is functionally active; if the match is in its
+	// bilateral PredictedEnd defer window, the new Apply succeeds and the old is
+	// replaced — server force-ends immediately, client suspends-then-finalizes-or-
+	// revives based on the successor's server verdict (Validated vs Timeout).
+	// Empty EffectTag disables the check.
+	//
+	// Drain-rate symmetry between client and server during the recovery window is
+	// exact for Ticking modifiers (continuous flow). Periodic/Persistent effects
+	// can produce a bounded drift up to one modifier-worth — prefer Ticking, or
+	// accept the bounded mismatch.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
+	bool bUniqueByEffectTag = false;
 
 	// Tags that the owner must have to apply this effect
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
@@ -145,19 +184,32 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer CancelAbilityOnEnd;
 
+	// Effect classes to apply when this effect ends. Each entry is applied via
+	// ApplyAbilityEffectShort using a queue type chosen at runtime: Predicted while inside
+	// a GMC tick (movement/ancillary) or Standalone, PredictedQueued otherwise. Applies on
+	// every side that runs EndEffect (server + owning client) so the GMAS predict/validate
+	// pipeline handles confirmation symmetrically.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	TArray<TSubclassOf<UGMCAbilityEffect>> ApplyEffectOnEnd;
+
+	// EffectTags to remove from the owner when this effect ends. Each tag matches active
+	// effects via RemoveEffectByTagSafe (NumToRemove = -1, removes all matching). Same
+	// queue type policy as ApplyEffectOnEnd.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain", meta = (Categories = "Effect"))
+	FGameplayTagContainer RemoveEffectOnEnd;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	TArray<FGMCAttributeModifier> Modifiers;
 	
-	inline bool operator==(const FGMCAbilityEffectData& Other) const
-	{
-		//Todo: Fix this
-		return StartTime == Other.StartTime && EndTime == Other.EndTime;
-	};
-
 	bool IsValid() const
 	{
+		// bUniqueByEffectTag carries runtime intent on its own (single-instance protection
+		// keyed on EffectTag); EffectTag's presence is similarly meaningful as identity for
+		// query/removal paths even without granted content. Both count as "valid override"
+		// against the CDO defaults at apply time.
 		return GrantedTags != FGameplayTagContainer() || GrantedAbilities != FGameplayTagContainer() || Modifiers.Num() > 0
-				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer();
+				|| MustHaveTags != FGameplayTagContainer() || MustNotHaveTags != FGameplayTagContainer()
+				|| bUniqueByEffectTag || EffectTag.IsValid();
 	}
 
 	FString ToString() const{
@@ -196,22 +248,42 @@ class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
 {
 	GENERATED_BODY()
 
+public:
+	// Public on purpose: GENERATED_BODY() resets access to private, which silently made this
+	// override private and broke Super::PostEditChangeProperty() calls in derived classes
+	// (C2248). UObject declares it public — keep the same visibility.
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
-	
+	EGMASEffectState CurrentState = EGMASEffectState::Initialized;
 
-public:
-	EGMASEffectState CurrentState;
-
-	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "GMCAbilitySystem")
 	FGMCAbilityEffectData EffectData;
+
+	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem")
+	bool bCallOnAttributeModifierApplication = false;
 
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void InitializeEffect(FGMCAbilityEffectData InitializationData);
 
+
+	/**
+	 * Called when an attribute modifier is applied.
+	 *
+	 * ⚠️ Note:
+	 * Attribute changes are applied with a one-frame delay by design.
+	 * This means that if you add (for example) health and check the current health immediately,
+	 * the modifier’s effect will not yet be visible during the same frame.
+	 *
+	 * @param Modifier The attribute modifier that was applied.
+	 */
+	UFUNCTION(BlueprintImplementableEvent)
+	void K2_OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
+
+	virtual void OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
+
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
-	void EndEffect();
+	virtual void EndEffect();
 
 	virtual void BeginDestroy() override;
 	
@@ -226,6 +298,25 @@ public:
 	// Return the effect data struct of targeted effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
 	FGMCAbilityEffectData GetEffectData() const { return EffectData; }
+
+	/**
+	 * Static helper: copy the EffectData struct off the given effect class's CDO.
+	 * Returns an empty struct if EffectClass is null (caller's Apply will fall
+	 * back to CDO via FGMCAbilityEffectData::IsValid()==false).
+	 *
+	 * Intended for the "start from CDO + layer per-cast overrides" pattern:
+	 *
+	 *   Get Default Effect Data: GE_Slow
+	 *     → Set Members in Struct (Duration: 5.0)
+	 *       → Apply Ability Effect (InitializationData = struct)
+	 *
+	 * One-node convenience vs the two-step Get Class Defaults + struct field
+	 * extraction. The Apply call's IsValid() check still passes (CDO content
+	 * present), so the modified struct is used — not the CDO again.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects",
+	          meta=(DisplayName="Get Default Effect Data"))
+	static FGMCAbilityEffectData GetDefaultEffectData(TSubclassOf<UGMCAbilityEffect> EffectClass);
 
 	// Return the total duration of the effect
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category="GMAS|Effects")
@@ -258,12 +349,26 @@ public:
 
 	bool bCompleted;
 
+	// Bilateral defer absolute timestamp for Predicted Remove on Ticking/Periodic effects.
+	// Both sides arm `ActionTimer + ClientGraceTime` at the same logical move tick so they
+	// end on the same logical tick regardless of DeltaTime / framerate / replay count.
+	// -1.0 = not armed; >= 0 = armed, end when ActionTimer reaches the value.
+	double EndAtActionTimer { -1.0 };
+
+	// Set on the OLD instance during a client-side bUniqueByEffectTag REPLACE. Tick early-
+	// returns (no modifier application) but tags / abilities / EndAtActionTimer survive.
+	// Cleared by the polling block in TickActiveEffects when the successor reaches
+	// Validated (real EndEffect runs) or Timeout (OLD is revived).
+	bool bPendingDeathBySuccessor = false;
+
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.
 	float ClientEffectApplicationTime;
-
+	
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	void GetOwnerActor(AActor*& OwnerActor) const;
+
+	AActor* GetOwnerActor() const;
 
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* GetOwnerAbilityComponent() const { return OwnerAbilityComponent; }
@@ -298,18 +403,16 @@ private:
 	// Does the owner have any of the tags from the container?
 	bool DoesOwnerHaveTagFromContainer(FGameplayTagContainer& TagContainer) const;
 	
-	bool DuplicateEffectAlreadyApplied();
-
 	void EndActiveAbilitiesByDefinitionQuery(FGameplayTagQuery);
 
 	
 public:
 
 	// Blueprint Event for when the effect starts
-	UFUNCTION(BlueprintImplementableEvent)
+	UFUNCTION(BlueprintNativeEvent)
 	void StartEffectEvent();
 
-	UFUNCTION(BlueprintImplementableEvent)
+	UFUNCTION(BlueprintNativeEvent)
 	void EndEffectEvent();
 
 	
@@ -323,4 +426,5 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem|Effects|Queries")
 	void ModifyEndAbilitiesOnEndQuery(const FGameplayTagQuery& NewQuery);
 };
+
 

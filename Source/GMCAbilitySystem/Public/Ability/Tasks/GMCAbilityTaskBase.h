@@ -1,5 +1,11 @@
 ﻿#pragma once
-#include "InstancedStruct.h"
+
+#if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 5
+#include "StructUtils/InstancedStruct.h"  // UE 5.5+
+#else
+#include "InstancedStruct.h"              // UE 5.4 and earlier
+#endif
+
 #include "Ability/GMCAbility.h"
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "GMCAbilityTaskBase.generated.h"
@@ -61,15 +67,29 @@ public:
 
 	// Called when client requests to progress task. Task must make sure this is handled properly/securely
 	virtual void ProgressTask(FInstancedStruct& TaskData){};
-	
+
 	// Client calling to progress the task forward
 	// Task must make sure this is handled properly
 	virtual void ClientProgressTask();
-	
+
 	virtual void Heartbeat();
+
+	// Diagnostic accessors for the ability-cut instrumentation ([AbilityCut]/[TaskDiag] logs).
+	// Expose internal liveness state so UGMCAbility can dump every task when an ability dies
+	// abnormally. Read-only; no behavior impact.
+	bool IsTaskCompleted() const { return bTaskCompleted; }
+	int32 GetHeartbeatReceivedCount() const { return HeartbeatReceivedCount; }
+	double GetLastHeartbeatReceivedTime() const { return LastHeartbeatReceivedTime; }
+	double GetClientLastHeartbeatSentTime() const { return ClientLastHeartbeatSentTime; }
 
 protected:
 	bool bTaskCompleted;
+
+	// Every end path (EndTask, EndTaskGMAS, watchdog kill, TaskOwnerEnded, ExternalCancel)
+	// funnels through OnDestroy exactly once — the single safe place to unregister from the
+	// owning ability's RunningTasks so a finished task never lingers there as a ghost that
+	// still ticks, heartbeats or watchdogs.
+	virtual void OnDestroy(bool bInOwnerFinished) override;
 
 	/** Task Owner that created us */
 	TWeakObjectPtr<AActor> TaskOwner;
@@ -78,15 +98,25 @@ protected:
 	bool IsClientOrRemoteListenServerPawn() const;
 
 private:
-	// How often client sends heartbeats to server
-	float HeartbeatInterval = .2f;
+	// How often the client sends heartbeats to the server, in real seconds.
+	double HeartbeatInterval = 1.0;
 
-	// Max time between heartbeats before server cancels task
-	// Aherys: previous value was 0.3f it's maybe a bit too low for harsh network conditions
-	float HeartbeatMaxInterval = 3.f;
-	
-	float ClientLastHeartbeatSentTime = 0.f;
-	float LastHeartbeatReceivedTime = 0.f;
+	// Max real-time gap between heartbeats before the server cancels the task.
+	// Measured against a monotonic real-time clock (FPlatformTime::Seconds), NOT the GMC
+	// ActionTimer: the liveness watchdog must not be distorted by replay rewinds, time
+	// dilation or game-thread hitches — those make the gameplay clock a poor proxy for the
+	// wall-clock liveness this check actually wants. 3s tuned for harsh network conditions
+	// (was 0.3f originally).
+	double HeartbeatMaxInterval = 3.0;
+
+	// Count of heartbeats the server has accepted for this task. Lets the timeout log
+	// distinguish "client never sent one" (0) from "client sent then stalled" (>0).
+	int32 HeartbeatReceivedCount = 0;
+
+	// Real-time clock stamps (FPlatformTime::Seconds) — monotonic and replay-immune.
+	// Client and server each compare only against their own clock, never across machines.
+	double ClientLastHeartbeatSentTime = 0.0;
+	double LastHeartbeatReceivedTime = 0.0;
 
 
 };

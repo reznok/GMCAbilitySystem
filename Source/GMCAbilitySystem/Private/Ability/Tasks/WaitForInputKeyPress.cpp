@@ -38,15 +38,21 @@ void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 	
 		InputBindingHandle = Binding.GetHandle();
 
-		// Check if button was held when entering the task
-		if (bShouldCheckForPressDuringActivation)
+		// Check if button was held when entering the task.
+		// Only the locally-controlled client (or listen server host) can read the real key state.
+		// On a dedicated server / remote pawn, PC->GetLocalPlayer() is null, the magnitude check
+		// silently sees 0, and we'd queue a Progress payload server-side that ends the task before
+		// the client's press ever arrives — the task would never be "confirmed" by the server.
+		if (bShouldCheckForPressDuringActivation && IsClientOrRemoteListenServerPawn())
 		{
 			FInputActionValue ActionValue = FInputActionValue();
+			// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
+			// guard the chain instead of dereferencing blindly.
 			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
-			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer())) {
+			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
 				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
 			}
-			
+
 			if (!ActionValue.GetMagnitude())
 			{
 				InputBindingHandle = -1;
@@ -70,7 +76,15 @@ void UGMCAbilityTask_WaitForInputKeyPress::AncillaryTick(float DeltaTime)
 
 	if (MaxDuration > 0 && Duration >= MaxDuration)
 	{
-		ClientProgressTask();
+		// Progress push only where a queue drain exists (owning client / listen host): on a
+		// dedicated server this re-queued every ancillary tick into QueuedTaskData, which is
+		// never drained for remote pawns — unbounded growth for the remaining ability life.
+		// bTimedOut must still latch server-side so the payload-driven OnTaskCompleted picks
+		// the TimedOut broadcast on both machines.
+		if (IsClientOrRemoteListenServerPawn())
+		{
+			ClientProgressTask();
+		}
 		bTimedOut = true;
 	}
 }
@@ -103,8 +117,23 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyPress::GetEnhancedInputC
 
 void UGMCAbilityTask_WaitForInputKeyPress::OnTaskCompleted()
 {
+	// Completion latch BEFORE the broadcast: a re-entrant Completed handler (or a replayed
+	// Progress payload) must see the task as already done, not run the completion twice.
+	if (bTaskCompleted) return;
+	bTaskCompleted = true;
+
 	EndTask();
 	Duration = AbilitySystemComponent->ActionTimer - StartTime;
+	// Deterministic timeout decision: the ancillary-tick latch races the payload dispatch
+	// across machines (the server's latch runs AFTER the payload dispatch point, so when the
+	// threshold-crossing move and the payload-carrying move batch into the same server frame,
+	// the server would read a stale bTimedOut=false while the client latched true). Re-derive
+	// from the payload-move ActionTimer, which both machines share, so Completed vs TimedOut
+	// never diverges.
+	if (!bTimedOut && MaxDuration > 0 && Duration >= MaxDuration)
+	{
+		bTimedOut = true;
+	}
 	if (!bTimedOut)
 	{
 		Completed.Broadcast(Duration);
@@ -113,14 +142,12 @@ void UGMCAbilityTask_WaitForInputKeyPress::OnTaskCompleted()
 	{
 		TimedOut.Broadcast(Duration);
 	}
-	bTaskCompleted = true;
 }
 
 void UGMCAbilityTask_WaitForInputKeyPress::OnDestroy(bool bInOwnerFinished)
 {
-	Super::OnDestroy(bInOwnerFinished);
-
 	// If we're still bound to the input component for some reason, we'll want to unbind.
+	// Done BEFORE Super per the engine contract ("call Super::OnDestroy as the last thing").
 	if (InputBindingHandle != -1)
 	{
 		if (InputComponent)
@@ -129,6 +156,8 @@ void UGMCAbilityTask_WaitForInputKeyPress::OnDestroy(bool bInOwnerFinished)
 			InputBindingHandle = -1;
 		}
 	}
+
+	Super::OnDestroy(bInOwnerFinished);
 }
 
 void UGMCAbilityTask_WaitForInputKeyPress::ProgressTask(FInstancedStruct& TaskData)

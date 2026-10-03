@@ -22,7 +22,9 @@ public class GMCAbilitySystemEditor : ModuleRules
                 "Engine",
                 "Slate",
                 "SlateCore",
-                "InputCore"
+                "InputCore",
+                "GameplayTags",
+                "ToolWidgets"
             }
         );
     }

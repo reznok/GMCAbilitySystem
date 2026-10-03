@@ -3,6 +3,61 @@
 #include "GMCPawn.h"
 #include "Ability/Tasks/GMCAbilityTaskBase.h"
 #include "Components/GMCAbilityComponent.h"
+#include "HAL/PlatformTime.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+
+namespace GMCAbilityCutDiag
+{
+	static const TCHAR* TaskStateToString(const EGameplayTaskState State)
+	{
+		switch (State)
+		{
+		case EGameplayTaskState::Uninitialized:      return TEXT("Uninitialized");
+		case EGameplayTaskState::AwaitingActivation: return TEXT("AwaitingActivation");
+		case EGameplayTaskState::Paused:             return TEXT("Paused");
+		case EGameplayTaskState::Active:             return TEXT("Active");
+		case EGameplayTaskState::Finished:           return TEXT("Finished");
+		default:                                     return TEXT("Unknown");
+		}
+	}
+}
+
+FString UGMCAbility::GetAbilityCutDiagnostics() const
+{
+	const double Now = FPlatformTime::Seconds();
+	const bool bAuthority = OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority();
+	const bool bReplaying = OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic();
+	const float Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.f;
+
+	FString Out = FString::Printf(
+		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f Tasks=%d"),
+		*GetName(), *AbilityTag.ToString(), AbilityID, *EnumToString(AbilityState),
+		bServerConfirmed ? 1 : 0, bActivateOnMovementTick ? 1 : 0, bAuthority ? 1 : 0, bReplaying ? 1 : 0,
+		Timer, ClientStartTime, Timer - ClientStartTime, RunningTasks.Num());
+
+	for (const TPair<int, UGMCAbilityTaskBase*>& TaskPair : RunningTasks)
+	{
+		const UGMCAbilityTaskBase* Task = TaskPair.Value;
+		if (!Task)
+		{
+			Out += FString::Printf(TEXT("\n  - TaskID=%d <null>"), TaskPair.Key);
+			continue;
+		}
+
+		// Heartbeat stamps are wall-clock (FPlatformTime) — ages can be negative right after
+		// Activate because the received-stamp is seeded one grace interval into the future.
+		Out += FString::Printf(
+			TEXT("\n  - TaskID=%d Class=%s State=%s Completed=%d HeartbeatsRcv=%d LastRcvAge=%.2fs LastSentAge=%.2fs"),
+			TaskPair.Key, *Task->GetClass()->GetName(),
+			GMCAbilityCutDiag::TaskStateToString(Task->GetState()),
+			Task->IsTaskCompleted() ? 1 : 0,
+			Task->GetHeartbeatReceivedCount(),
+			Now - Task->GetLastHeartbeatReceivedTime(),
+			Task->GetClientLastHeartbeatSentTime() > 0.0 ? Now - Task->GetClientLastHeartbeatSentTime() : -1.0);
+	}
+
+	return Out;
+}
 
 UWorld* UGMCAbility::GetWorld() const
 {
@@ -38,6 +93,12 @@ bool UGMCAbility::IsActive() const
 
 void UGMCAbility::Tick(float DeltaTime)
 {
+	// Per-ability profiling scope, named by gameplay tag (class-name fallback). The FString
+	// is only built in trace-enabled configs — TRACE_CPUPROFILER_EVENT_SCOPE_TEXT compiles to
+	// nothing (and its argument is not evaluated) when CPUPROFILERTRACE_ENABLED == 0 (Shipping).
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::Tick [%s]"),
+		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
@@ -45,7 +106,13 @@ void UGMCAbility::Tick(float DeltaTime)
 	{
 		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Ability Not Confirmed By Server: %d, Removing..."), AbilityID);
+			// [AbilityCut] probe: the server never confirmed this AbilityID within the timeout.
+			// Either the server rejected/never ran the activation, or client/server generated
+			// diverging AbilityIDs and the confirm RPC targeted an instance we don't have.
+			// Full task dump so the log shows what the prediction was doing when it died.
+			UE_LOG(LogGMCAbilitySystem, Error,
+				TEXT("[AbilityCut] Client removing unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
+				ServerConfirmTimeout, *GetAbilityCutDiagnostics());
 			EndAbility();
 			return;
 		}
@@ -57,32 +124,104 @@ void UGMCAbility::Tick(float DeltaTime)
 	}
 
 	TickTasks(DeltaTime);
+	// A task ending itself mid-pass (or its Completed BP) can have ended the whole ability;
+	// don't fire the BP tick on a dead ability.
+	if (AbilityState == EAbilityState::Ended) return;
 	TickEvent(DeltaTime);
 }
 
 void UGMCAbility::AncillaryTick(float DeltaTime) {
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("Ability::AncTick [%s]"),
+		AbilityTag.IsValid() ? *AbilityTag.ToString() : *GetClass()->GetName()));
+
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
+	// [TaskDiag] census: with finished tasks unregistering themselves from RunningTasks, a
+	// server ability whose tasks ALL ended but whose graph never calls EndAbility has zero
+	// task-level liveness coverage left (the old ghost-task watchdog reaped it by accident).
+	// Don't auto-kill — the false-kill cure must not become a new kill path — but make the
+	// leak visible: one line once the ability has been task-less for two watchdog periods.
+	// Server net modes only, remote pawns only (local server pawns never ran the watchdog).
+	if (!bTasklessCensusLogged && TaskIDCounter >= 0 && OwnerAbilityComponent
+		&& (OwnerAbilityComponent->GetNetMode() == NM_DedicatedServer || OwnerAbilityComponent->GetNetMode() == NM_ListenServer)
+		&& OwnerAbilityComponent->GMCMovementComponent
+		&& !OwnerAbilityComponent->GMCMovementComponent->IsLocallyControlledServerPawn())
+	{
+		bool bHasLiveTask = false;
+		for (const TPair<int, UGMCAbilityTaskBase*>& TaskPair : RunningTasks)
+		{
+			if (TaskPair.Value && TaskPair.Value->GetState() != EGameplayTaskState::Finished)
+			{
+				bHasLiveTask = true;
+				break;
+			}
+		}
+		if (bHasLiveTask)
+		{
+			TasklessSinceTime = 0.0;
+		}
+		else
+		{
+			const double Now = FPlatformTime::Seconds();
+			if (TasklessSinceTime == 0.0)
+			{
+				TasklessSinceTime = Now;
+			}
+			else if (Now - TasklessSinceTime > 6.0) // 2x the task watchdog interval
+			{
+				// Neutral wording on purpose: abilities ended externally (cancel-by-tag, effect
+				// removal) legitimately idle task-less — this is coverage info, not an accusation.
+				const FString Diag = GetAbilityCutDiagnostics();
+				UE_LOG(LogGMCAbilitySystem, Verbose,
+					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
+					Now - TasklessSinceTime, *Diag);
+				UE_LOG(LogTemp, Verbose,
+					TEXT("[TaskDiag] Ability task-less for %.1fs and still active — no task-level liveness coverage (may be by design for externally-ended abilities). %s"),
+					Now - TasklessSinceTime, *Diag);
+				bTasklessCensusLogged = true;
+			}
+		}
+	}
+
 	AncillaryTickTasks(DeltaTime);
+	// The heartbeat watchdog inside AncillaryTickTasks can have ended the whole ability;
+	// don't fire the BP tick on a dead ability.
+	if (AbilityState == EAbilityState::Ended) return;
 	AncillaryTickEvent(DeltaTime);
+}
+
+void UGMCAbility::AncillaryTickEvent_Implementation(float DeltaTime)
+{
+}
+
+void UGMCAbility::TickEvent_Implementation(float DeltaTime)
+{
 }
 
 void UGMCAbility::TickTasks(float DeltaTime)
 {
-	for (int i = 0; i < RunningTasks.Num(); i++)
+	// Iterate a snapshot, never the live map: tasks end themselves mid-tick (WaitDelay & co)
+	// and unregister from RunningTasks in OnDestroy, and Completed broadcasts can run BP that
+	// registers NEW tasks — both mutate the map under a live range-for. The per-entry Finished
+	// check covers tasks mass-ended earlier in this same pass (watchdog -> EndAbility).
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksSnapshot;
+	RunningTasks.GenerateValueArray(TasksSnapshot);
+	for (UGMCAbilityTaskBase* Task : TasksSnapshot)
 	{
-		UGMCAbilityTaskBase* Task = RunningTasks[i];
-		if (Task == nullptr) { continue; }
+		if (!Task || Task->GetState() == EGameplayTaskState::Finished) continue;
 		Task->Tick(DeltaTime);
 	}
 }
 
 void UGMCAbility::AncillaryTickTasks(float DeltaTime) {
-	for (int i = 0; i < RunningTasks.Num(); i++)
+	// Same snapshot rationale as TickTasks — the watchdog inside AncillaryTick can end the
+	// whole ability (mass task unregistration) while this loop is running.
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksSnapshot;
+	RunningTasks.GenerateValueArray(TasksSnapshot);
+	for (UGMCAbilityTaskBase* Task : TasksSnapshot)
 	{
-		UGMCAbilityTaskBase* Task = RunningTasks[i];
-		if (Task == nullptr) { continue; }
+		if (!Task || Task->GetState() == EGameplayTaskState::Finished) continue;
 		Task->AncillaryTick(DeltaTime);
 	}
 }
@@ -104,16 +243,14 @@ bool UGMCAbility::CanAffordAbilityCost(float DeltaTime) const
 	UGMCAbilityEffect* AbilityEffect = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
 	for (FGMCAttributeModifier AttributeModifier : AbilityEffect->EffectData.Modifiers)
 	{
-		for (const FAttribute* Attribute : OwnerAbilityComponent->GetAllAttributes())
+		const FAttribute* Attribute = OwnerAbilityComponent->GetAttributeByTag(AttributeModifier.AttributeTag);
+		if (Attribute == nullptr) continue;
+
+		AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
+		if (!AttributeModifier.ResolveConditions(OwnerAbilityComponent)) continue; // a skipped cost is not a cost
+		if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
 		{
-			if (Attribute->Tag.MatchesTagExact(AttributeModifier.AttributeTag))
-			{
-				AttributeModifier.InitModifier(AbilityEffect, OwnerAbilityComponent->ActionTimer, -1.f, false, DeltaTime);
-				if (Attribute->Value + AttributeModifier.CalculateModifierValue(*Attribute) < 0.f)
-				{
-					return false;
-				}
-			}
+			return false;
 		}
 	}
 
@@ -149,6 +286,19 @@ void UGMCAbility::RemoveAbilityCost() {
 	}
 }
 
+TMap<FGameplayTag, float> UGMCAbility::GetAbilityCostValues() const
+{
+	TMap<FGameplayTag, float> CostMap;
+	if (!AbilityCost) return CostMap;
+
+	const UGMCAbilityEffect* EffectCDO = AbilityCost->GetDefaultObject<UGMCAbilityEffect>();
+    
+	for (const FGMCAttributeModifier& Modifier : EffectCDO->EffectData.Modifiers)
+	{
+		CostMap.Add(Modifier.AttributeTag, Modifier.GetValue()); 
+	}
+	return CostMap;
+}
 
 void UGMCAbility::ModifyBlockOtherAbility(FGameplayTagContainer TagToAdd, FGameplayTagContainer TagToRemove) {
 	for (auto Tag : TagToAdd) {
@@ -173,7 +323,50 @@ void UGMCAbility::HandleTaskData(int TaskID, FInstancedStruct TaskData)
 	{
 		if (TaskDataFromInstance.TaskType == EGMCAbilityTaskDataType::Progress)
 		{
-			RunningTasks[TaskID]->ProgressTask(TaskData);
+			// Idempotency guard for ALL task types: Progress payloads ride a GMC-bound
+			// ClientAuth_Input, so a client replay re-delivers the historical payload of every
+			// replayed move. No ProgressTask implementation (SetTargetData*, WaitForInputKey*)
+			// guards against re-entry on a finished task — without this gate the re-delivery
+			// re-broadcasts Completed and re-runs the BP continuation (double heal/commit,
+			// client-only task creation -> TaskID divergence -> heartbeat watchdog kill).
+			UGMCAbilityTaskBase* Task = RunningTasks[TaskID];
+			if (Task->IsTaskCompleted() || Task->GetState() == EGameplayTaskState::Finished)
+			{
+				UE_LOG(LogGMCAbilitySystem, Verbose,
+					TEXT("[TaskDiag] Progress payload ignored for already-finished task (TaskID=%d, Replaying=%d)."),
+					TaskID, OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic() ? 1 : 0);
+				return;
+			}
+			Task->ProgressTask(TaskData);
+		}
+	}
+	else if (TaskID <= TaskIDCounter)
+	{
+		// TaskIDs are monotonic and never reused, so an ID at or below the counter was issued
+		// here and its task already ended and unregistered — usually a benign late/replayed
+		// re-delivery racing the purge (the payload is correctly ignored either way). Caveat:
+		// a SHIFTED-ID divergence (both sides issued this numeric ID for different logical
+		// tasks) is indistinguishable here — don't rule divergence out on this line alone.
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Progress payload for already-unregistered TaskID=%d ignored (benign end race, Replaying=%d)."),
+			TaskID, OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic() ? 1 : 0);
+	}
+	else
+	{
+		// [TaskDiag] probe: a Progress payload arrived for a TaskID this side NEVER issued
+		// (above our monotonic counter). This is the silent dispatch failure that leaves the
+		// other side's task waiting forever — TaskIDs are independent per-side counters, so
+		// any asymmetric task creation (e.g. a BP branch firing on one side only, or a replay
+		// double-executing a graph) shifts every subsequent ID.
+		const FString Diag = GetAbilityCutDiagnostics();
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+			TaskID, TaskIDCounter, *Diag);
+		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[TaskDiag] Progress payload dropped: TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+				TaskID, TaskIDCounter, *Diag);
 		}
 	}
 }
@@ -183,6 +376,37 @@ void UGMCAbility::HandleTaskHeartbeat(int TaskID)
 	if (RunningTasks.Contains(TaskID) && RunningTasks[TaskID] != nullptr) // Do we ever remove orphans tasks ?
 	{
 		RunningTasks[TaskID]->Heartbeat();
+	}
+	else if (TaskID <= TaskIDCounter)
+	{
+		// Heartbeat for a task we issued and already ended/unregistered — the sender's twin
+		// just hasn't ended yet (up to one-way transit + the 1s send cadence). Benign.
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Heartbeat for already-unregistered TaskID=%d ignored (benign end race)."), TaskID);
+	}
+	else if (!WarnedDivergentTaskIDs.Contains(TaskID))
+	{
+		// [TaskDiag] probe: the sender is heartbeating a TaskID this side NEVER issued (above
+		// our monotonic counter) — its task layout diverged from ours. If a real twin was
+		// expected here it is starving and the watchdog will cancel the ability; an APPENDED
+		// extra task (e.g. created client-side during replay) starves nothing and just keeps
+		// beating. Warn once per TaskID — repeats at the 1/s send rate go Verbose below.
+		WarnedDivergentTaskIDs.Add(TaskID);
+		const FString Diag = GetAbilityCutDiagnostics();
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+			TaskID, TaskIDCounter, *Diag);
+		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[TaskDiag] Heartbeat for TaskID=%d never issued on this side (max issued %d) — TaskID divergence. %s"),
+				TaskID, TaskIDCounter, *Diag);
+		}
+	}
+	else
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[TaskDiag] Heartbeat for divergent TaskID=%d (already warned)."), TaskID);
 	}
 }
 
@@ -271,34 +495,115 @@ void UGMCAbility::OnGameplayTaskDeactivated(UGameplayTask& Task)
 
 
 void UGMCAbility::FinishEndAbility() {
-	
-	for (const TPair<int, UGMCAbilityTaskBase* >& Task : RunningTasks)
+
+	// [AbilityCut] probe: an ability ending while it still has unfinished tasks is the
+	// fingerprint of an abnormal cut (watchdog kill, confirm timeout, cancel-by-other,
+	// gameplay guard, forced server end). Normal completions end with every task already
+	// completed/finished. Logged on BOTH sides: the side that dies FIRST is the root cause —
+	// the other side follows seconds later (client stops heartbeating -> server watchdog,
+	// or server RPCClientEndAbility -> client). Compare timestamps across the two logs.
+	int32 UnfinishedTasks = 0;
+	for (const TPair<int, UGMCAbilityTaskBase*>& Task : RunningTasks)
 	{
-		if (Task.Value == nullptr) continue;
-		Task.Value->EndTaskGMAS();
+		if (Task.Value && !Task.Value->IsTaskCompleted() && Task.Value->GetState() != EGameplayTaskState::Finished)
+		{
+			UnfinishedTasks++;
+		}
+	}
+	if (UnfinishedTasks > 0)
+	{
+		const FString Diag = GetAbilityCutDiagnostics();
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
+			UnfinishedTasks, *Diag);
+		// Mirror onto LogTemp: the dedicated-server log export only ships a fixed category
+		// allowlist (LogTemp included, LogGMCAbilitySystem not).
+		if (OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority())
+		{
+			UE_LOG(LogTemp, Warning,
+				TEXT("[AbilityCut] Ability ending with %d unfinished task(s). %s"),
+				UnfinishedTasks, *Diag);
+		}
 	}
 
-	// End handled effect
+	// Snapshot: EndTaskGMAS -> EndTask -> OnDestroy unregisters the entry being visited,
+	// which would invalidate a live range-for over the map. EndTask itself is idempotent
+	// (engine-guarded on TaskState != Finished), so re-ending a task is a safe no-op.
+	TArray<UGMCAbilityTaskBase*, TInlineAllocator<8>> TasksToEnd;
+	RunningTasks.GenerateValueArray(TasksToEnd);
+	for (UGMCAbilityTaskBase* Task : TasksToEnd)
+	{
+		if (Task == nullptr) continue;
+		Task->EndTaskGMAS();
+	}
+
+	// End handled effect.
+	// Predicted's Safe path ensure-rejects outside a GMC tick. Remap to PredictedQueued only when
+	// called from an RPC handler (outside any tick); inside a tick, Predicted removes immediately
+	// with no delay. The state cannot change inside this call, so it is read once.
+	const bool bInsideGMCTick = OwnerAbilityComponent
+		&& ((OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone);
+
 	for (const auto& EfData : DeclaredEffect)
 	{
-		// Skip Auth effect removal on client 
+		// Skip Auth effect removal on client
 		if (EfData.Value == EGMCAbilityEffectQueueType::ServerAuth && !OwnerAbilityComponent->HasAuthority())  { continue;}
+
+		const EGMCAbilityEffectQueueType QueueType =
+			(EfData.Value == EGMCAbilityEffectQueueType::Predicted && !bInsideGMCTick)
+				? EGMCAbilityEffectQueueType::PredictedQueued
+				: EfData.Value;
 
 		if (UGMCAbilityEffect* Effect =	OwnerAbilityComponent->GetEffectById(EfData.Key))
 		{
 			// Don't try to close effects that are already ended
 			if (Effect->CurrentState == EGMASEffectState::Started)
 			{
-				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, EfData.Value);
+				OwnerAbilityComponent->RemoveActiveAbilityEffectSafe(Effect, QueueType);
 			}
 			else
 			{
 				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Handle %d already ended for ability %s"), EfData.Key, *AbilityTag.ToString());
 			}
 		}
-		else
+		else if (const FGameplayTag* DeclaredTag = DeclaredEffectTags.Find(EfData.Key))
 		{
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect Handle %d not found for ability %s"), EfData.Key, *AbilityTag.ToString());
+			// The id no longer resolves: a replay re-created this effect under a server id the ability
+			// never learned. Reaching it by tag is the only way left. Without this the instance is
+			// orphaned, and a Persistent effect keeps granting its tags for the rest of the life --
+			// the weapon stays in ADS and the reload is refused after a revive.
+			// One instance only: another ability may legitimately own a second one.
+			const int32 Removed = OwnerAbilityComponent->RemoveEffectByTagSafe(*DeclaredTag, 1, QueueType);
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[EffectLeak] Declared effect id %d no longer resolves for ability %s. Removed %d instance(s) by tag %s."),
+				EfData.Key, *AbilityTag.ToString(), Removed, *DeclaredTag->ToString());
+		}
+	}
+
+	// Chain hooks: apply / remove effects when this ability ends. Reuses bInsideGMCTick from the
+	// DeclaredEffect removal block above — Predicted requires being inside a GMC tick or
+	// Standalone, otherwise PredictedQueued is used to defer until the next safe window.
+	if (OwnerAbilityComponent && (ApplyEffectOnEnd.Num() > 0 || !RemoveEffectOnEnd.IsEmpty()))
+	{
+		const EGMCAbilityEffectQueueType ChainQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+
+		for (const TSubclassOf<UGMCAbilityEffect>& EffectClass : ApplyEffectOnEnd)
+		{
+			if (EffectClass)
+			{
+				OwnerAbilityComponent->ApplyAbilityEffectShort(EffectClass, ChainQueueType);
+			}
+		}
+
+		for (const FGameplayTag& EffectTag : RemoveEffectOnEnd)
+		{
+			if (EffectTag.IsValid())
+			{
+				OwnerAbilityComponent->RemoveEffectByTagSafe(EffectTag, -1, ChainQueueType);
+			}
 		}
 	}
 
@@ -325,6 +630,19 @@ void UGMCAbility::DeclareEffect(int OutEffectHandle, EGMCAbilityEffectQueueType 
 		return;
 	}
 	DeclaredEffect.Add(OutEffectHandle, EffectType);
+
+	// Cache the tag now, while the id still resolves. FinishEndAbility needs it to reach the effect
+	// after a replay renumbered it.
+	if (OwnerAbilityComponent)
+	{
+		if (const UGMCAbilityEffect* Effect = OwnerAbilityComponent->GetEffectById(OutEffectHandle))
+		{
+			if (Effect->EffectData.EffectTag.IsValid())
+			{
+				DeclaredEffectTags.Add(OutEffectHandle, Effect->EffectData.EffectTag);
+			}
+		}
+	}
 }
 
 bool UGMCAbility::PreBeginAbility()
@@ -361,7 +679,7 @@ bool UGMCAbility::PreBeginAbility()
 			return false;
 		}
 	}
-	
+
 
 	if (OwnerAbilityComponent->IsAbilityTagBlocked(AbilityTag)) {
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability Activation for %s Stopped because Blocked By Other Ability"), *AbilityTag.ToString());
@@ -398,6 +716,25 @@ void UGMCAbility::BeginAbility()
 		}
 	}
 
+	// Chain: consume the window(s) that admitted this stage. Same queue-type
+	// detection as the FinishEndAbility chain hooks.
+	if (OwnerAbilityComponent && !ChainConsumeWindowTags.IsEmpty())
+	{
+		const bool bInsideGMCTick =
+			(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+			|| OwnerAbilityComponent->IsInAncillaryTick()
+			|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+		const EGMCAbilityEffectQueueType ConsumeQueueType =
+			bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+		for (const FGameplayTag& WindowTag : ChainConsumeWindowTags)
+		{
+			if (WindowTag.IsValid())
+			{
+				OwnerAbilityComponent->RemoveEffectByTagSafe(WindowTag, -1, ConsumeQueueType);
+			}
+		}
+	}
+
 	if (bApplyCooldownAtAbilityBegin)
 	{
 		CommitAbilityCooldown();
@@ -413,9 +750,39 @@ void UGMCAbility::BeginAbility()
 	BeginAbilityEvent();
 }
 
+void UGMCAbility::BeginAbilityEvent_Implementation()
+{
+}
+
 void UGMCAbility::EndAbility()
 {
 	if (AbilityState != EAbilityState::Ended) {
+		// Chain: grant the next stage's window on NATURAL end only —
+		// CancelAbility skips this on purpose (interrupted swings don't
+		// advance a combo).
+		if (OwnerAbilityComponent && ChainWindowTag.IsValid() && ChainWindowDuration > 0.f)
+		{
+			const bool bInsideGMCTick =
+				(OwnerAbilityComponent->GMCMovementComponent && OwnerAbilityComponent->GMCMovementComponent->IsExecutingMove())
+				|| OwnerAbilityComponent->IsInAncillaryTick()
+				|| OwnerAbilityComponent->GetNetMode() == NM_Standalone;
+			const EGMCAbilityEffectQueueType WindowQueueType =
+				bInsideGMCTick ? EGMCAbilityEffectQueueType::Predicted : EGMCAbilityEffectQueueType::PredictedQueued;
+
+			FGMCAbilityEffectData WindowData;
+			WindowData.EffectTag = ChainWindowTag;
+			WindowData.GrantedTags.AddTag(ChainWindowTag);
+			// Persistent (not the default Instant — that ends the same frame
+			// and the tag never survives) with a finite Duration.
+			WindowData.EffectType = EGMASEffectType::Persistent;
+			WindowData.Duration = ChainWindowDuration;
+			WindowData.bUniqueByEffectTag = true; // re-grant refreshes, never stacks
+
+			int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
+			OwnerAbilityComponent->ApplyAbilityEffect(
+				UGMCAbilityEffect::StaticClass(), WindowData, WindowQueueType, OutHandle, OutId, OutEffect);
+		}
+
 		FinishEndAbility();
 		EndAbilityEvent();
 		OwnerAbilityComponent->OnAbilityEnded.Broadcast(this);
@@ -429,6 +796,9 @@ void UGMCAbility::CancelAbility() {
 	}
 }
 
+void UGMCAbility::EndAbilityEvent_Implementation()
+{
+}
 
 AActor* UGMCAbility::GetOwnerActor() const
 {
@@ -460,6 +830,12 @@ float UGMCAbility::GetOwnerAttributeValueByTag(FGameplayTag AttributeTag) const
 void UGMCAbility::SetOwnerJustTeleported(bool bValue)
 {
 	OwnerAbilityComponent->bJustTeleported = bValue;
+}
+
+void UGMCAbility::SetBlockAllOtherAbilities(bool bBlockAll)
+{
+	bBlockAllOtherAbilities = bBlockAll;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("BlockAllOtherAbilities set to %d on %s"), bBlockAll, *AbilityTag.ToString());
 }
 
 void UGMCAbility::ModifyBlockOtherAbilitiesViaDefinitionQuery(const FGameplayTagQuery& NewQuery)
