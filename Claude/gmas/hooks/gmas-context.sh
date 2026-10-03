@@ -23,11 +23,14 @@ emit() {
 }
 
 # Walk up: the first directory with a .uproject is the project root. Remember a GMAS repository
-# checkout seen on the way, used only when no project exists above it.
+# checkout seen on the way, used only when no project exists above it. The filesystem root is
+# never examined: no project lives at /, and on MSYS globbing /* enumerates drive letters, which
+# can stall on slow or mapped drives (drive roots such as /c are still checked).
 project_root=""
 gmas_repo_root=""
 dir="$PWD"
 while [ -n "$dir" ]; do
+	[ "$dir" = "/" ] && break
 	if has_uproject "$dir"; then project_root="$dir"; break; fi
 	if [ -z "$gmas_repo_root" ] && [ -f "$dir/GMCAbilitySystem.uplugin" ]; then gmas_repo_root="$dir"; fi
 	parent="$(dirname "$dir")"
