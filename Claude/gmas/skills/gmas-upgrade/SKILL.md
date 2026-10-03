@@ -123,6 +123,12 @@ ASC->ApplyAbilityEffect(UMyEffect_Burn::StaticClass(), Data, EGMCAbilityEffectQu
 
 A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-source-audit.md` in the GMAS repository). `VersionName` stays `"1.4"`; tell the trees apart by the `v1.4.1` tag or by `Source/GMCAbilitySystemTests/` existing. Every row is old (1.4.0) → new (1.4.1) → what to change.
 
+The changes fall in three tiers. Most of the release is the third: fixes that change behaviour only for code that relied on the bug. Two downstream projects (one on 1.4.0, one on 1.3) built and passed their tests against 1.4.1 without code changes; expect work mainly from tier 2's cancel-versus-end row.
+
+### Tier 1: breaking (compile, link or wire)
+
+A project that touches these fails to build, or a mixed client/server pair stops exchanging task payloads. Each fix is mechanical.
+
 **Wire and build compatibility:**
 
 | 1.4.0 | 1.4.1 | What to change |
@@ -154,15 +160,32 @@ A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-
 | `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout = 1.0f)` | `QueueServerOperation(int, float Timeout)`: no default; the component passes `UGMASNetworkTimingSettings::ServerOperationGraceSeconds` (new, 1 s) or 0 for pawns without a client | pass a timeout; tune the grace in Project Settings → GMC Ability System → Network Timing |
 | `UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn()` | `DrivesPawnLocally()` (same answer); the old name is deprecated | rename in task subclasses |
 
-**Abilities: cancel versus end** (`Public/Ability/GMCAbility.h`):
+### Tier 2: semantics changes (review your abilities)
+
+Deliberate new behaviour. Builds unchanged, but gameplay code written against 1.4.0 may need adjusting; the cancel-versus-end row is the one most projects must audit.
 
 | 1.4.0 | 1.4.1 | What to change |
 |---|---|---|
 | abnormal and external ends were natural ends (`EndAbility()`: `EndAbilityEvent`, `OnAbilityEnded`, chain window): the client confirm timeout, `RPCClientEndAbility`, the task heartbeat watchdog, `CancelAbilitiesWithTag`, an effect's `CancelAbilityOnActivation` / `CancelAbilityOnEnd` and `EndAbilityOn*Query`, `EndOtherAbilitiesQuery`, `BlockOtherAbilitiesQuery` | all of them call `CancelAbility()`: no `EndAbilityEvent`, no `OnAbilityEnded`, no chain window; the new `CancelAbilityEvent` (BlueprintNativeEvent) and the component's `OnAbilityCancelled` fire instead. New `CancelAbilitiesByTag` / `CancelAbilitiesByQuery`; `EndAbilitiesByTag` / `ByClass` / `ByQuery` keep the natural end | cleanup that must run on both paths (stop loops, hide cosmetics, release state) implements `CancelAbilityEvent` as well as `EndAbilityEvent`, or binds `OnAbilityCancelled` next to `OnAbilityEnded`. Code that relied on a chain window opening or an end event after an interruption calls `EndAbilitiesByTag` explicitly |
-| an activation refused in `PreBeginAbility` ran `ApplyEffectOnEnd` / `RemoveEffectOnEnd` | a refused ("dead-born") activation fires no cancel hooks and applies no end effects | nothing, unless content relied on end effects of refused presses |
 | `OnAbilityActivated` fired from `BeginAbility` with the ability still `PreExecution`; a listener's `CancelAbility()` was undone and left a live instance | fires from `PreBeginAbility` with the ability `Initialized` (`IsActive()` true); a listener's `CancelAbility()` refuses the activation (no cooldown, no `BeginAbilityEvent`; the cancel hooks fire) | listeners that checked `IsActive()` or the state adjust |
-| `EndAbility` / `CancelAbility` could both run on one instance | one entry latch: the first end wins, the other call is ignored, exactly one hook set fires | nothing |
 | `BeginAbility` overrides could assume the ability was alive after `Super` | a cancel inside `Super::BeginAbility()` (from `CancelConflictingAbilities`) leaves it `Ended` | an override that creates tasks, declares effects or commits a cost after `Super` adds `if (AbilityState == EAbilityState::Ended) { return; }` |
+| activation never checked `AbilityCost` | `PreBeginAbility` refuses an unaffordable activation (`Stopped By Cost` at Verbose) with `CanAffordAbilityCost()`'s default `DeltaTime = 1`: a `Ticking` or `Periodic` cost is judged over one second. A refused activation consumes the press (no fallthrough to the next candidate). Cost attributes that are not GMC-bound log one Warning per ability class | a `PreExecuteCheckEvent` that returned `CanAffordAbilityCost()` may stay or go; size ticking costs for one second at activation; bind cost attributes |
+| `CommitAbilityCost` did not declare its instance: a `Ticking` / `Persistent` cost survived `CancelAbility` | a non-`Instant` cost is declared and ends with the ability on every path; `RemoveAbilityCost` also forgets the declaration | drop hand-written removal in cancel overrides (harmless if kept) |
+| an ability instance copied a hand-kept list of 12 properties from its class default object | `NewObject(..., bCopyTransientsFromClassDefaults = true)`: every reflected property, transient ones included, as the engine copies them for Blueprint classes | native abilities whose class defaults are changed at runtime now see those values on new instances (and `ApplyEffectOnEnd`, `RemoveEffectOnEnd`, `EndOtherAbilitiesQuery`, `BlockOtherAbilitiesQuery` and the rest reach instances, which the old list omitted) |
+| `StartingEffects` were polled from the prediction tick | applied from the server's ancillary tick once the pawn has a controller | nothing, unless code read them inside the first prediction tick |
+| `SetAttributeValueByTag` changed nothing and returned `true` | changes nothing, returns `false`, logs one Warning per component; deprecated | apply a `Set` / `SetReplace` modifier through an effect or `ApplyAbilityAttributeModifier` |
+| `GetAbilityCostValues` read each modifier's raw value (non-`AMT_Value` sources 0 with an Error), last modifier per attribute won | with an owner: per attribute, the projected change (target − current for a `Set`); on a class default object: the raw `AMT_Value` amounts summed per attribute (other sources 0, no Error) | UI that displayed it shows sums |
+
+### Tier 3: fixes that change behaviour
+
+Each row was a bug. Nothing to do unless your project relied on the old behaviour or coded a workaround, which you can now remove.
+
+**Abilities** (`Public/Ability/GMCAbility.h`):
+
+| 1.4.0 | 1.4.1 | What to change |
+|---|---|---|
+| an activation refused in `PreBeginAbility` ran `ApplyEffectOnEnd` / `RemoveEffectOnEnd` | a refused ("dead-born") activation fires no cancel hooks and applies no end effects | nothing, unless content relied on end effects of refused presses |
+| `EndAbility` / `CancelAbility` could both run on one instance | one entry latch: the first end wins, the other call is ignored, exactly one hook set fires | nothing |
 | `End*By*` returned counts including unpurged `Ended` instances | counts and loops skip them | nothing |
 | `EAbilityState::Running`, `Waiting` visible | hidden (`DEPRECATED: never assigned`) | Blueprint *Switch on EAbilityState* nodes may show orphan pins: delete them |
 | `BlockOtherAbilitiesQuery` displayed as *Block Other Ability via Definition Query* | *End Other Abilities On Begin (Definition Query)* (it cancels; it never blocked); the effect queries display as *Cancel Abilities On Activation / On End Via Definition Query* | nothing: property names and asset data unchanged |
@@ -171,11 +194,7 @@ A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-
 
 | 1.4.0 | 1.4.1 | What to change |
 |---|---|---|
-| activation never checked `AbilityCost` | `PreBeginAbility` refuses an unaffordable activation (`Stopped By Cost` at Verbose) with `CanAffordAbilityCost()`'s default `DeltaTime = 1`: a `Ticking` or `Periodic` cost is judged over one second. A refused activation consumes the press (no fallthrough to the next candidate). Cost attributes that are not GMC-bound log one Warning per ability class | a `PreExecuteCheckEvent` that returned `CanAffordAbilityCost()` may stay or go; size ticking costs for one second at activation; bind cost attributes |
 | `CanAffordAbilityCost` tested each modifier alone (two −30 on 50 passed) and treated `Set` as an add; attribute-sourced values read 0 | judged per attribute over all modifiers from the current `Value`; `Set` / `SetReplace` absolute; attribute-sourced values and `Conditions` resolved through the owner | costs that passed by accident now refuse |
-| `GetAbilityCostValues` read each modifier's raw value (non-`AMT_Value` sources 0 with an Error), last modifier per attribute won | with an owner: per attribute, the projected change (target − current for a `Set`); on a class default object: the raw `AMT_Value` amounts summed per attribute (other sources 0, no Error) | UI that displayed it shows sums |
-| `CommitAbilityCost` did not declare its instance: a `Ticking` / `Persistent` cost survived `CancelAbility` | a non-`Instant` cost is declared and ends with the ability on every path; `RemoveAbilityCost` also forgets the declaration | drop hand-written removal in cancel overrides (harmless if kept) |
-| an ability instance copied a hand-kept list of 12 properties from its class default object | `NewObject(..., bCopyTransientsFromClassDefaults = true)`: every reflected property, transient ones included, as the engine copies them for Blueprint classes | native abilities whose class defaults are changed at runtime now see those values on new instances (and `ApplyEffectOnEnd`, `RemoveEffectOnEnd`, `EndOtherAbilitiesQuery`, `BlockOtherAbilitiesQuery` and the rest reach instances, which the old list omitted) |
 
 **Effects** (`Public/Effects/GMCAbilityEffect.h`, `Public/Components/GMCAbilityComponent.h`):
 
@@ -191,7 +210,6 @@ A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-
 | a buffered `PredictedQueued` apply returned `true` with id `-1`; a unique-tag rejection inside a move returned `true` | the buffered apply returns the id it reserved; a rejection returns `false` | keep the returned id |
 | `ServerInstantAttribute` checked only `EffectType`, `GrantedTags`, `GrantedAbilities` (cancel and chain fields then ran server-only); fallback with `ensure` + Warning | also requires no `Delay`, no `CancelAbilityOn*`, `EndAbilityOn*Query`, `ApplyEffectOnEnd`, `RemoveEffectOnEnd`, in the class and the inline data; otherwise an Error and the `ServerAuth` path | effects that relied on the server-only side effects now travel `ServerAuth` (one round trip later) |
 | `RemoveSynchronizedTag` matched hierarchically (removed child tags' effects) | exact match | nothing, unless content relied on removing children |
-| `StartingEffects` were polled from the prediction tick | applied from the server's ancillary tick once the pawn has a controller | nothing, unless code read them inside the first prediction tick |
 | effect-id range overflow (about 83 days of move time, or a negative clock) was `Fatal` | wraps inside the range with one Error per component (`[EffectID] <Generator>: ... ids wrap`); ids stay unique among live and reserved effects | nothing; ids can repeat across a very long session |
 | a predicted removal outside a move, and other data errors, hit `ensure` / `checkNoEntry` | an Error log and a skip | log watchers catch the Errors |
 
@@ -199,7 +217,6 @@ A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-
 
 | 1.4.0 | 1.4.1 | What to change |
 |---|---|---|
-| `SetAttributeValueByTag` changed nothing and returned `true` | changes nothing, returns `false`, logs one Warning per component; deprecated | apply a `Set` / `SetReplace` modifier through an effect or `ApplyAbilityAttributeModifier` |
 | `bStartFull` won over `SetAttributeInitialValue`; the hook ran before dependent rows resolved | rows resolve, the hook runs once per attribute, then every row settles again; the hook wins over `bStartFull`, never over the clamp (Error, clamped) | overrides that were silently lost now apply |
 | `GetAttributeInitialValueByTag` returned the row's `DefaultValue` | the value actually applied; `-1` and one Warning per tag for an unknown tag | callers that wanted the asset value read the data asset |
 | duplicate attribute tags resolved silently; an active `[0, 0]` clamp was silent | Error naming the asset(s); the second declaration ignored; `[0, 0]` reported at init (a deliberate zero pin too) | fix the rows |
@@ -244,7 +261,7 @@ A patch release that fixes the 2026-10-03 source audit (`docs/audits/2026-10-03-
 
 `FGMCAttributeModifier::MetaTags` is user metadata (GMAS carries it and never reads it) and is not deprecated. Earlier deprecations (`RemoveActiveAbilityEffectByHandle`, `RemoveEffectByHandle`, `RemoveEffectByTag`, `RemoveEffectById`) are unchanged.
 
-**Procedure for 1.4 → 1.4.1:** move the submodule to `v1.4.1` and rebuild client and server together (the task payload changed); fix the compile errors with the *Signatures* table and treat each new deprecation warning as a work item; then search your content for the behaviour rows: every `EndAbilityEvent` that also cleans up after an interruption (add `CancelAbilityEvent`), every `BeginAbility` override with work after `Super`, every cost that relied on the missing gate, every `SetAttributeValueByTag` caller that checked the return, and every ticking effect whose removal timing matters (or set `DefaultClientGraceTime = 0`). Run the `GMAS.*` specs (all pass on 1.4.1) and a networked PIE session (`gmas:gmas-testing`).
+**Procedure for 1.4 → 1.4.1:** move the submodule to `v1.4.1` and rebuild client and server together (tier 1: the task payload changed); fix any compile errors with the tier 1 tables and treat each new deprecation warning as a work item. Then walk tier 2: every `EndAbilityEvent` that also cleans up after an interruption (add `CancelAbilityEvent`), every `BeginAbility` override with work after `Super`, every cost that relied on the missing gate, every `SetAttributeValueByTag` caller that checked the return. Skim tier 3 for workarounds you can delete, and for ticking effects whose removal timing matters (or set `DefaultClientGraceTime = 0`). Run the `GMAS.*` specs (all pass on 1.4.1) and a networked PIE session (`gmas:gmas-testing`).
 
 ## Later releases
 
