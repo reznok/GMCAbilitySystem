@@ -190,6 +190,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void ResetBlockOtherAbility();
 
+	// Live toggle for bBlockAllOtherAbilities, e.g. to open the gate during a
+	// recovery phase after blocking through a windup.
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	virtual void SetBlockAllOtherAbilities(bool bBlockAll);
+
 	// GMC_AbilitySystemComponent that owns this ability
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
 	UGMC_AbilitySystemComponent* OwnerAbilityComponent;
@@ -233,6 +238,17 @@ public:
 	// If those ability are active, they will prevent this ability from activating
 	FGameplayTagContainer BlockedByOtherAbility;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem")
+	// While this ability is active, no other ability may activate unless its
+	// AbilityTag matches BlockAllAllowedTags. Checked in IsAbilityTagBlocked,
+	// so it gates every activation path (normal, client-auth, queue replay).
+	bool bBlockAllOtherAbilities = false;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(Categories="Ability"))
+	// Exceptions to bBlockAllOtherAbilities: candidates whose AbilityTag matches
+	// any of these (hierarchical) may still activate while this ability runs.
+	FGameplayTagContainer BlockAllAllowedTags;
+
 	// Effect classes to apply when this ability ends (whether via EndAbility or CancelAbility).
 	// Each entry is applied via ApplyAbilityEffectShort using a queue type chosen at runtime:
 	// Predicted while inside a GMC tick (movement/ancillary) or Standalone, PredictedQueued
@@ -245,6 +261,24 @@ public:
 	// type policy as ApplyEffectOnEnd.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain", meta = (Categories = "Effect"))
 	FGameplayTagContainer RemoveEffectOnEnd;
+
+	// Chain window: on NATURAL EndAbility (not CancelAbility), the ASC applies an
+	// internally-built transient effect (EffectTag = ChainWindowTag, grants
+	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag so a
+	// re-grant refreshes). While the tag is up, the next chain stage's
+	// ActivationRequiredTags can pass. None = no window granted.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	FGameplayTag ChainWindowTag;
+
+	// Seconds the chain window tag stays granted after this ability ends.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	float ChainWindowDuration = 0.f;
+
+	// Window effects matching these tags are removed on successful activation
+	// (BeginAbility, after every gate passed). A denied/cancelled activation
+	// consumes nothing — the chain window survives a whiffed press.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
+	FGameplayTagContainer ChainConsumeWindowTags;
 
 	/**
 	 * Cancels active abilities based on specific conditions.

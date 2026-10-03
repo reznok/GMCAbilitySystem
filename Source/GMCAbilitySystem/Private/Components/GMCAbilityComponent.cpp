@@ -6,6 +6,7 @@
 #include "GMCAbilitySystem.h"
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
+#include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Ability/GMCAbility.h"
 #include "Ability/GMCAbilityMapData.h"
@@ -688,15 +689,26 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	// Operation-derived AbilityIDs: both sides iterate the same granted list (bound
 	// replicated tags) in the same order, so (SourceOperationID, index) names the same
 	// logical activation on client and server.
+	//
+	// First-passing-wins: one input press activates exactly one ability.
+	// TryActivateAbility returns false when CheckActivationTags rejects
+	// (required/blocked tags, query) — those fall through to the next
+	// candidate, which is how chain stages share one InputTag. It returns
+	// true once an ability gets past the tag gates (even if PreBeginAbility
+	// later cancels it, e.g. out-of-range PreExecuteCheck) — stop there:
+	// the press was consumed by that ability.
 	for (int ActivationIndex = 0; ActivationIndex < GrantedAbilities.Num(); ActivationIndex++)
 	{
 		const int ForcedAbilityID = SourceOperationID != 0
 			? DeriveAbilityIDFromOperation(SourceOperationID, ActivationIndex)
 			: 0;
-		TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID);
+		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID))
+		{
+			return true;
+		}
 	}
 
-	return true;
+	return false;
 }
 
 bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID)
@@ -799,6 +811,11 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	Ability->AbilityCost            = AbilityCDO->AbilityCost;
 	Ability->BlockedByOtherAbility  = AbilityCDO->BlockedByOtherAbility;
 	Ability->BlockOtherAbility      = AbilityCDO->BlockOtherAbility;
+	Ability->bBlockAllOtherAbilities = AbilityCDO->bBlockAllOtherAbilities;
+	Ability->BlockAllAllowedTags    = AbilityCDO->BlockAllAllowedTags;
+	Ability->ChainWindowTag         = AbilityCDO->ChainWindowTag;
+	Ability->ChainWindowDuration    = AbilityCDO->ChainWindowDuration;
+	Ability->ChainConsumeWindowTags = AbilityCDO->ChainConsumeWindowTags;
 	Ability->CancelAbilitiesWithTag = AbilityCDO->CancelAbilitiesWithTag;
 	Ability->AbilityDefinition      = AbilityCDO->AbilityDefinition;
 
@@ -890,9 +907,9 @@ void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInp
 	}
 	else
 	{
-		BoundQueueV2.QueueServerOperation(OperationID);
+		EnqueueServerOperation(OperationID);
 	}
-	
+
 }
 
 int32 UGMC_AbilitySystemComponent::GetQueuedAbilityCount(FGameplayTag AbilityTag)
@@ -919,6 +936,13 @@ bool UGMC_AbilitySystemComponent::IsAbilityTagBlocked(const FGameplayTag Ability
 	for (const auto& ActiveAbility : ActiveAbilities) {
 		if (IsValid(ActiveAbility.Value) && ActiveAbility.Value->AbilityState != EAbilityState::Ended)
 		{
+			if (ActiveAbility.Value->bBlockAllOtherAbilities &&
+				!AbilityTag.MatchesAny(ActiveAbility.Value->BlockAllAllowedTags))
+			{
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, block-all active from Ability: %s"), *ActiveAbility.Value->GetName());
+				return true;
+			}
+
 			for (auto& Tag : ActiveAbility.Value->BlockOtherAbility) {
 				if (AbilityTag.MatchesTag(Tag)) {
 					UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Ability can't activate, blocked by Ability: %s"), *ActiveAbility.Value->GetName());
@@ -1096,10 +1120,53 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		// Server processes client output payloads
 		const FGMC_PawnState OutputState = GMCMovementComponent->SV_GetLastClientData().OutputState;
 		const FInstancedStruct ClientPayloadOperationData = GMCMovementComponent->GetBoundInstancedStruct(BoundQueueV2.BI_OperationData, OutputState);
+
+		// DIAGNOSTIC: log what we're reading from client output state EACH tick
+		// when there's any non-empty struct. Catches both single Acks (OpID>0)
+		// AND BatchAcks (OpID==0 base, carries AcknowledgedIDs array).
+		const UScriptStruct* ClientStruct = ClientPayloadOperationData.GetScriptStruct();
+		if (ClientStruct && ClientStruct != FGMASBoundQueueV2OperationBaseData::StaticStruct())
+		{
+			const FGMASBoundQueueV2OperationBaseData* ClientBase =
+				ClientPayloadOperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+
+			FString ExtraIds;
+			if (ClientStruct == FGMASBoundQueueV2BatchAcknowledgeOperation::StaticStruct())
+			{
+				const FGMASBoundQueueV2BatchAcknowledgeOperation* BAck =
+					ClientPayloadOperationData.GetPtr<FGMASBoundQueueV2BatchAcknowledgeOperation>();
+				if (BAck)
+				{
+					ExtraIds = FString::Printf(TEXT(" batch_ids=[%s]"),
+						*FString::JoinBy(BAck->AcknowledgedIDs, TEXT(","), [](int32 ID) { return FString::Printf(TEXT("%d"), ID); }));
+				}
+			}
+
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[AckTrace:Server:GenTick] OpData received from client output: op=%d struct=%s move_ts=%.4f%s"),
+				ClientBase ? ClientBase->OperationID : -1,
+				*ClientStruct->GetName(),
+				GMCMovementComponent->GetMoveTimestamp(),
+				*ExtraIds);
+		}
+
 		ServerProcessOperation(ClientPayloadOperationData, true);
 	}
 	else
 	{
+		// DIAGNOSTIC: log what's in OperationData on client (or server-local) path
+		const FGMASBoundQueueV2OperationBaseData* SelfBase =
+			BoundQueueV2.OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
+		if (SelfBase && SelfBase->OperationID != 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[AckTrace:Client:GenTick] OperationData op=%d struct=%s move_ts=%.4f auth=%d"),
+				SelfBase->OperationID,
+				BoundQueueV2.OperationData.GetScriptStruct() ? *BoundQueueV2.OperationData.GetScriptStruct()->GetName() : TEXT("null"),
+				GMCMovementComponent->GetMoveTimestamp(),
+				HasAuthority() ? 1 : 0);
+		}
+
 		ProcessOperation(BoundQueueV2.OperationData, true);
 	}
 	} // GMAS_Pred_ProcessOperation
@@ -1231,9 +1298,9 @@ void UGMC_AbilitySystemComponent::BoundQueueV2Debug(TSubclassOf<UGMCAbilityEffec
 		EffectActivationData.EffectClass = Effect;
 		EffectActivationData.EffectID = GetNextAvailableServerAuthEffectID();
 		int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
-		BoundQueueV2.QueueServerOperation(OperationID);
+		EnqueueServerOperation(OperationID);
 	}
-} 
+}
 
 void UGMC_AbilitySystemComponent::OnServerOperationForced(FInstancedStruct OperationData)
 {
@@ -2313,12 +2380,31 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		{
 			if (!BoundQueueV2.HasPayloadByID(SubID))
 			{
-				// A sub-operation whose payload is missing from the cache (expired, never
-				// delivered) cannot be applied on this side. This used to be a SILENT skip:
-				// the batch still reported success, the op landed on the other side only,
-				// and the resulting state divergence had no trace anywhere. Keep skipping
-				// (nothing to apply) and keep it OUT of the ack list — so the server's
-				// grace-timeout drain still has a chance to force it — but log it loudly.
+				// A sub-operation whose payload is missing from the cache cannot be
+				// applied on this side. There are two distinct reasons for that:
+				//
+				//  (1) BENIGN REPROCESS. The authority re-reads the same bound
+				//      OperationData on both the prediction tick and the ancillary
+				//      tick (and on every server tick until a fresh client move
+				//      overwrites the slot). The FIRST pass already applied this
+				//      sub-op and drained its cached payload (RemovePayloadByID on
+				//      authority); the later passes simply find it gone. This is the
+				//      MP error-spam case — silently skip it, exactly mirroring the
+				//      single-op drained-reprocess no-op (which returns false quietly
+				//      on the cache miss). Keep it OUT of the ack list as before.
+				//
+				//  (2) GENUINE DIVERGENCE. The payload was never delivered / expired
+				//      and was never applied here. This is the case the diagnostic
+				//      exists to catch — log it loudly. Keeping it OUT of the ack list
+				//      also leaves the server's grace-timeout drain free to force it.
+				//
+				// MarkOperationProcessed (below) records every successfully-applied
+				// sub-op, so WasOperationRecentlyProcessed distinguishes (1) from (2).
+				if (BoundQueueV2.WasOperationRecentlyProcessed(SubID))
+				{
+					continue;
+				}
+
 				UE_LOG(LogGMCAbilitySystem, Error,
 					TEXT("[BatchOp] Sub-operation %d payload missing from cache — NOT applied on this side (batch of %d sub-ops, Authority=%d, Replaying=%d)."),
 					SubID, Batch.SubOperationIDs.Num(), HasAuthority() ? 1 : 0, IsReplayingForGMASLogic() ? 1 : 0);
@@ -2338,9 +2424,22 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			if (ProcessOperation(WrappedSub, bFromMovementTick, bForce))
 			{
 				AckedIDs.Add(SubID);
+				// Record the successful dispatch so a later reprocess of the same
+				// stale bound OperationData (cache already drained) is recognised as
+				// a benign no-op rather than a genuine missing-payload divergence.
+				// Deferred ability-activation sub-ops that fail on the prediction tick
+				// return false here (payload preserved for the ancillary-tick retry),
+				// so they are intentionally NOT marked until they actually apply.
+				BoundQueueV2.MarkOperationProcessed(SubID);
 			}
 		}
 		BoundQueueV2.bInBatchDispatch = false;
+
+		// DIAGNOSTIC: log batch ack write attempt + contents
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AckTrace:Client:BatchEnd] auth=%d acked_count=%d ids=[%s]"),
+			HasAuthority() ? 1 : 0, AckedIDs.Num(),
+			*FString::JoinBy(AckedIDs, TEXT(","), [](int32 ID) { return FString::Printf(TEXT("%d"), ID); }));
 
 		// Single batch ack on client; on authority no ack to send.
 		if (!HasAuthority() && AckedIDs.Num() > 0)
@@ -2348,6 +2447,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			FGMASBoundQueueV2BatchAcknowledgeOperation Ack;
 			Ack.AcknowledgedIDs = MoveTemp(AckedIDs);
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2BatchAcknowledgeOperation>(Ack);
+
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[AckTrace:Client:BatchAckWritten] OperationData now contains BatchAck"));
 			return true;
 		}
 		return AckedIDs.Num() > 0;
@@ -2414,8 +2516,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		// Thread the operation ID through so AbilityIDs are operation-derived and identical
 		// on client and server (Data.OperationID was stamped once by the queueing side).
 		const bool bOpWasConsumed = Data.OperationID != 0 && WasActivationOperationConsumed(Data.OperationID);
-		// Instance count, not the return value: TryActivateAbilitiesByInputTag returns true once past
-		// its tick guards and discards every per-ability result, so it cannot report an activation.
+		// Instance count, not the return value: TryActivateAbilitiesByInputTag also returns true for an
+		// already-consumed operation and for an ability that passed its tag gates but was then cancelled
+		// in PreBeginAbility, so it cannot report an activation.
 		// A net gain also under-reports when the new ability cancels another — acceptable for a probe.
 		const int32 LiveAbilitiesBefore = ActiveAbilities.Num();
 		const bool bActivated = TryActivateAbilitiesByInputTag(Data.InputTag, Data.InputAction, bFromMovementTick, bForce, Data.OperationID);
@@ -2516,10 +2619,54 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	if (StructType == FGMASBoundQueueV2AddImpulseOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2AddImpulseOperation KBData = PayloadData.Get<FGMASBoundQueueV2AddImpulseOperation>();
+
+		// DIAGNOSTIC: log apply on both sides with move timestamp + replay flag
+		// + velocity-before. Determines whether server vs client apply at the
+		// same GMC move timestamp (user's intended model) or at different
+		// timestamps. Also catches replay re-application (no idempotency guard
+		// in this branch unlike the ApplyEffect branch).
+		const FVector VelBefore = GMCMovementComponent ? GMCMovementComponent->Velocity : FVector::ZeroVector;
+		const float MoveTs = GMCMovementComponent ? GMCMovementComponent->GetMoveTimestamp() : -1.f;
+		const bool bReplaying = GMCMovementComponent && GMCMovementComponent->CL_IsReplaying();
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[ImpulseTrace] op=%d auth=%d replay=%d move_ts=%.4f from_movement_tick=%d vel_before=%s impulse=%s"),
+			OperationID, HasAuthority() ? 1 : 0, bReplaying ? 1 : 0, MoveTs, bFromMovementTick ? 1 : 0,
+			*VelBefore.ToCompactString(), *KBData.Impulse.ToCompactString());
+
 		GMCMovementComponent->AddImpulse(KBData.Impulse, KBData.bVelocityChange);
+
+		const FVector VelAfter = GMCMovementComponent ? GMCMovementComponent->Velocity : FVector::ZeroVector;
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[ImpulseTrace] op=%d auth=%d vel_after=%s"),
+			OperationID, HasAuthority() ? 1 : 0, *VelAfter.ToCompactString());
+
 		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the impulse application
+			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
+
+			// DIAGNOSTIC: confirm ack was written to OperationData
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[AckTrace:Client:WroteAck] op=%d wrote Ack to OperationData. struct_now=%s"),
+				OperationID,
+				BoundQueueV2.OperationData.GetScriptStruct() ? *BoundQueueV2.OperationData.GetScriptStruct()->GetName() : TEXT("null"));
+		}
+		return true;
+	}
+
+	// Custom Event — generic synced primitive with a tag + arbitrary payload.
+	// Both server and client (owning) reach this branch via the standard
+	// BoundQueueV2 sync, broadcast OnCustomEvent locally, then client acks.
+	// Subscribers on each side receive the same EventTag + Payload at the
+	// same logical GMC move — use for deterministic cross-pawn driven motion
+	// (knockup, displacement, teleport) where one event with full spec data
+	// lets both sides simulate the closed-form trajectory locally.
+	if (StructType == FGMASBoundQueueV2CustomEventOperation::StaticStruct())
+	{
+		const FGMASBoundQueueV2CustomEventOperation CEData = PayloadData.Get<FGMASBoundQueueV2CustomEventOperation>();
+		OnCustomEvent.Broadcast(CEData.EventTag, CEData.InstancedPayload);
+		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
+		{
 			BoundQueueV2.OperationData = FInstancedStruct::Make<FGMASBoundQueueV2AcknowledgeOperation>(FGMASBoundQueueV2AcknowledgeOperation{OperationID});
 		}
 		return true;
@@ -2851,7 +2998,14 @@ void UGMC_AbilitySystemComponent::ServerProcessAcknowledgedOperation(int Operati
 	// Everything else should be server built operations that the client has confirmed
 	// Ie, applied server-auth effects or server-auth events
 
-	if (!BoundQueueV2.HasPayloadByID(OperationID) || !BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID))
+	// DIAGNOSTIC: confirm entry + payload lookup result
+	const bool bHasPayload = BoundQueueV2.HasPayloadByID(OperationID);
+	const bool bHasGrace = BoundQueueV2.ServerQueuedBoundOperationsGracePeriods.Contains(OperationID);
+	UE_LOG(LogGMCAbilitySystem, Warning,
+		TEXT("[AckTrace:Server:ProcessAck] op=%d has_payload=%d has_grace=%d fromMove=%d"),
+		OperationID, bHasPayload ? 1 : 0, bHasGrace ? 1 : 0, bFromMovementTick ? 1 : 0);
+
+	if (!bHasPayload || !bHasGrace)
 	{
 		return;
 	}
@@ -2878,7 +3032,22 @@ void UGMC_AbilitySystemComponent::AddImpulse(FVector Impulse, bool bVelChange)
 	ImpulseOperation.Impulse = Impulse;
 	ImpulseOperation.bVelocityChange = bVelChange;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2AddImpulseOperation>(ImpulseOperation);
-	BoundQueueV2.QueueServerOperation(OperationID);
+	EnqueueServerOperation(OperationID);
+}
+
+void UGMC_AbilitySystemComponent::FireCustomEvent(FGameplayTag EventTag, FInstancedStruct Payload)
+{
+	if (!HasAuthority())
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Client attempted to fire CustomEvent"));
+		return;
+	}
+
+	FGMASBoundQueueV2CustomEventOperation EventOperation;
+	EventOperation.EventTag = EventTag;
+	EventOperation.InstancedPayload = MoveTemp(Payload);
+	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2CustomEventOperation>(EventOperation);
+	EnqueueServerOperation(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::SetActorLocation(FVector Location)
@@ -2892,7 +3061,7 @@ void UGMC_AbilitySystemComponent::SetActorLocation(FVector Location)
 	FGMASBoundQueueV2SetActorLocationOperation ImpulseOperation;
 	ImpulseOperation.Location = Location;
 	const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2SetActorLocationOperation>(ImpulseOperation);
-	BoundQueueV2.QueueServerOperation(OperationID);
+	EnqueueServerOperation(OperationID);
 }
 
 void UGMC_AbilitySystemComponent::OnRep_UnBoundAttributes()
@@ -3193,7 +3362,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			OutEffectId =EffectActivationData.EffectID;
 			int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2ApplyEffectOperation>(EffectActivationData);
 			OutEffectHandle = OutEffectId;
-			BoundQueueV2.QueueServerOperation(OperationID);
+			EnqueueServerOperation(OperationID);
 			return true;
 		}
 
@@ -3773,7 +3942,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 				FGMASBoundQueueV2RemoveEffectOperation EffectRemovalData;
 				EffectRemovalData.EffectIDs = Ids;
 				const int OperationID = BoundQueueV2.MakeOperationData<FGMASBoundQueueV2RemoveEffectOperation>(EffectRemovalData);
-				BoundQueueV2.QueueServerOperation(OperationID);
+				EnqueueServerOperation(OperationID);
 				return true;
 			}
 
@@ -4062,7 +4231,61 @@ void UGMC_AbilitySystemComponent::MC_SpawnParticleSystemAttached_Implementation(
 	SpawnParticleSystemAttached(SpawnParams, bIsClientPredicted, bDelayByGMCSmoothing);
 }
 
-UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystemAtLocation(FFXSystemSpawnParameters SpawnParams, bool bIsClientPredicted,
+// Apply an array of user-param overrides to a freshly-spawned NiagaraComponent.
+// Uses UNiagaraComponent's FName SetVariable* setters (UE 5.x API). Designer
+// passes the leaf name (e.g. "SizeScale") in the spec; Niagara resolves
+// against the system's user-parameter store internally.
+static void ApplyNiagaraUserParams(UNiagaraComponent* Comp, const TArray<FGMASNiagaraUserParam>& UserParams)
+{
+	if (!Comp) return;
+	for (const FGMASNiagaraUserParam& P : UserParams)
+	{
+		if (P.Name.IsNone()) continue;
+		switch (P.Type)
+		{
+		case EGMASNiagaraUserParamType::Float:
+			Comp->SetVariableFloat(P.Name, P.FloatValue);
+			break;
+		case EGMASNiagaraUserParamType::Int:
+			Comp->SetVariableInt(P.Name, P.IntValue);
+			break;
+		case EGMASNiagaraUserParamType::Bool:
+			Comp->SetVariableBool(P.Name, P.BoolValue);
+			break;
+		case EGMASNiagaraUserParamType::Vector:
+			Comp->SetVariableVec3(P.Name, P.VectorValue);
+			break;
+		case EGMASNiagaraUserParamType::Color:
+			Comp->SetVariableLinearColor(P.Name, P.ColorValue);
+			break;
+		}
+	}
+}
+
+UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleAtPoint(
+	UFXSystemAsset* SystemTemplate,
+	FVector Location,
+	FRotator Rotation,
+	FVector Scale,
+	const TArray<FGMASNiagaraUserParam>& UserParams,
+	bool bIsClientPredicted,
+	bool bDelayByGMCSmoothing)
+{
+	FFXSystemSpawnParameters SpawnParams;
+	SpawnParams.SystemTemplate = SystemTemplate;
+	SpawnParams.Location = Location;
+	SpawnParams.Rotation = Rotation;
+	SpawnParams.Scale = Scale.IsNearlyZero() ? FVector::OneVector : Scale;
+	SpawnParams.LocationType = EAttachLocation::KeepWorldPosition;
+	SpawnParams.bAutoDestroy = true;
+	SpawnParams.bAutoActivate = true;
+	return SpawnParticleSystemAtLocation(SpawnParams, UserParams, bIsClientPredicted, bDelayByGMCSmoothing);
+}
+
+UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystemAtLocation(
+	FFXSystemSpawnParameters SpawnParams,
+	const TArray<FGMASNiagaraUserParam>& UserParams,
+	bool bIsClientPredicted,
 	bool bDelayByGMCSmoothing)
 {
 	if (SpawnParams.SystemTemplate == nullptr)
@@ -4070,7 +4293,7 @@ UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystemAtLocation(FF
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to spawn FX, but FX is null!"));
 		return nullptr;
 	}
-	
+
 	if (SpawnParams.WorldContextObject == nullptr)
 	{
 		SpawnParams.WorldContextObject = GetWorld();
@@ -4078,38 +4301,42 @@ UNiagaraComponent* UGMC_AbilitySystemComponent::SpawnParticleSystemAtLocation(FF
 
 	if (HasAuthority())
 	{
-		MC_SpawnParticleSystemAtLocation(SpawnParams, bIsClientPredicted, bDelayByGMCSmoothing);
+		MC_SpawnParticleSystemAtLocation(SpawnParams, UserParams, bIsClientPredicted, bDelayByGMCSmoothing);
 	}
 
-	// Sim Proxies can delay FX by the smoothing delay to better line up
+	// Sim Proxies can delay FX by the smoothing delay to better line up.
 	if (bDelayByGMCSmoothing && !HasAuthority() && !IsLocallyControlledPawnASC())
 	{
 		float Delay = GMCMovementComponent->GetTime() - GMCMovementComponent->GetSmoothingTime();
 		FTimerHandle DelayHandle;
-		GetWorld()->GetTimerManager().SetTimer(DelayHandle, [this, SpawnParams]()
+		// Capture UserParams by value so the timer outlives the call frame.
+		const TArray<FGMASNiagaraUserParam> UserParamsCopy = UserParams;
+		GetWorld()->GetTimerManager().SetTimer(DelayHandle, [SpawnParams, UserParamsCopy]()
 		{
-			UNiagaraFunctionLibrary::SpawnSystemAtLocationWithParams(SpawnParams);
+			UNiagaraComponent* DelayedComp = UNiagaraFunctionLibrary::SpawnSystemAtLocationWithParams(SpawnParams);
+			ApplyNiagaraUserParams(DelayedComp, UserParamsCopy);
 		}, Delay, false);
-
-		UE_LOG(LogTemp, Warning, TEXT("Delay: %f"), Delay);
-
 		return nullptr;
 	}
 
 	UNiagaraComponent* SpawnedComponent = UNiagaraFunctionLibrary::SpawnSystemAtLocationWithParams(SpawnParams);
+	ApplyNiagaraUserParams(SpawnedComponent, UserParams);
 	return SpawnedComponent;
 }
 
-void UGMC_AbilitySystemComponent::MC_SpawnParticleSystemAtLocation_Implementation(const FFXSystemSpawnParameters& SpawnParams,
-	bool bIsClientPredicted, bool bDelayByGMCSmoothing)
+void UGMC_AbilitySystemComponent::MC_SpawnParticleSystemAtLocation_Implementation(
+	const FFXSystemSpawnParameters& SpawnParams,
+	const TArray<FGMASNiagaraUserParam>& UserParams,
+	bool bIsClientPredicted,
+	bool bDelayByGMCSmoothing)
 {
-	// Server already spawned
+	// Server already spawned.
 	if (HasAuthority()) return;
-	
-	// Owning client already spawned
+
+	// Owning client already spawned (predicted path).
 	if (IsLocallyControlledPawnASC() && bIsClientPredicted) return;
-	
-	SpawnParticleSystemAtLocation(SpawnParams, bIsClientPredicted, bDelayByGMCSmoothing);
+
+	SpawnParticleSystemAtLocation(SpawnParams, UserParams, bIsClientPredicted, bDelayByGMCSmoothing);
 }
 
 void UGMC_AbilitySystemComponent::SpawnSound(USoundBase* Sound, const FVector Location, const float VolumeMultiplier, const float PitchMultiplier, const bool bIsClientPredicted)
@@ -4140,6 +4367,47 @@ void UGMC_AbilitySystemComponent::MC_SpawnSound_Implementation(USoundBase* Sound
 	SpawnSound(Sound, Location, VolumeMultiplier, PitchMultiplier, bIsClientPredicted);
 }
 
+void UGMC_AbilitySystemComponent::PlayCameraShakeAtLocation(
+	TSubclassOf<UCameraShakeBase> ShakeClass,
+	FVector Epicenter,
+	float InnerRadius,
+	float OuterRadius,
+	float Falloff,
+	bool bOrientShakeTowardsEpicenter,
+	bool bIsClientPredicted)
+{
+	if (ShakeClass == nullptr)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Trying to play camera shake, but ShakeClass is null!"));
+		return;
+	}
+
+	if (HasAuthority())
+	{
+		MC_PlayCameraShakeAtLocation(ShakeClass, Epicenter, InnerRadius, OuterRadius, Falloff, bOrientShakeTowardsEpicenter, bIsClientPredicted);
+	}
+
+	UGameplayStatics::PlayWorldCameraShake(GetWorld(), ShakeClass, Epicenter, InnerRadius, OuterRadius, Falloff, bOrientShakeTowardsEpicenter);
+}
+
+void UGMC_AbilitySystemComponent::MC_PlayCameraShakeAtLocation_Implementation(
+	TSubclassOf<UCameraShakeBase> ShakeClass,
+	FVector Epicenter,
+	float InnerRadius,
+	float OuterRadius,
+	float Falloff,
+	bool bOrientShakeTowardsEpicenter,
+	bool bIsClientPredicted)
+{
+	// Server already played.
+	if (HasAuthority()) return;
+
+	// Owning client already played (predicted path).
+	if (IsLocallyControlledPawnASC() && bIsClientPredicted) return;
+
+	PlayCameraShakeAtLocation(ShakeClass, Epicenter, InnerRadius, OuterRadius, Falloff, bOrientShakeTowardsEpicenter, bIsClientPredicted);
+}
+
 // ReplicatedProps
 void UGMC_AbilitySystemComponent::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
@@ -4161,6 +4429,62 @@ bool UGMC_AbilitySystemComponent::IsAuthorityForGMASLogic() const
 	if (bForceAuthorityForTest) { return true; }
 #endif
 	return HasAuthority();
+}
+
+bool UGMC_AbilitySystemComponent::ShouldApplyServerOpImmediately() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceNoAckClientForTest) { return true; }
+#endif
+	if (!GMCMovementComponent) { return false; }
+
+	// Only a networked server (dedicated or listen) can strand a server-broadcast op
+	// with no client to ack it. On a pure client, or in standalone, the op is run
+	// through the LOCAL move stream (the Client RPC loops back to this machine), so it
+	// is always acknowledged -> keep the legacy queue path.
+	if (!GMCMovementComponent->IsNetworkedServer()) { return false; }
+
+	// A player-owned pawn -- a remote autonomous proxy (dedicated or listen), OR the
+	// listen-server host's own locally-controlled player pawn -- receives
+	// RPCOnServerOperationAdded and acks it via its move stream within RTT, so the
+	// grace window stays its safety net (unchanged). Only AI / level-placed /
+	// unpossessed pawns have no owning client connection: their Client RPC has no
+	// recipient, so the op would otherwise apply only via the 1.0s grace force.
+	return !GMCMovementComponent->IsPlayerControlledPawn();
+}
+
+void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
+{
+	if (!ShouldApplyServerOpImmediately())
+	{
+		// Legacy path: Client RPC to the owning client + 1.0s grace window; the client
+		// acks via its move stream (or the grace timeout forces it on the server).
+		BoundQueueV2.QueueServerOperation(OperationID);
+		return;
+	}
+
+	// No autonomous-proxy client will ever ack this op (AI / level-placed /
+	// server-controlled pawn): the Client RPC has no recipient, so the legacy path would
+	// only apply the op when the 1.0s grace timeout forced it (visible ~1s delay).
+	//
+	// Do NOT apply it inline here. EnqueueServerOperation can run RE-ENTRANTLY inside
+	// ANOTHER pawn's movement tick -- e.g. an attacker's GenPredictionTick lands a hit and
+	// calls a game-side hit handler, which fires each VICTIM's server-auth
+	// ops on the SAME frame. A synchronous ProcessOperation in that context mutates the
+	// victim's movement-mode + tags while we are nested inside the attacker's move tick,
+	// corrupting the victim's replicated movement/tag snapshot for sim proxies (the
+	// victim sticks mid-air with no stun on observing clients, even though the server
+	// authoritative sim runs correctly).
+	//
+	// Instead, queue it with a ZERO grace timeout. The next BoundQueueV2.GenAncillaryTick
+	// -- the VICTIM's OWN ancillary tick, a clean context outside any other pawn's
+	// movement tick -- decrements (0 - DeltaTime <= 0) and force-applies via
+	// OnServerOperationForced -> ProcessOperation(bForce=true). That is the exact
+	// proven-correct path the grace timeout always used, now ~1 frame instead of ~1s.
+	// QueueServerOperation also fires the Client RPC, which is a harmless no-op for a
+	// pawn with no owning connection. ProcessOperation drains the cached payload and
+	// the grace tick removes the grace-map entry, so the op applies exactly once.
+	BoundQueueV2.QueueServerOperation(OperationID, /*Timeout=*/0.f);
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

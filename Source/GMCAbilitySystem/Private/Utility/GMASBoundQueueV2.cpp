@@ -232,11 +232,30 @@ void FGMASBoundQueueV2::ServerAcknowledgeOperation(int ID)
 	{
 		OperationPayloads.Remove(ID);
 	}
-	
+
 	if (ServerQueuedBoundOperationsGracePeriods.Contains(ID))
 	{
 		ServerQueuedBoundOperationsGracePeriods.Remove(ID);
 	}
+}
+
+void FGMASBoundQueueV2::MarkOperationProcessed(int32 OperationID)
+{
+	// Move-to-back semantics: keep a single entry per ID and refresh its recency so
+	// repeated processing of the same stale op doesn't grow or age out the entry.
+	RecentlyProcessedOperationIDs.Remove(OperationID);
+	RecentlyProcessedOperationIDs.Add(OperationID);
+
+	// Bound growth: evict the oldest entries beyond the ring capacity.
+	while (RecentlyProcessedOperationIDs.Num() > MaxRecentlyProcessedOperations)
+	{
+		RecentlyProcessedOperationIDs.RemoveAt(0);
+	}
+}
+
+bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
+{
+	return RecentlyProcessedOperationIDs.Contains(OperationID);
 }
 
 void FGMASBoundQueueV2::CheckValidState() const

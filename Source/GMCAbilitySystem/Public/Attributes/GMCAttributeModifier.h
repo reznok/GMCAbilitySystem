@@ -125,13 +125,13 @@ struct FGMCAttributeModifier
 		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 		EModifierType Op{EModifierType::Add};
 
-		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute"))
 		FGameplayTag AttributeTag;
 
 		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta=(DisplayAfter = "AttributeTag"))
 		EGMCAttributeModifierType ValueType {EGMCAttributeModifierType::AMT_Value};
 
-		UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides,
+		UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attribute", meta = (Categories="Attribute", EditConditionHides,
 			EditCondition = "ValueType == EGMCAttributeModifierType::AMT_Attribute || Op == EModifierType::AddPercentageAttribute || Op == EModifierType::AddPercentageOfAttributeRawValue",
 			DisplayAfter = "ValueType"))
 		FGameplayTag ValueAsAttribute;

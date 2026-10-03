@@ -11,10 +11,12 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
 #include "Utility/GMASBoundQueueV2.h"
+#include "Utility/GMASNiagaraParams.h"
 #include "Utility/GMASSyncedEvent.h"
 #include "GMCAbilityComponent.generated.h"
 
 
+class UCameraShakeBase;
 class UNiagaraComponent;
 struct FFXSystemSpawnParameters;
 class UNiagaraSystem;
@@ -29,6 +31,8 @@ DECLARE_MULTICAST_DELEGATE_ThreeParams(FGameplayAttributeChangedNative, const FG
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCustomEvent, FGameplayTag, EventTag, FInstancedStruct, Payload);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
@@ -961,6 +965,35 @@ public:
 	// (which overwrites ActionTimer from GMCMovementComponent->GetMoveTimestamp()).
 	void TickActiveEffects(float DeltaTime);
 
+	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
+	void AddImpulse(FVector Impulse, bool bVelChange = false);
+
+	/**
+	 * Fire a custom synced event with a tag + arbitrary FInstancedStruct payload.
+	 * Mirrors the AddImpulse path: queues a FGMASBoundQueueV2CustomEventOperation
+	 * via BoundQueueV2, server RPCs to client, both sides apply via the same
+	 * ProcessOperation path and OnCustomEvent delegate, then client acks via
+	 * the standard ack flow. Both sides receive the same EventTag + Payload
+	 * at the same logical GMC move — use for deterministic cross-pawn driven
+	 * motion (knockup, displacement, teleport) where one event with full
+	 * spec data lets both sides simulate the closed-form trajectory locally.
+	 *
+	 * Server-only. Use OnCustomEvent on the receiving ASC to handle.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
+	void FireCustomEvent(FGameplayTag EventTag, FInstancedStruct Payload);
+
+	/**
+	 * Broadcast on both server and client (owning client) when a CustomEvent
+	 * fires via FireCustomEvent. Subscribers receive the same EventTag +
+	 * Payload at the same logical GMC move on each side.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "GMCAbilitySystem")
+	FOnCustomEvent OnCustomEvent;
+
+	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
+	void SetActorLocation(FVector Location);
+
 private:
 	// List of filtered tag delegates to call when tags change.
 	TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> FilteredTagDelegates;
@@ -988,6 +1021,31 @@ private:
 	// GenPredictionTick and GenAncillaryTick.
 	void DrainPendingPredictedOperations();
 
+	// Single funnel for every server-authored ("server-broadcast") op: effect apply,
+	// custom event, ability activation, impulse, etc. Routes the op to the right path
+	// based on whether an autonomous-proxy client will ever acknowledge it:
+	//   - has acking client (remote player, listen-host's own pawn, standalone/client):
+	//     enqueue via BoundQueueV2.QueueServerOperation -> Client RPC + grace window,
+	//     client acks via its move stream within RTT (unchanged legacy behaviour).
+	//   - NO acking client (AI / level-placed / server-controlled pawn with no owning
+	//     client connection): the Client RPC has no recipient, so with the 1.0s grace
+	//     window the op would only apply when the grace timeout forced it (~1s late).
+	//     Queue it with a ZERO grace timeout instead: the pawn's next
+	//     BoundQueueV2.GenAncillaryTick forces it (OnServerOperationForced ->
+	//     ProcessOperation(bForce=true)), ~1 frame later and outside any other pawn's
+	//     movement tick. Never applied inline, because this can run re-entrantly
+	//     inside another pawn's move. The Client RPC still fires and is a harmless
+	//     no-op without an owning connection.
+	// All authority-side call sites use this instead of BoundQueueV2.QueueServerOperation
+	// directly so the decision stays uniform across every op type.
+	void EnqueueServerOperation(const int OperationID);
+
+	// True when a server-broadcast op on this pawn would never be acknowledged by an
+	// autonomous-proxy client and must therefore be applied immediately on the server.
+	// See EnqueueServerOperation. Test builds can force the result via
+	// bForceNoAckClientForTest (headless harness can't populate GMC net-role state).
+	bool ShouldApplyServerOpImmediately() const;
+
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
 	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
@@ -1000,13 +1058,7 @@ private:
 	// Execute an event that is created by the server where execution is synced between server and client
 	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
-	
-	UFUNCTION(BlueprintCallable, DisplayName="Add Impulse (Synced Event)", Category = "GMASSyncedEvent")
-	void AddImpulse(FVector Impulse, bool bVelChange = false);
 
-	UFUNCTION(BlueprintCallable, DisplayName="Set Actor Location (Synced Event)", Category = "GMASSyncedEvent")
-	void SetActorLocation(FVector Location);
-	
 	UPROPERTY()
 	TMap<int, UGMCAbility*> ActiveAbilities;
 	
@@ -1229,10 +1281,44 @@ public:
 		ServerProcessOperation(OperationData, bFromMovementTick);
 	}
 
+	// Test seam for ProcessOperation. The function is private so tests cannot call it
+	// directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only. Used by
+	// the batch-reprocess dedup spec to drive a FGMASBoundQueueV2BatchOperation through
+	// the dispatch path more than once.
+	bool ProcessOperationForTest(FInstancedStruct OperationData, bool bFromMovementTick, bool bForce = false)
+	{
+		return ProcessOperation(OperationData, bFromMovementTick, bForce);
+	}
+
+	// Test seams for the immediate server-op-apply routing. EnqueueServerOperation and
+	// ShouldApplyServerOpImmediately are private (production callers are in-class); these
+	// thin wrappers expose them under WITH_AUTOMATION_WORKER only so the BugFix spec can
+	// drive both branches (immediate apply vs grace/ack queue) directly.
+	void EnqueueServerOperationForTest(const int OperationID) { EnqueueServerOperation(OperationID); }
+	bool ShouldApplyServerOpImmediatelyForTest() const { return ShouldApplyServerOpImmediately(); }
+
+	// Test seam: bind the BoundQueueV2 grace-force delegate the same way BeginPlay does,
+	// so headless specs can drive the next-tick force path (OnServerOperationForced ->
+	// ProcessOperation(bForce=true)) without a world/BeginPlay. Only the force delegate is
+	// bound; the Client-RPC "added" delegate is intentionally left unbound (no NetDriver in
+	// the orphan-component harness). Idempotent: AddUnique-style binding via AddDynamic.
+	void BindServerOpForcedDelegateForTest()
+	{
+		BoundQueueV2.OnServerOperationForced.RemoveDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+		BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+	}
+
 	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
 	// in the headless harness always report HasAuthority()==false; setting this flag forces
 	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
 	bool bForceAuthorityForTest = false;
+
+	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
+	// (IsNetworkedServer / IsPlayerControlledPawn) can't be populated for an orphan component
+	// in the headless harness (always reports NM_Standalone). Setting this flag forces the
+	// "no acknowledging client" decision so EnqueueServerOperation's immediate-apply branch
+	// can be exercised; left false, EnqueueServerOperation takes the legacy queue path.
+	bool bForceNoAckClientForTest = false;
 
 	// Test seam: pre-seed BoundQueueV2.OperationData with a valid base struct so that
 	// IsValidGMASOperation() passes during headless-harness ServerProcessOperation calls.
@@ -1297,16 +1383,41 @@ public:
 	void MC_SpawnParticleSystemAttached(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
 
 		
-	// Spawn a Niagara system at a world location
-	// IsClientPredicted: If true, the system will be spawned on the client immediately. False, the local client will spawn it when the multicast is received
-	// bDelayByGMCSmoothing: If true, the system will be spawned with a delay for SimProxies to match the smoothing delay
+	// Spawn a Niagara system at a world location.
+	// IsClientPredicted: If true, the system spawns on the client immediately.
+	//   False = local client waits for multicast.
+	// bDelayByGMCSmoothing: SimProxies delay spawn by smoothing time to line up.
+	// UserParams: optional array of typed Niagara user-var overrides applied
+	//   on every receiver after spawn (carried through the multicast, so all
+	//   sides apply identical values). Leave empty for the unparameterized
+	//   spawn. Param Name is the user-var leaf name (e.g. "SizeScale").
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
-	UNiagaraComponent* SpawnParticleSystemAtLocation(FFXSystemSpawnParameters SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
+	UNiagaraComponent* SpawnParticleSystemAtLocation(
+		FFXSystemSpawnParameters SpawnParams,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
+
+	// Loose-pin convenience over SpawnParticleSystemAtLocation: builds the
+	// FFXSystemSpawnParameters internally (world position, auto-destroy) so
+	// graphs don't need a MakeStruct node for the common location-spawn case.
+	UFUNCTION(BlueprintCallable, Category="GMAS|FX", meta=(AutoCreateRefTerm="UserParams"))
+	UNiagaraComponent* SpawnParticleAtPoint(
+		UFXSystemAsset* SystemTemplate,
+		FVector Location,
+		FRotator Rotation,
+		FVector Scale,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
 
 	UFUNCTION(NetMulticast, Unreliable)
-	void MC_SpawnParticleSystemAtLocation(const FFXSystemSpawnParameters& SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false);
+	void MC_SpawnParticleSystemAtLocation(
+		const FFXSystemSpawnParameters& SpawnParams,
+		const TArray<FGMASNiagaraUserParam>& UserParams,
+		bool bIsClientPredicted = false,
+		bool bDelayByGMCSmoothing = false);
 
-	
 	// Spawn a Sound at the given location
 	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
 	void SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
@@ -1314,6 +1425,32 @@ public:
 
 	UFUNCTION(NetMulticast, Unreliable)
 	void MC_SpawnSound(USoundBase* Sound, FVector Location, float VolumeMultiplier = 1.f, float PitchMultiplier = 1.f, bool bIsClientPredicted = false);
+
+
+	// Play a world-space camera shake centered at Epicenter. Each receiver
+	// runs UGameplayStatics::PlayWorldCameraShake locally — only viewers
+	// within OuterRadius feel it, scaled by Falloff between Inner and Outer.
+	// Camera shake is cosmetic-only so the multicast just triggers the
+	// local play; no replicated state.
+	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
+	void PlayCameraShakeAtLocation(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		FVector Epicenter,
+		float InnerRadius,
+		float OuterRadius,
+		float Falloff = 1.f,
+		bool bOrientShakeTowardsEpicenter = false,
+		bool bIsClientPredicted = false);
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MC_PlayCameraShakeAtLocation(
+		TSubclassOf<UCameraShakeBase> ShakeClass,
+		FVector Epicenter,
+		float InnerRadius,
+		float OuterRadius,
+		float Falloff = 1.f,
+		bool bOrientShakeTowardsEpicenter = false,
+		bool bIsClientPredicted = false);
 
 	friend class FGameplayDebuggerCategory_GMCAbilitySystem;
 };

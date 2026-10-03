@@ -157,7 +157,35 @@ public:
 
 	// Process a server operation that the client has sent an ack for
 	void ServerAcknowledgeOperation(int ID);
-	
+
+	// --- Benign-reprocess dedup -------------------------------------------------
+	// The bound OperationData slot replicates client->server and is re-read by the
+	// authority on BOTH the prediction tick and the ancillary tick (and on every
+	// server tick until a fresh client move overwrites it). The first pass over a
+	// FGMASBoundQueueV2BatchOperation applies each sub-op and drains its cached
+	// payload (RemovePayloadByID on authority). Every later pass therefore finds
+	// those payloads gone -- NOT because the op never arrived, but because we
+	// already applied it. ProcessOperation's batch path consults this ring to tell
+	// that benign reprocess (silent skip) apart from a genuine first-time missing
+	// payload (true state divergence -> loud error preserved).
+	//
+	// Bounded ring of the most-recently dispatched sub-op IDs. A batch is only ever
+	// reprocessed within its own short lifetime (one move's prediction+ancillary
+	// tick pair, a handful of server ticks), so a small ring is always large enough
+	// to recognise the reprocess; older entries are evicted FIFO. IDs are globally
+	// monotonic (GetNextOperationID never reuses a value), so an ID found here was
+	// genuinely processed -- there are no false benign-skips. Netmode-independent
+	// (does not depend on GMCMoveCounter, which never advances on a listen server).
+	static constexpr int32 MaxRecentlyProcessedOperations = 256;
+	TArray<int32> RecentlyProcessedOperationIDs;
+
+	// Record a sub-op as successfully dispatched on this side.
+	void MarkOperationProcessed(int32 OperationID);
+
+	// True if this sub-op was dispatched recently (i.e. a missing payload is a
+	// benign reprocess, not a genuine divergence).
+	bool WasOperationRecentlyProcessed(int32 OperationID) const;
+
 	// Operations (referenced by ID to OperationPayloads) that the Client has queued
 	// Key: Operation Id
 	TArray<int> ClientQueuedOperations;
