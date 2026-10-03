@@ -6,3 +6,4 @@
 *.h text eol=lf
 *.cs text eol=lf
 *.uplugin text eol=lf
+*.ps1 text eol=crlf

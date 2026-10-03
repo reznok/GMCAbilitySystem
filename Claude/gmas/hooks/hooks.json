@@ -1,5 +1,5 @@
 {
-  "description": "gmas plugin hooks: detect GMC and GMAS in the project and inject context",
+  "description": "gmas plugin hooks: detect GMC and GMAS in the project and inject context. One command line valid in both sh and PowerShell: sh (macOS, Linux, Windows with Git Bash) runs gmas-context.sh and exits; PowerShell (Windows without Git Bash) reads the sh part as one quoted argument of a no-op and runs gmas-context.ps1.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,8 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.sh\"",
-            "timeout": 5
+            "command": "set gmas_hook \\\"; bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.sh\"; exit $?; \\\"; powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.ps1\"",
+            "timeout": 10
           }
         ]
       }
