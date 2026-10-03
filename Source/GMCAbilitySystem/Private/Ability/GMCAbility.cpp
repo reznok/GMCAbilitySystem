@@ -776,7 +776,7 @@ void UGMCAbility::EndAbility()
 			// and the tag never survives) with a finite Duration.
 			WindowData.EffectType = EGMASEffectType::Persistent;
 			WindowData.Duration = ChainWindowDuration;
-			WindowData.bUniqueByEffectTag = true; // re-grant refreshes, never stacks
+			WindowData.bUniqueByEffectTag = true; // single instance per tag: a re-grant during an open window is rejected
 
 			int OutHandle = 0; int OutId = 0; UGMCAbilityEffect* OutEffect = nullptr;
 			OwnerAbilityComponent->ApplyAbilityEffect(

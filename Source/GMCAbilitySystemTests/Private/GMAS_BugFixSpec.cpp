@@ -727,11 +727,12 @@ void FGMASBugFixSpec::Define()
 	// ── Bilateral PredictedEnd defer (Bug #3 + Periodic ext + RPCClientEndEffect ext) ──
 	//
 	// The arming branch of RemoveActiveAbilityEffect requires GetNetMode() != NM_Standalone,
-	// which the headless harness can't provide (orphan components default to Standalone).
-	// So we test the *consume* side of the defer: directly set EndAtActionTimer on a properly-
-	// initialised effect and verify Tick fires EndEffect at the absolute timestamp regardless
-	// of DeltaTime. The new design uses ActionTimer comparison (deterministic across replays)
-	// instead of a per-tick countdown.
+	// which the headless harness only reaches through the bForceNetworkedForTest seam (orphan
+	// components default to Standalone); the arming itself is covered by GMAS.Unit.EffectLifecycle.
+	// These cases test the *consume* side of the defer on purpose: directly set EndAtActionTimer on
+	// a properly-initialised effect and verify Tick fires EndEffect at the absolute timestamp
+	// regardless of DeltaTime. The design uses ActionTimer comparison (deterministic across
+	// replays) instead of a per-tick countdown.
 	Describe("PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
 	{
 		It("Tick keeps the defer pending while ActionTimer < EndAtActionTimer", [this]()
@@ -1164,6 +1165,9 @@ void FGMASBugFixSpec::Define()
 			// not yet finalized. Tracking entry recorded in PendingReplacements.
 			// When the polling promotes the successor to Validated (server bound
 			// state confirms), the OLD is finalized via real EndEffect.
+			// The seam makes RemoveActiveAbilityEffect take its networked branch so the
+			// deferral arms through the production path.
+			AbilityComp->bForceNetworkedForTest = true;
 			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffectA->AddToRoot(); EffectB->AddToRoot();
@@ -1179,13 +1183,9 @@ void FGMASBugFixSpec::Define()
 			TestNotNull("First Apply succeeds", AppliedA);
 
 			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			TestTrue("EffectA still alive in ActiveEffects (defer armed or imminent end)",
+			TestTrue("EffectA still alive in ActiveEffects (defer armed)",
 				AbilityComp->GetActiveEffects().Contains(AppliedA->EffectData.EffectID));
-
-			// Skip the test if the harness's standalone-network detection bypassed
-			// the bilateral defer arm and EndEffect-ed A directly; the assertion
-			// path then doesn't exercise the suspend logic.
-			if (AppliedA->bCompleted) { EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot(); return; }
+			TestFalse("EffectA not ended by Remove (deferred)", AppliedA->bCompleted);
 			TestTrue("EffectA's EndAtActionTimer is armed", AppliedA->EndAtActionTimer >= 0.0);
 
 			// Re-Apply: B succeeds, A is SUSPENDED (not finalized).
@@ -1288,7 +1288,12 @@ void FGMASBugFixSpec::Define()
 			// Client predict-apply: OLD suspended, successor stamped Pending. The
 			// server's bound state never confirms (= rejection). After the timeout
 			// window, the successor is reaped and the suspended OLD is REVIVED:
-			// bPendingDeathBySuccessor cleared, OLD resumes ticking modifiers.
+			// bPendingDeathBySuccessor cleared, OLD resumes ticking modifiers and its
+			// own deferred end still fires when due.
+			// The reap logs `Effect ... Not Confirmed By Server (ID: ...), Removing...` at
+			// Error severity; declared so the framework does not fail the test on it.
+			AddExpectedErrorPlain(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
+			AbilityComp->bForceNetworkedForTest = true;
 			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffectA->AddToRoot(); EffectB->AddToRoot();
@@ -1300,28 +1305,43 @@ void FGMASBugFixSpec::Define()
 			Data.EffectTag          = HealthTag;
 			Data.bUniqueByEffectTag = true;
 
+			// Clock at 1.0 (harness seed): A's deferred end arms at 2.0.
 			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
 			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			if (AppliedA->bCompleted) { EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot(); return; }
+			TestFalse("A not ended by Remove (deferred)", AppliedA->bCompleted);
+			TestEqual("A's deferred end armed at 2.0", AppliedA->EndAtActionTimer, 2.0);
 
 			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
 			TestNotNull("B applied", AppliedB);
 			TestTrue ("A suspended", AppliedA->bPendingDeathBySuccessor);
 
-			// Stamp B as Pending and DO NOT add to bound state (simulating server
-			// rejection). Push ActionTimer past the timeout window so the reap path
-			// fires.
-			AbilityComp->GetProcessedEffectIDsForTest().Add(AppliedB->EffectData.EffectID, EGMCEffectAnswerState::Pending);
-			AbilityComp->ActionTimer = 5.0;
+			// Models the state after a server correction lacking B has been adopted while B is still
+			// Pending. In production the client writes its own predicted ids into the bound list and
+			// promotes them on its next tick, so this window is about one move wide today (recorded as
+			// a design item in the pull request); this case tests the reap/revive mechanics, not the
+			// arrival of the verdict. The clock goes past the confirmation timeout (apply at 1.0 +
+			// 0.5 s) but short of A's deferred end at 2.0 so the reap fires while A is still due.
+			AbilityComp->BoundActiveEffectIDs_Remove(AppliedB->EffectData.EffectID);
+			AbilityComp->SetActionTimerForTest(1.75);
 			AbilityComp->TickActiveEffects(0.f);
 
-			TestEqual("B reaped (Timeout state)",
-				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(AppliedB->EffectData.EffectID)),
-				static_cast<int>(EGMCEffectAnswerState::Timeout));
+			// B transits Pending -> Timeout -> cleanup within this one TickActiveEffects call, which
+			// drops its ProcessedEffectIDs entry; the reap is observable as B gone and ended.
+			TestTrue ("B reaped (ended)", AppliedB->bCompleted);
+			TestFalse("B gone from ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(AppliedB->EffectData.EffectID));
+			TestFalse("B gone from ProcessedEffectIDs",
+				AbilityComp->GetProcessedEffectIDsForTest().Contains(AppliedB->EffectData.EffectID));
 			TestFalse("A revived (bPendingDeathBySuccessor=false)",
 				AppliedA->bPendingDeathBySuccessor);
 			TestFalse("A still alive (not bCompleted)",
 				AppliedA->bCompleted);
+			TestEqual("A's deferred end still armed at 2.0", AppliedA->EndAtActionTimer, 2.0);
+
+			// The revived A ends on its own deferred end.
+			AbilityComp->SetActionTimerForTest(2.0);
+			AbilityComp->TickActiveEffects(0.f);
+			TestTrue("A ended at its deferred end", AppliedA->bCompleted);
 
 			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});

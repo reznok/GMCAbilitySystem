@@ -3728,27 +3728,24 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 {
 	if (Effect == nullptr || !ActiveEffects.Contains(Effect->EffectData.EffectID)) return;
 
-	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side that ends the
-	// effect later accumulates extra modifier applications. Affects both EffectTypes that drain over time:
-	//   - Ticking : continuous drain proportional to DeltaTime (e.g. Stamina via SprintCost)
-	//   - Periodic: discrete chunks fired at period boundaries (e.g. Recovery +X Stamina/s)
-	// We defer EndEffect() on both client and server for the same logical move tick window (ClientGraceTime),
-	// so each side fires the same number of Tick / period boundary applications before the effect actually ends.
-	const bool bIsNetworked    = GetNetMode() != NM_Standalone;
+	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side
+	// that ends the effect later accumulates extra modifier applications (Ticking: continuous drain;
+	// Periodic: period-boundary chunks). Both sides arm the same absolute EndAtActionTimer so each
+	// fires the same number of applications before EndEffect. A grace of 0 (project default or
+	// per-effect override) turns the deferral off and ends the effect at once.
+	const bool bIsNetworked    = GetNetMode() != NM_Standalone
+#if WITH_AUTOMATION_WORKER
+		|| bForceNetworkedForTest
+#endif
+		;
 	const bool bIsTimeDriven   = Effect->EffectData.EffectType == EGMASEffectType::Ticking
 	                          || Effect->EffectData.EffectType == EGMASEffectType::Periodic;
 
-	// Effective grace = per-effect override if explicitly set (>0), else server-wise project default
-	// from UGMASNetworkTimingSettings. Lets designers tune a slow drain effect per-instance while
-	// keeping the global RTT baseline configurable in Project Settings.
+	// Per-effect override when set (> 0), else the project default; both may be 0 = no deferral.
 	const float EffectiveGraceTime = Effect->EffectData.ClientGraceTime > 0.f
 		? Effect->EffectData.ClientGraceTime
 		: GetDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime;
-	// TEMP TEST (2026-05-22): grace-time removal defer DISABLED to observe Ticking/Periodic disappear instantly.
-	// RESTORE with: const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
-	// WARNING: while off, a Predicted Remove of a time-driven effect can drift client vs server by ~RTT
-	//          (different tick counts before EndEffect) → "was not valid" chain-replay on bound attributes (Bug #3).
-	const bool bHasGracePeriod = false;
+	const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
 
 	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
 	{

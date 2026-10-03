@@ -264,9 +264,10 @@ public:
 
 	// Chain window: on NATURAL EndAbility (not CancelAbility), the ASC applies an
 	// internally-built transient effect (EffectTag = ChainWindowTag, grants
-	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag so a
-	// re-grant refreshes). While the tag is up, the next chain stage's
-	// ActivationRequiredTags can pass. None = no window granted.
+	// ChainWindowTag, Duration = ChainWindowDuration, bUniqueByEffectTag: the window
+	// is Persistent so it has no deferred end; a re-grant while a window is open is
+	// rejected and the window keeps its original expiry). While the tag is up, the
+	// next chain stage's ActivationRequiredTags can pass. None = no window granted.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem|Chain")
 	FGameplayTag ChainWindowTag;
 

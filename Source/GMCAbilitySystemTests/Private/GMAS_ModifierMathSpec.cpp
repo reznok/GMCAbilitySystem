@@ -22,9 +22,9 @@ BEGIN_DEFINE_SPEC(FGMASModifierMathSpec,
 	// Helper shared across Describe blocks
 	FGMCAttributeModifier MakeMod(EModifierType Op, float ModVal, float DeltaTime = 1.f) const;
 
-	// A registered tag for a warn-once case. The latch in CalculateModifierValue is process-wide and
-	// keyed by (op, attribute tag); GMASTest::MakeAttr leaves the tag empty, so a case that asserts
-	// exactly one Warning needs a key no earlier case has used.
+	// A registered tag for a warn-once case. The latch in CalculateModifierValue is per FAttribute
+	// instance (WarnedClampOps, one bit per op), so each case's fresh attribute owns its own latch;
+	// GMASTest::MakeAttr leaves the tag empty, and this tag puts a name into the Warning text.
 	FGameplayTag ProbeTag() const;
 
 END_DEFINE_SPEC(FGMASModifierMathSpec)
@@ -247,7 +247,7 @@ void FGMASModifierMathSpec::Define()
 
 		It("returns zero when Max clamp is zero (unset)", [this]()
 		{
-			// First use of the (AddPercentageMaxClamp, untagged) key in the run: one Warning, then silence.
+			// The fresh attribute owns its own warn-once latch: one Warning, then silence.
 			AddExpectedErrorPlain(TEXT("AddPercentageMaxClamp on"), EAutomationExpectedErrorFlags::Contains, 1);
 			const FAttribute Attr = GMASTest::MakeAttr(100.f); // (flag off, Max 0)
 			const FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMaxClamp, 50.f);
@@ -268,7 +268,7 @@ void FGMASModifierMathSpec::Define()
 
 		It("returns zero when Min clamp is zero (default)", [this]()
 		{
-			// First use of the (AddPercentageMinClamp, untagged) key in the run: one Warning, then silence.
+			// The fresh attribute owns its own warn-once latch: one Warning, then silence.
 			AddExpectedErrorPlain(TEXT("AddPercentageMinClamp on"), EAutomationExpectedErrorFlags::Contains, 1);
 			const FAttribute Attr = GMASTest::MakeAttr(100.f); // (flag off, Min 0)
 			const FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMinClamp, 100.f);
@@ -328,7 +328,7 @@ void FGMASModifierMathSpec::Define()
 		{
 			AddExpectedErrorPlain(TEXT("AddPercentageMaxClamp on GMAS.ModifierMath.Attribute.Probe whose clamp bound is off"), EAutomationExpectedErrorFlags::Contains, 1);
 			FAttribute Attr = GMASTest::MakeAttr(100.f);
-			Attr.Tag = ProbeTag();   // own latch key: the untagged key was spent by the AddPercentageMaxClamp block
+			Attr.Tag = ProbeTag();   // the fresh attribute owns its latch; the tag names it in the Warning
 			FGMCAttributeModifier Mod = MakeMod(EModifierType::AddPercentageMaxClamp, 50.f);
 			TestEqual("0 with the bound off", Mod.CalculateModifierValue(Attr), 0.f);
 			TestEqual("still 0, no second log", Mod.CalculateModifierValue(Attr), 0.f);

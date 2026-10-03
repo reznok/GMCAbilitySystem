@@ -174,7 +174,8 @@ void FGMASAttributeAuditSpec::Define()
 
 		It("warns once and returns -1 for an unknown tag", [this]()
 		{
-			// The warn-once latch is process-wide and keyed by tag; this case is the only user of MissingTag.
+			// The warn-once latch (UnknownInitialValueTagsWarned) is per component and keyed by tag; this
+			// case's fresh component owns its own.
 			AddExpectedErrorPlain(TEXT("is not an attribute of"), EAutomationExpectedErrorFlags::Contains, 1);
 			AbilityComp->BindReplicationData();
 			if (!TestTrue("probe tag is registered", MissingTag.IsValid())) { return; }

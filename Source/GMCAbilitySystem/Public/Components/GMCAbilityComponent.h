@@ -950,7 +950,10 @@ public:
 	// Project hook to seed an attribute's initial value. Called once per attribute after the rows
 	// exist and resolved their defaults; a changed value is applied, then every row is settled again
 	// so bStartFull and attribute-driven clamps see the overrides. The hook wins over bStartFull,
-	// never over the clamp (an Error and the clamped value).
+	// never over the clamp (an Error and the clamped value). A value equal to the resolved default
+	// counts as untouched. Dependencies resolve one level deep: a row whose bStartFull or clamp reads
+	// a second row that itself depends on an overridden third row sees the second row's pre-override
+	// value.
 	virtual void SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
@@ -1323,6 +1326,10 @@ public:
 	// HasAuthority()==false; setting this flag forces IsAuthorityForGMASLogic() to return true
 	// so server-side dispatch paths can be exercised.
 	bool bForceAuthorityForTest = false;
+
+	// Test seam: the headless harness is NM_Standalone, where the grace deferral never arms. Set
+	// to exercise RemoveActiveAbilityEffect's networked branch.
+	bool bForceNetworkedForTest = false;
 
 	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
 	// (IsNetworkedServer / IsPlayerControlledPawn) can't be populated for an orphan component

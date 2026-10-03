@@ -114,14 +114,12 @@ struct FGMCAbilityEffectData
 	double Duration = 0;
 	
 	// Per-effect override for the bilateral defer window (seconds) applied when a Ticking/Periodic
-	// effect is removed: both client and server arm EndAtActionTimer = ActionTimer + this value so
-	// each side ends on the same logical move tick.
+	// effect is removed: both client and server arm EndAtActionTimer = ActionTimer + (this value, or
+	// the project default when this is 0) so each side ends on the same logical move tick.
 	//
-	// Sentinel semantics: 0 means "use the project-wide default" from
-	// `UGMASNetworkTimingSettings::DefaultClientGraceTime` (Project Settings → GMC Ability System →
-	// Network Timing, default 0.5s — sized for typical RTT + jitter + one server tick at 30 Hz).
-	// Set this to >0 only when an individual effect needs a different window (e.g. a slow drain
-	// that needs more time for client/server convergence).
+	// 0 means "use the project default" (UGMASNetworkTimingSettings::DefaultClientGraceTime, 0.5 s;
+	// 0 there turns the deferral off). A value > 0 here defers this effect even when the project
+	// default is 0.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	float ClientGraceTime = 0.f;
 
