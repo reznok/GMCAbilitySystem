@@ -1339,6 +1339,18 @@ public:
 	// keeps the call sites symmetric with how internal functions touch it.
 	FGMASBoundQueueV2& GetBoundQueueV2ForTest() { return BoundQueueV2; }
 
+	// Test seam: GenPredictionTick overwrites ActionTimer from the movement component's move
+	// timestamp (non-virtual in GMC, so the stub cannot change it). Specs that need a controlled
+	// clock set it here and drive the real TickActiveAbilities / TickActiveEffects directly.
+	void SetActionTimerForTest(double InActionTimer) { ActionTimer = InActionTimer; }
+
+	// Test seam: tick every active ability (and its tasks) through the production entry point
+	// without GenPredictionTick resetting the clock. Pair with CleanupStaleAbilitiesForTest.
+	void TickActiveAbilitiesForTest(float DeltaTime) { TickActiveAbilities(DeltaTime); }
+
+	// Test seam: purge Ended instances the way GenPredictionTick does at the end of a tick.
+	void CleanupStaleAbilitiesForTest() { CleanupStaleAbilities(); }
+
 	// Test seam for TryActivateClientAuthAbility. The function is private so tests cannot
 	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
 	// Allows headless specs to validate the helper without going through QueueAbility's

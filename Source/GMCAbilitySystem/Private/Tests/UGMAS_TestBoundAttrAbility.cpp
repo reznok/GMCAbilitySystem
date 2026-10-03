@@ -3,9 +3,8 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Attributes/GMCAttributeModifier.h"
 
-// The tag is defined at module scope in GMAS_TestTags.cpp.
-// We use the raw string here rather than including GMAS_TestTags.h to keep
-// the Plugin's Tests folder free of GMAS_2 module dependencies.
+// GMAS.Test.Attribute.Stamina is registered as a native tag by the spec that uses this ability
+// (a shared test helper header takes that over in a later task).
 static const FName StaminaTagName(TEXT("GMAS.Test.Attribute.Stamina"));
 
 void UGMAS_TestBoundAttrAbility::BeginAbility()
@@ -21,7 +20,7 @@ void UGMAS_TestBoundAttrAbility::BeginAbility()
 	// to RawValue, which is the GMC-bound field.  Both client and server execute
 	// this inside GenPredictionTick → identical RawValue → no correction.
 	FGMCAttributeModifier Mod_Stamina;
-	Mod_Stamina.AttributeTag   = FGameplayTag::RequestGameplayTag(StaminaTagName, false);
+	Mod_Stamina.AttributeTag   = FGameplayTag::RequestGameplayTag(StaminaTagName, /*ErrorIfNotFound=*/true);
 	Mod_Stamina.Op             = EModifierType::Add;
 	Mod_Stamina.ModifierValue  = Mod;
 

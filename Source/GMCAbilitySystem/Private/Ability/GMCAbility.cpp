@@ -102,7 +102,7 @@ void UGMCAbility::Tick(float DeltaTime)
 	// Don't tick before the ability is initialized or after it has ended
 	if (AbilityState == EAbilityState::PreExecution || AbilityState == EAbilityState::Ended) return;
 
-	if (!OwnerAbilityComponent->HasAuthority())
+	if (!OwnerAbilityComponent->IsAuthorityForGMASLogic())
 	{
 		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
 		{

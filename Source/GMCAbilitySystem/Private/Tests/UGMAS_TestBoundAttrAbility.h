@@ -1,13 +1,6 @@
-// Ability for Layer 3 / Layer 4 GMC-bound attribute prediction tests.
-//
-// BeginAbility applies an instant +StaminaMod to the GMAS.Test.Attribute.Stamina
-// attribute (bGMCBound=true) and immediately ends.  Because BeginAbility runs
-// inside GMC's GenPredictionTick, the same code executes identically on both
-// client and server → server confirms the client's predicted RawValue → no
-// CL_OnClientMoveInvalidated correction fires.
-//
-// StaminaMod is read from the CDO so per-test overrides work the same way as
-// UGMAS_TestDelayAbility::DelayTime.
+// Helper ability for the task and attribute specs: BeginAbility applies an instant
+// +StaminaMod to GMAS.Test.Attribute.Stamina (a bound attribute) through the inner apply
+// path and ends at once. StaminaMod is read from the CDO so a spec can override it.
 
 #pragma once
 
