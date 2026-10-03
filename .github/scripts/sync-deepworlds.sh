@@ -55,7 +55,7 @@ close_pr_and_branch() {
 
 # Sets base, count, commits_md, overlap_md for HEAD..upstream.
 describe_range() {
-	base=$(git merge-base HEAD "$upstream")
+	base=$(git merge-base HEAD "$upstream") || die "no common history with the fork"
 	count=$(git rev-list --count "$base..$upstream")
 	commits_md=$(git log -n "$MAX_LISTED_COMMITS" --format='- %h %ad %an %s' --date=short "$base..$upstream")
 	if [ "$count" -gt "$MAX_LISTED_COMMITS" ]; then
@@ -84,7 +84,7 @@ pr_body() {
 Automated merge of $(upstream_label) \`$UPSTREAM_BRANCH\` ($(short "$base")..$(short "$upstream")) into \`$TARGET_BRANCH\` failed.
 
 ## Conflicting files
-$(printf '%s\n' "$conflicts" | sed 's/^/- /')
+$conflicts_md
 
 ## Overlap with local changes since $(short "$base")
 $overlap_md
@@ -119,51 +119,67 @@ fi
 git fetch --quiet "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
 upstream=$(git rev-parse FETCH_HEAD)
 
-if git merge-base --is-ancestor "$upstream" HEAD; then
-	report "## Sync DeepWorlds: up to date"
-	report "\`$TARGET_BRANCH\` already contains the fork tip \`$(short "$upstream")\`."
-	is_dry || close_pr_and_branch "\`$TARGET_BRANCH\` already contains the fork tip \`$(short "$upstream")\`; superseded."
-	exit 0
-fi
-
-describe_range
-
-if merge_out=$(git merge --no-ff --no-edit -m "$(merge_message)" "$upstream" 2>&1); then
-	if is_dry; then
-		git reset --quiet --hard ORIG_HEAD
-		report_range "## Sync DeepWorlds: dry run, would merge $count commits ($(short "$base")..$(short "$upstream"))"
+# ---- merge, pushing at most twice: a push rejected because TARGET_BRANCH moved
+# refetches it and redoes the merge once from the new tip.
+attempt=1
+while :; do
+	if git merge-base --is-ancestor "$upstream" HEAD; then
+		report "## Sync DeepWorlds: up to date"
+		report "\`$TARGET_BRANCH\` already contains the fork tip \`$(short "$upstream")\`."
+		is_dry || close_pr_and_branch "\`$TARGET_BRANCH\` already contains the fork tip \`$(short "$upstream")\`; superseded."
 		exit 0
 	fi
-	merge_sha=$(short HEAD)
-	git push --quiet origin "HEAD:$TARGET_BRANCH"
-	close_pr_and_branch "Merged cleanly in \`$merge_sha\`."
-	report_range "## Sync DeepWorlds: merged $count commits in \`$merge_sha\`"
-	exit 0
-fi
 
-# ---- conflict
-conflicts=$(git diff --name-only --diff-filter=U)
-git merge --abort 2>/dev/null || true
-[ -n "$conflicts" ] || die "merge failed without conflicts: $merge_out"
-conflict_count=$(printf '%s\n' "$conflicts" | grep -c .)
-conflicts_md=$(printf '%s\n' "$conflicts" | sed 's/^/- /')
+	describe_range
 
-if is_dry; then
-	report "## Sync DeepWorlds: dry run, $count commits conflict in $conflict_count files"
+	if merge_out=$(git merge --no-ff --no-edit -m "$(merge_message)" "$upstream" 2>&1); then
+		if is_dry; then
+			git reset --quiet --hard ORIG_HEAD
+			report_range "## Sync DeepWorlds: dry run, would merge $count commits ($(short "$base")..$(short "$upstream"))"
+			exit 0
+		fi
+		merge_sha=$(short HEAD)
+		if git push --quiet origin "HEAD:$TARGET_BRANCH"; then
+			report_range "## Sync DeepWorlds: merged $count commits in \`$merge_sha\`"
+			[ "$attempt" -eq 1 ] || report "(push succeeded on attempt $attempt)"
+			close_pr_and_branch "Merged cleanly in \`$merge_sha\`."
+			exit 0
+		fi
+		[ "$attempt" -lt 2 ] || die "push to $TARGET_BRANCH rejected twice"
+		log "push rejected; refetching $TARGET_BRANCH and retrying"
+		attempt=$((attempt + 1))
+		git fetch --quiet origin "$TARGET_BRANCH"
+		git reset --quiet --hard "origin/$TARGET_BRANCH"
+		continue
+	fi
+
+	# ---- conflict
+	conflicts=$(git diff --name-only --diff-filter=U)
+	git merge --abort 2>/dev/null || true
+	[ -n "$conflicts" ] || die "merge failed without conflicts: $merge_out"
+	conflict_count=$(printf '%s\n' "$conflicts" | grep -c .)
+	conflicts_md=$(printf '%s\n' "$conflicts" | sed 's/^/- /')
+
+	if is_dry; then
+		report "## Sync DeepWorlds: dry run, $count commits conflict in $conflict_count files"
+		report "$conflicts_md"
+		report ""
+		report_range "Commits:"
+		exit 0
+	fi
+
+	git push --quiet --force origin "$upstream:refs/heads/$SYNC_BRANCH"
+	gh label create "$LABEL" --color C5DEF5 --description "Automated fork sync" --force >/dev/null
+	title="Sync DeepWorlds $UPSTREAM_BRANCH: $count commits, conflicts in $conflict_count files"
+	body=$(pr_body)
+	number=$(open_pr_number)
+	if [ -n "$number" ]; then
+		gh pr edit "$number" --title "$title" --body "$body" >/dev/null
+		report "## Sync DeepWorlds: conflicts in $conflict_count files; pull request updated"
+	else
+		gh pr create --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --title "$title" --body "$body" --label "$LABEL" >/dev/null
+		report "## Sync DeepWorlds: conflicts in $conflict_count files; pull request created"
+	fi
 	report "$conflicts_md"
 	exit 0
-fi
-
-git push --quiet --force origin "$upstream:refs/heads/$SYNC_BRANCH"
-gh label create "$LABEL" --color C5DEF5 --description "Automated fork sync" --force >/dev/null
-title="Sync DeepWorlds $UPSTREAM_BRANCH: $count commits, conflicts in $conflict_count files"
-body=$(pr_body)
-number=$(open_pr_number)
-if [ -n "$number" ]; then
-	gh pr edit "$number" --title "$title" --body "$body" >/dev/null
-else
-	gh pr create --head "$SYNC_BRANCH" --base "$TARGET_BRANCH" --title "$title" --body "$body" --label "$LABEL" >/dev/null
-fi
-report "## Sync DeepWorlds: conflicts in $conflict_count files; pull request updated"
-report "$conflicts_md"
-exit 0
+done

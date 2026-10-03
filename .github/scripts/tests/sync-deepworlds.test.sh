@@ -124,7 +124,7 @@ assert_eq "$(sync_branch_sha "$d")" "" "T4 dry run pushes no sync branch"
 # ---- T5a: conflict, live: branch pushed, PR created
 : >"$GH_LOG"
 out=$(run_sync "$d")
-assert_contains "$out" "conflicts in 1 files; pull request updated" "T5a reports the PR"
+assert_contains "$out" "conflicts in 1 files; pull request created" "T5a reports the PR"
 forktip=$(git -C "$d/fork.git" rev-parse dev)
 assert_eq "$(sync_branch_sha "$d")" "$forktip" "T5a sync branch equals the fork tip"
 ghlog=$(cat "$GH_LOG")
@@ -139,6 +139,7 @@ out=$(run_sync "$d" GH_PR_LIST_JSON='[{"number":7}]')
 ghlog=$(cat "$GH_LOG")
 assert_contains "$ghlog" "pr edit 7 --title" "T5b edits the existing PR"
 assert_not_contains "$ghlog" "pr create" "T5b creates no second PR"
+assert_contains "$out" "pull request updated" "T5b reports the update"
 
 # ---- T5c: resolved by hand and pushed: the next run closes the PR and deletes the branch
 (cd "$d/work" && git merge -q --no-ff -X ours -m "resolve" "$forktip" && git push -q origin dev)
@@ -147,6 +148,27 @@ out=$(run_sync "$d" GH_PR_LIST_JSON='[{"number":7}]')
 assert_contains "$out" "up to date" "T5c up to date after the manual resolve"
 assert_contains "$(cat "$GH_LOG")" "pr close 7 --comment" "T5c closes the PR"
 assert_eq "$(sync_branch_sha "$d")" "" "T5c deletes the sync branch"
+
+# ---- T6: push rejected once (a pre-receive hook rejects the first push after arming);
+# a stale conflict PR and sync branch exist and must be cleaned up after the clean merge
+: >"$GH_LOG"
+d=$(make_fixture t6)
+fork_edit "$d" file.txt 's/^base$/base fork/' "fork: file"
+git -C "$d/work" push -q origin "HEAD:refs/heads/sync/deepworlds"
+cat >"$d/canonical.git/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+if [ -f "$GIT_DIR/reject-once" ]; then rm -f "$GIT_DIR/reject-once"; echo "rejected once" >&2; exit 1; fi
+exit 0
+HOOK
+chmod +x "$d/canonical.git/hooks/pre-receive"
+touch "$d/canonical.git/reject-once"
+out=$(run_sync "$d" GH_PR_LIST_JSON='[{"number":9}]')
+assert_contains "$out" "push rejected; refetching" "T6 logs the retry"
+assert_contains "$out" "merged 1 commits" "T6 merges after the retry"
+assert_contains "$out" "attempt 2" "T6 report mentions the second attempt"
+assert_contains "$(git -C "$d/canonical.git" log -1 --format=%s dev)" "Sync DeepWorlds dev: 1 commits" "T6 canonical dev advanced"
+assert_contains "$(cat "$GH_LOG")" "pr close 9 --comment" "T6 closes the stale PR after the clean merge"
+assert_eq "$(sync_branch_sha "$d")" "" "T6 deletes the stale sync branch"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
