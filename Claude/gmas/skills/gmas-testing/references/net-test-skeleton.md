@@ -1,6 +1,6 @@
 # Networked PIE test skeleton
 
-A latent-command harness for automation tests that need a dedicated server and clients in one editor process: a session request with explicit settings (`MyPIE`), a phased command (`FMyNetTest`) that waits until every player flies, runs steps, ends the session and waits for it to close, and one example test with a confirm window. Copy it into an editor-capable module (`UncookedOnly`, or `Editor`; the module links `UnrealEd` for editor targets plus `GMCAbilitySystem` and `GMCCore`), rename, and replace the three project hooks: the map, `AMyPawn`, and `AMyPawn::GetAbilitySystem()` (your accessor to the pawn's `UGMC_AbilitySystemComponent`). The reasoning behind each piece is in the skill (`SKILL.md`, *Networked PIE tests*); the comments here say why a line is the way it is. Engine signatures: `Editor/UnrealEd/Classes/Settings/LevelEditorPlaySettings.h` and `LevelEditorPlayNetworkEmulationSettings.h` in the same folder, `Editor/UnrealEd/Public/PlayInEditorDataTypes.h`, `Editor/UnrealEd/Classes/Editor/EditorEngine.h`, `Runtime/Core/Public/Misc/AutomationTest.h`, all relative to `Engine/Source/`.
+A latent-command harness for automation tests that need a dedicated server and clients in one editor process: a session request with explicit settings (`MyPIE`), a phased command (`FMyNetTest`) that waits until every player has a pawn, runs steps, ends the session and waits for it to close, and one example test with a confirm window. Copy it into an editor-capable module (`UncookedOnly`, or `Editor`; the module links `UnrealEd` for editor targets plus `GMCAbilitySystem` and `GMCCore`), rename, and replace the three project hooks: the map, `AMyPawn`, and `AMyPawn::GetAbilitySystem()` (your accessor to the pawn's `UGMC_AbilitySystemComponent`). The reasoning behind each piece is in the skill (`SKILL.md`, *Networked PIE tests*); the comments here say why a line is the way it is. Engine signatures: `Editor/UnrealEd/Classes/Settings/LevelEditorPlaySettings.h` and `LevelEditorPlayNetworkEmulationSettings.h` in the same folder, `Editor/UnrealEd/Public/PlayInEditorDataTypes.h`, `Editor/UnrealEd/Classes/Editor/EditorEngine.h`, `Runtime/Core/Public/Misc/AutomationTest.h`, all relative to `Engine/Source/`.
 
 Every file below is wrapped in `#if WITH_AUTOMATION_TESTS && WITH_EDITOR` (after `#include "Misc/AutomationTest.h"`): the harness needs `GEditor`, and nothing in it belongs in a cooked game.
 
@@ -17,7 +17,7 @@ struct FMyPIEOptions
     int32 NumClients  = 1;    // 0 = standalone (one local player, no server); 1..N = a dedicated server plus N clients
     int32 RttMs       = 0;    // emulated round trip per client (ms), split between its outgoing and incoming packets
     int32 LossPercent = 0;    // emulated packet loss per client, each direction
-    FString Map = TEXT("/Game/Maps/L_TestArena");   // the test's map, never whatever is open in the editor
+    FString Map = TEXT("/Game/Maps/L_NetTest");     // the test's map, never whatever is open in the editor
 };
 
 namespace MyPIE
@@ -58,8 +58,9 @@ bool MyPIE::Start(const FMyPIEOptions& Options, FString& OutError)
 {
     if (!GEditor) { OutError = TEXT("no editor"); return false; }
     // Every in-process session binds the same server port, so there is room for exactly one: refuse a second
-    // while one runs, is queued, or is still closing. The test's Start phase waits for that to clear.
-    if (AnySession() || GEditor->IsPlaySessionInProgress() || GEditor->IsPlaySessionRequestQueued())
+    // while one runs, is queued (IsPlaySessionInProgress covers both), or is still closing. The test's Start
+    // phase waits for that to clear.
+    if (AnySession() || GEditor->IsPlaySessionInProgress())
     {
         OutError = TEXT("a PIE session is already running or queued");
         return false;
@@ -109,6 +110,7 @@ void MyPIE::End()
 #include "MyPIE.h"
 
 class AMyPawn;
+class UWorld;                                              // neither CoreMinimal.h nor AutomationTest.h declares it
 
 /**
  * A PIE test as a latent command: Start -> WaitReady -> Run -> End -> WaitClosed. Derive, implement RunStep(),
@@ -131,11 +133,13 @@ protected:
     UWorld* Server() const { return ServerWorld; }         // the dedicated server's world (the one world in a standalone session)
     UWorld* Client(int32 Index) const { return ClientWorlds.IsValidIndex(Index) ? ClientWorlds[Index] : nullptr; } // client 1 = 0
 
-    static constexpr double ReadyTimeout = 120.0;          // the first session compiles shaders and loads the map
-    static constexpr double RunTimeout   = 180.0;
-    static constexpr double CloseTimeout = 30.0;
-    static constexpr double SettleSeconds  = 2.0;          // after everyone has a pawn: spawn-smoothing pause, first server states, clock sync
-    static constexpr double ConfirmSeconds = 6.0;          // a round trip, the 1 s server-operation grace, smoothing, margin
+    // Time budgets in seconds. Plain members, not constants: a derived test widens one in its constructor
+    // (a long respawn, a slow first map load) without touching the harness.
+    double ReadyTimeout   = 120.0;                         // the first session compiles shaders and loads the map
+    double RunTimeout     = 180.0;
+    double CloseTimeout   = 30.0;
+    double SettleSeconds  = 2.0;                           // after everyone has a pawn: spawn-smoothing pause, first server states, clock sync
+    double ConfirmSeconds = 6.0;                           // a round trip, the 1 s server-operation grace, smoothing, margin
 
     FAutomationTestBase* Test = nullptr;
     FMyPIEOptions Options;
