@@ -94,7 +94,8 @@ $commits_md
 
 ## Resolve locally
     git fetch origin $TARGET_BRANCH $SYNC_BRANCH
-    git checkout $TARGET_BRANCH && git pull --ff-only
+    git checkout $TARGET_BRANCH
+    git pull --ff-only
     git merge --no-ff origin/$SYNC_BRANCH
     # resolve conflicts, build locally, then
     git push origin $TARGET_BRANCH
