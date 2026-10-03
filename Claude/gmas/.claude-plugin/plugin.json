@@ -1,0 +1,11 @@
+{
+  "name": "gmas",
+  "displayName": "GMAS",
+  "version": "1.4.0",
+  "description": "GMC-aware skills for authoring, debugging, reviewing and testing GMAS (GMC Ability System) gameplay",
+  "author": { "name": "reznok" },
+  "homepage": "https://github.com/reznok/GMCAbilitySystem",
+  "repository": "https://github.com/reznok/GMCAbilitySystem",
+  "license": "MIT",
+  "keywords": ["unreal", "gmc", "gmas", "ability-system", "prediction", "multiplayer"]
+}
