@@ -22,7 +22,7 @@ GMAS has no compile CI: it depends on the paid GMC plugin, so builds happen on t
       git push origin dev
 
   The next run sees that `dev` contains the fork tip, closes the pull request and deletes the branch.
-- **Up to date:** nothing happens.
+- **Up to date:** nothing is merged; a stale conflict pull request is closed and `sync/deepworlds` deleted if `dev` already contains the fork tip.
 
 Run it by hand from the Actions tab (`Run workflow`; tick `dry_run` to see what would happen without pushing), or locally in a full clone of `dev`:
 

@@ -1,6 +1,6 @@
 # GMAS Claude Code plugin — design
 
-**Status:** approved 2026-10-02, not yet implemented.
+**Status:** implemented 2026-10-03 (see `Claude/gmas`). Wording below was aligned with the shipped hook and skills; the implementation notes at the end list the deviations.
 **Scope:** a public Claude Code plugin, shipped inside this repository, that teaches Claude how GMC and GMAS work and how to author, debug, review and test GMAS gameplay.
 
 ## 1. Context
@@ -91,19 +91,19 @@ Versioning: `version` tracks the GMAS release the content describes (`1.4.x`); t
 
 ## 4. The detection hook
 
-`hooks/hooks.json` registers one `SessionStart` hook (matcher `startup|resume|clear|compact`, `bash ${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.sh`, timeout 5 s). Bash is required (Git Bash on Windows), as for Epic's Unreal Engine plugin hook.
+`hooks/hooks.json` registers one `SessionStart` hook (matcher `startup|resume|clear|compact`, `bash "${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.sh"` — quoted, as `claude plugin validate --strict` requires — timeout 5 s). Bash is required (Git Bash on Windows), as for Epic's Unreal Engine plugin hook.
 
 `gmas-context.sh`:
 
 1. Exits silently when `CLAUDE_GMAS_HOOK_DISABLE` is set.
 2. Walks up from `$PWD` to the first directory holding a `*.uproject` (the project root). A `*.uproject` anywhere up the chain wins, so a session started inside a GMAS submodule of a project is treated as that project's session. Only when the whole walk finds no `*.uproject` but did pass a directory holding `GMCAbilitySystem.uplugin` (a standalone checkout of this repository) does the script emit the maintainer context (step 6) and exit.
-3. Finds, under `<root>/Plugins` at depth ≤ 3, `GMC.uplugin` and `GMCAbilitySystem.uplugin`. The folder name is irrelevant (vendored copies and submodules use different names). The first match of each wins.
-4. Reads `VersionName` from each `.uplugin` with `sed`. GMAS generation: `Source/GMCAbilitySystem/Public/Utility/GMASBoundQueueV2.h` next to the uplugin → `1.4+ (bound queue V2)`, else `pre-1.4 (bound queue V1; skill notes tagged 1.4+ do not apply)`.
+3. Finds, under `<root>/Plugins` up to three folders deep (`find -mindepth 2 -maxdepth 4`), `GMC.uplugin` and `GMCAbilitySystem.uplugin`. The folder name is irrelevant (vendored copies and submodules use different names). The first match in sorted order wins. The walk never examines the filesystem root (enumerating `/` on MSYS can stall for tens of seconds).
+4. Reads `VersionName` from each `.uplugin` with `sed`. GMAS generation: `Source/GMCAbilitySystem/Public/Utility/GMASBoundQueueV2.h` next to the uplugin → `1.4+ bound queue V2`, else `pre-1.4: bound queue V1, skill notes tagged 1.4+ do not apply`. The version is labelled `VersionName` because a tree can be newer than its uplugin string (vendored copies of the 1.4 tree still said 1.3).
 5. Emits `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"..."}}` with one paragraph, paths relative to the project root:
 
-   > This project uses GMC (General Movement Component) at `Plugins/GMC` (2.3.9) and GMAS (GMC Ability System) at `Plugins/GMCAbilitySystem` (1.4, 1.4+ bound queue V2). GMC's source is licensed and exists only inside this project: read `Plugins/GMC/Source/GMCCore/Public/...` for exact signatures and never copy GMC code into other repositories. Load `gmas:gmas-rules` before editing predicted gameplay (`gmas:gmc-prediction` for GMC-only code); author with `gmas:gmas-ability`, `gmas:gmas-effect`, `gmas:gmas-attribute`, `gmas:gmas-task`; use `gmas:gmas-debug` for desync, replay or missing-effect issues, `gmas:gmas-review` for reviews, `gmas:gmas-testing` for automation tests, `gmas:gmas-setup` when wiring a new pawn, `gmas:gmas-upgrade` after updating GMAS.
+   > This project uses GMC (General Movement Component) at `Plugins/GMC` (2.3.9) and GMAS (GMC Ability System) at `Plugins/GMCAbilitySystem` (VersionName 1.4, 1.4+ bound queue V2). GMC's source is licensed and exists only inside this project: read `Plugins/GMC/Source/GMCCore/Public/...` for exact signatures and never copy GMC code into other repositories. Load `gmas:gmas-rules` before editing predicted gameplay (`gmas:gmc-prediction` for GMC-only code); author with `gmas:gmas-ability`, `gmas:gmas-effect`, `gmas:gmas-attribute`, `gmas:gmas-task`; use `gmas:gmas-debug` for desync, replay or missing-effect issues, `gmas:gmas-review` for reviews, `gmas:gmas-testing` for automation tests, `gmas:gmas-setup` when wiring a new pawn, `gmas:gmas-upgrade` after updating GMAS.
 
-   GMAS found but GMC missing: the sentence about GMC becomes "GMC was not found under `Plugins/`; GMAS requires it (it may be installed as an engine plugin under `Engine/Plugins/Marketplace`)". Nothing found: no output.
+   GMAS found but GMC missing: the GMC clause becomes "GMC (General Movement Component), which GMAS requires," and the source sentence "GMC was not found under `Plugins/`; it may be installed as an engine plugin (Engine/Plugins/Marketplace). GMC's source is licensed: read its headers where they are and never copy GMC code into other repositories." Nothing found: no output.
 6. Maintainer context (checkout of this repository): "This is the GMAS plugin repository. Load `gmas:gmas-maintain` for the branch model, the DeepWorlds sync, the specs and the release recipe. Content here must stay generic."
 7. `CLAUDE_GMAS_HOOK_DEBUG` set → tracing on stderr. JSON-escapes backslashes and quotes.
 
@@ -136,7 +136,7 @@ Content: the ASC forwards the five GMC hooks and binds last; a "where does this 
 
 Description: *Use when adding GMAS to a project or wiring a new GMC pawn or movement component to a GMC_AbilitySystemComponent, in C++ or Blueprint, including submodule install and Build.cs dependencies.*
 
-Content: requirements (GMC license, UE 5.4–5.8, Niagara, GameplayTags); install as a submodule (`-b main` for releases, `-b dev` to follow integration) or as a copied folder; `.uproject` plugin entries; `Build.cs` dependencies (`GMCCore`, `GMCAbilitySystem`, `GameplayTags`); C++ wiring (`AGMC_Pawn`, a movement component subclass forwarding the five hooks, `UGMC_AbilitySystemComponent`, `BindReplicationData` with the ASC last, a `UGMCAttributesData` asset, tags `Ability.*` / `Attribute.*`, ability map, starting abilities and effects); the Blueprint path (link to the wiki's Getting Started); a first ability sketch.
+Content: requirements (GMC license, UE 5.5–5.8 — 5.4 unverified because `Utility/GMASBoundQueueV2.h` includes `StructUtils/InstancedStruct.h` without the version guard — Niagara, GameplayTags); install as a submodule (`-b main` for releases, `-b dev` to follow integration) or as a copied folder; `.uproject` plugin entries; `Build.cs` dependencies (`GMCCore`, `GMCAbilitySystem`, `GameplayTags`); C++ wiring (`AGMC_Pawn`, a movement component subclass forwarding the five hooks, `UGMC_AbilitySystemComponent`, `BindReplicationData` with the ASC last, a `UGMCAttributesData` asset, tags `Ability.*` / `Attribute.*`, ability map, starting abilities and effects); the Blueprint path (link to the wiki's Getting Started); a first ability sketch.
 
 ### 5.4 `gmas-ability`
 
@@ -230,3 +230,13 @@ Acceptance for the first release of the plugin:
 - Downstream projects adopt the plugin and trim GMAS-generic material from their own instructions.
 - Other repositories (for example a StateTree ↔ GMAS plugin) list their plugins in the `reznok` marketplace through `github` sources.
 - Agents, commands or evaluation suites, if the skills prove worth automating further.
+
+## 10. Implementation notes (2026-10-03)
+
+Delivered on `dev` as a series of commits after `15676bf`: manifests, `scripts/check.sh` with its harness, the hook with its harness, the twelve skills (each reviewed twice), the docs, and a polish pass. Deviations from the text above, all adopted into the sections they touch:
+
+- **Hook.** The `hooks.json` command quotes `${CLAUDE_PLUGIN_ROOT}` (strict validation warns otherwise). The plugin search runs `find -mindepth 2 -maxdepth 4` under `Plugins/`, takes the first match in sorted order, and never examines the filesystem root (globbing `/` on MSYS took ~34 s on one machine, which would have hit the 5 s timeout in every non-Unreal session). The generation phrase labels the version as `VersionName` because vendored copies of the 1.4 tree still carry `1.3`. The harness asserts the hook's exit code in every case and reports failures instead of aborting.
+- **Check script.** `GMAS_CHECK_FAST=1` skips manifest validation and the hook harness so the check harness runs in about two minutes instead of fifteen; skips are counted separately and never hide a failure. The GMC-excerpt guard resets its fence state per file and recognises indented and `~~~` fences; the file scan is sorted so the harness's ordering assumptions hold on every filesystem. The two checker scripts are the only files excluded from the leak grep (they carry the patterns and the injected violations).
+- **Skills.** Where this spec's outlines named a fact the headers contradicted, the headers won: `EGMASEffectType` is `Instant`/`Ticking`/`Persistent`/`Periodic`; `SetAttributeValueByTag`, `ExecuteSyncedEvent`, `GetQueuedAbilityCount` and `OnPreAttributeChanged` are inert on 1.4 and are documented as such; the grace-time deferral of predicted removals is disabled by a source-level override; every abnormal end path except `CancelAbility` is a natural end; `CanAffordAbilityCost` is never called by the activation path; the ASC's movement-component pointer must be set by the consumer before binding; `bActivateOnMovementTick` selects where activation and task payloads are dispatched, not where the ability ticks; the ability map is keyed by `Input.*` tags. Items that differ on 1.3 trees carry `(1.4+)` after a `git grep` against `v1.3.0`.
+- **Audit by-product.** Verifying the skills against the source surfaced over a hundred defects and documentation drifts in GMAS itself (dead public APIs, flipped defaults, the test helpers behind the 150 failing specs, unchecked client payloads on the server). They are tracked outside this spec and partly reflected in the 1.4.0 release notes' known issues.
+- **Acceptance.** `bash Claude/gmas/scripts/check.sh` → `57 passed, 0 failed`; `scripts/tests/check.test.sh` → `14 passed, 0 failed`; `hooks/tests/gmas-context.test.sh` → `18 passed, 0 failed`; the hook run from a downstream project's source folder named both plugins with their versions and generation; the leak grep over every plugin commit's diff and message is clean.
