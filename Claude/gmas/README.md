@@ -62,7 +62,12 @@ GMC is a paid plugin. Its source exists only inside your project (or among your 
 
 ## Versions
 
-The content describes GMAS 1.4 and GMC 2.3.x. Facts that differ on GMAS trees older than 1.4 are tagged `(1.4+)` in the skills, and the hook reports which generation your project has, so Claude knows which notes apply. `version` in `.claude-plugin/plugin.json` tracks the GMAS release the content describes (`1.4.x`); the patch component bumps for documentation fixes.
+The content describes GMAS 1.4.1 and GMC 2.3.x. Facts that differ on GMAS trees older than 1.4 are tagged `(1.4+)` in the skills, facts that changed in 1.4.1 are tagged `(1.4.1+)` with the 1.4.0 behavior beside them, and the hook reports which generation your project has, so Claude knows which notes apply. `version` in `.claude-plugin/plugin.json` tracks the GMAS release the content describes (`1.4.x`); the patch component also bumps for documentation fixes.
+
+| Plugin version | Describes | What changed for users of the skills |
+|---|---|---|
+| `1.4.0` | GMAS 1.4.0 | first release: twelve skills and the SessionStart hook |
+| `1.4.1` | GMAS 1.4.1 | the skills follow the 1.4.1 fixes: abnormal and external ability ends cancel (`CancelAbilityEvent`, `OnAbilityCancelled`), activation checks the cost, the grace deferral of effect removals works again (and its opt-out), the effect apply order and refusals, `DrivesPawnLocally()` and type-checked task payloads, the new log tags and console names, the deprecations due for removal in 1.5, the test module and its seams; `gmas-upgrade` gains a `1.4 → 1.4.1` section. The hook and both structural checks run on Windows without Git Bash (PowerShell twins), and every command is given for PowerShell and bash |
 
 ## Contributing
 

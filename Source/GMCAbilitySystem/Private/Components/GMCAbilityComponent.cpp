@@ -776,7 +776,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 			// ServerConfirmTimeout, past which the client has already self-cancelled its own
 			// predicted instance — so a still-held gate can no longer be a legitimate overlap.
 			// Chosen over the task heartbeat window because several abilities legitimately run
-			// past 1.5s with no upstream re-entry guard (melee heavy attack, skin, tactical reload).
+			// past 1.5s with no upstream re-entry guard (a charged attack, a channelled action, a long reload).
 			static constexpr double SuspiciousBlockerAge = 2.0;
 			const UGMCAbility* Blocker = nullptr;
 			for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)

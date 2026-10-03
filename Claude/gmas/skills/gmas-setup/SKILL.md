@@ -12,12 +12,12 @@ This skill gets GMAS (GMC Ability System) into a project and a first pawn wired 
 | Need | Detail |
 |---|---|
 | a GMC license | GMC (General Movement Component, GMCv2) is a paid plugin. Its source lives only in the project, under `Plugins/GMC` (module `GMCCore`); GMAS never ships it, and neither do the skills in this plugin. GMAS 1.4 is verified against GMC 2.3.x |
-| Unreal 5.5 to 5.8 | 5.4 unverified: `Public/Utility/GMASBoundQueueV2.h` includes `StructUtils/InstancedStruct.h` without the `ENGINE_MINOR_VERSION >= 5` guard the other GMAS headers carry, and on 5.4 that header lives in the `StructUtils` plugin under a different path |
+| Unreal 5.5 to 5.8 | 5.4 unverified. On 1.4.0 `Public/Utility/GMASBoundQueueV2.h` includes `StructUtils/InstancedStruct.h` without the `ENGINE_MINOR_VERSION >= 5` guard the other GMAS headers carry (on 5.4 that header lives in the `StructUtils` plugin under a different path); 1.4.1 adds the guard |
 | plugins enabled in `.uproject` | `GMC` and `GMCAbilitySystem`. GMAS's `.uplugin` declares `GMC`, `StructUtils` and `Niagara` (1.4+) as plugin dependencies, so enabling GMAS enables them: Niagara is on by default anyway; `StructUtils` is a real plugin on 5.4 and a deprecated shim from 5.5 that still exists in 5.8. GMC's own `.uplugin` pulls `EnhancedInput` and `OnlineSubsystemSteam` |
 | GameplayTags | an engine module, not a plugin: your `Build.cs` lists it; the tag editor plugin `GameplayTagsEditor` is enabled by default |
 | GMC controllers | player controllers derive from `AGMC_PlayerController`, AI controllers from `AGMC_AIController`, and the game mode spawns exactly one `AGMC_WorldTimeReplicator` (`gmas:gmc-prediction`) |
 
-GMAS has two modules: `GMCAbilitySystem` (runtime) and `GMCAbilitySystemEditor` (editor); both load at the `Default` phase.
+GMAS has two modules, `GMCAbilitySystem` (runtime) and `GMCAbilitySystemEditor` (editor), plus from 1.4.1 `GMCAbilitySystemTests` (`UncookedOnly`: the specs and test stubs, never in a cooked or Shipping game); all load at the `Default` phase.
 
 ## Installing GMAS
 
@@ -62,7 +62,7 @@ Regenerate project files, build (a source plugin compiles with the project), ope
 | pawn | `AGMC_Pawn` (`Source/GMCCore/Public/Actors/GMCPawn.h`) | an `APawn` that owns GMC's move pipeline: finds its replication component (`GetReplicationComponent()`), binds it from `PostInitializeComponents` (`SetupReplicationComponent()` calls `BindReplicationData`), and handles possession and move-state replication |
 | convenience pawn | `AGMAS_Pawn` (`Public/Actors/GMAS_Pawn.h`) | `AGMC_Pawn` plus a capsule root, skeletal mesh, spring arm, camera, an ability system component (`AbilitySystemComponent`, subobject `Ability Component`) and an optional `InputMappingContext` added at priority 0. No movement component: you add yours. Purely optional |
 | movement component | `UGMC_OrganicMovementCmp` (`Source/GMCCore/Public/Components/GMCOrganicMovementComponent.h`) for characters; `UGMC_MovementUtilityCmp` (`GMCMovementUtilityComponent.h`, same folder) for anything else | your subclass overrides the five hooks below and forwards them |
-| ability system component ("the ASC") | `UGMC_AbilitySystemComponent` (`Public/Components/GMCAbilityComponent.h`), a `UGameplayTasksComponent`, replicated by default | one per pawn. Its `GMCMovementComponent` pointer (`UGMC_MovementUtilityCmp*`, `BlueprintReadWrite`) is **set by you**: nothing in GMAS assigns it, and `BindReplicationData()` dereferences it at once |
+| ability system component ("the ASC") | `UGMC_AbilitySystemComponent` (`Public/Components/GMCAbilityComponent.h`), a `UGameplayTasksComponent`, replicated by default | one per pawn. Set its `GMCMovementComponent` pointer (`UGMC_MovementUtilityCmp*`, `BlueprintReadWrite`) yourself before the bind. 1.4.1+ resolves a null pointer from the owner's `UGMC_MovementUtilityCmp` at the bind and binds nothing (Error) when there is none; 1.4.0 dereferenced it unchecked and crashed |
 
 **Timing.** `AGMC_Pawn::PostInitializeComponents` runs the bind, so your `BindReplicationData_Implementation` executes before any `BeginPlay`. The ASC reads `AttributeDataAssets` *during* the bind (`InstantiateAttributes`) and `StartingAbilities`, `AbilityMaps`, `StartingTags` in its own `BeginPlay`; `StartingEffects` go out from the server once the pawn has a controller. Fill all of them in class defaults, the constructor, or in the pawn's `PostInitializeComponents` before `Super`, identically on every machine (`gmas:gmas-rules`).
 
@@ -104,7 +104,7 @@ void UMyMovementCmp::BindReplicationData_Implementation()
     // Your own Bind* calls go here (gmas:gmc-prediction).
     AbilitySystem = GetOwner()->FindComponentByClass<UGMC_AbilitySystemComponent>();
     check(AbilitySystem);
-    AbilitySystem->GMCMovementComponent = this;   // nothing else sets this pointer
+    AbilitySystem->GMCMovementComponent = this;   // explicit; 1.4.1+ would find it, 1.4.0 crashes without it
     AbilitySystem->BindReplicationData();          // the ASC binds last
 }
 void UMyMovementCmp::PreLocalMoveExecution_Implementation(const FGMC_Move& LocalMove)
@@ -193,7 +193,7 @@ A `MaxAttributeTag` names another attribute of the same component (`Attribute.Ma
 
 ## First ability
 
-An ability is a `UGMCAbility` (`Public/Ability/GMCAbility.h`). Activation runs `PreBeginAbility` (cooldown, `PreExecuteCheckEvent`, blocked-by-other-ability checks) and then `BeginAbility`, which broadcasts `OnAbilityActivated`, commits the cooldown when `bApplyCooldownAtAbilityBegin` (default `true`, needs `AbilityTag`), cancels conflicting abilities and finally calls the `BeginAbilityEvent` native event. Override the events, not `BeginAbility`, so that bookkeeping stays. **Cost is not checked for you:** `CanAffordAbilityCost()` only answers; gate the activation with it yourself, and `CommitAbilityCost()` applies the `AbilityCost` effect class.
+An ability is a `UGMCAbility` (`Public/Ability/GMCAbility.h`). Activation runs `PreBeginAbility` (cooldown, cost (1.4.1+), `PreExecuteCheckEvent`, blocked-by-other-ability checks, then the `OnAbilityActivated` broadcast) and then `BeginAbility`, which commits the cooldown when `bApplyCooldownAtAbilityBegin` (default `true`, needs `AbilityTag`), cancels conflicting abilities and finally calls the `BeginAbilityEvent` native event. Override the events, not `BeginAbility`, so that bookkeeping stays. **Cost:** on 1.4.1+ the activation refuses an `AbilityCost` the owner cannot pay (`Stopped By Cost` at Verbose); on 1.4.0 it does not, so override `PreExecuteCheckEvent_Implementation()` to return `CanAffordAbilityCost()` there. `CommitAbilityCost()` applies the `AbilityCost` effect class.
 
 ```cpp
 // MyAbility_Dash.h
@@ -206,8 +206,7 @@ class UMyAbility_Dash : public UGMCAbility
 public:
     UMyAbility_Dash() { bActivateOnMovementTick = true; }   // the 1.4 default; false on older trees
     UPROPERTY(EditDefaultsOnly) float DashSpeed = 1200.f;
-    virtual bool PreExecuteCheckEvent_Implementation() override { return CanAffordAbilityCost(); }
-    virtual void BeginAbilityEvent_Implementation() override;
+    virtual void BeginAbilityEvent_Implementation() override;  // the cost gate is built in on 1.4.1+
 };
 // MyAbility_Dash.cpp
 void UMyAbility_Dash::BeginAbilityEvent_Implementation()
@@ -241,17 +240,17 @@ void AMyPawn::OnDash(const FInputActionInstance& Instance)
 ## Verify
 
 - Play in editor and press `'` (the Gameplay Debugger's default `ActivationKey`, Apostrophe); enable the `GMCAbilitySystem` category (registered by the runtime module in slot 9). It shows, server and client side by side, the granted abilities, active abilities, bound and client-auth active tags, attributes, active effects and cached operations of the debug actor. Your attribute rows and the `Input.Dash` grant must be listed before you press anything.
-- `Log LogGMCAbilitySystem Verbose` in the console. A press that does nothing logs `Ability Tag Not Granted` followed by `No Abilities Granted for InputTag` (the tag is not in `GrantedAbilityTags`: missing row, or `bGrantedByDefault` off and not in `StartingAbilities`), `Ability Tag Not Found ... Check The Component's AbilityMap` (granted but no row), or `Ability Activation for Ability.Dash Stopped ...` (cooldown, pre-execution check, blocking).
+- `Log LogGMCAbilitySystem Verbose` in the console. A press that does nothing logs `Input tag not granted: Input.Dash` followed by `No Abilities Granted for InputTag` (the tag is not in `GrantedAbilityTags`: missing row, or `bGrantedByDefault` off and not in `StartingAbilities`), `Input tag not in the ability map: Input.Dash` (granted but no row), or `Ability Activation for Ability.Dash Stopped ...` (cooldown, cost, pre-execution check, blocking). On 1.4.0 the first two read `Ability Tag Not Granted` and `Ability Tag Not Found ... Check The Component's AbilityMap`. A missing movement component logs `BindReplicationData on ...: no GMCMovementComponent` (Error, 1.4.1+) at the bind.
 - Run it under networked PIE with at least one client, not only standalone: a wiring mistake (ASC bound before your values, a list filled on one machine only) shows up as corrections in `LogGMCReplication`, never standalone (`gmas:gmas-testing`).
 
 ## Checklist
 
 - `GMC` and `GMCAbilitySystem` enabled in `.uproject`; GMAS is a submodule on `main` (or a pinned release) or a copied release; `Build.cs` lists `GMCCore`, `GMCAbilitySystem`, `GameplayTags` (and `EnhancedInput` for input).
 - Pawn derives from `AGMC_Pawn` or `AGMAS_Pawn`; controllers from `AGMC_PlayerController` / `AGMC_AIController`; one `AGMC_WorldTimeReplicator` is spawned.
-- The movement component overrides all five hooks, calls `Super` first in each, sets `GMCMovementComponent` and calls `BindReplicationData()` as the last line of its bind; `GenAncillaryTick` forwards `(DeltaTime, bCombinedClientMove)`.
+- The movement component overrides all five hooks, calls `Super` first in each, sets `GMCMovementComponent` (required on 1.4.0, recommended on 1.4.1+) and calls `BindReplicationData()` as the last line of its bind; `GenAncillaryTick` forwards `(DeltaTime, bCombinedClientMove)`.
 - `AttributeDataAssets`, `AbilityMaps`, `StartingAbilities`, `StartingEffects`, `StartingTags` are filled before the bind or in class defaults, identically on every machine.
 - Every attribute row has a deliberate clamp (`Max`, `MaxAttributeTag`, or `bClampMax` off) and `bGMCBound` only where predicted logic reads it.
 - Tags use the prefixes the pickers enforce: `Attribute.*`, `Ability.*` (the ability's own tag), `Input.*` (map key and `QueueAbility` argument).
-- The first ability runs on the movement tick (`bActivateOnMovementTick = true`, explicit on trees older than 1.4), gates on `CanAffordAbilityCost()` in `PreExecuteCheckEvent`, commits the cost, acts through `GetOwnerMovementComponent()`, and ends.
+- The first ability runs on the movement tick (`bActivateOnMovementTick = true`, explicit on trees older than 1.4), has its cost refused when unaffordable (built in on 1.4.1+; `CanAffordAbilityCost()` from `PreExecuteCheckEvent` on 1.4.0), commits the cost, acts through `GetOwnerMovementComponent()`, and ends.
 - Input calls `QueueAbility` with the input action; nothing calls `TryActivateAbility*` directly.
 - The Gameplay Debugger category lists the attributes and the grant; the ability fires under networked PIE with a client.
