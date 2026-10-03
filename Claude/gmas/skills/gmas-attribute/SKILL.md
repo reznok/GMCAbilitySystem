@@ -47,10 +47,7 @@ Bound attributes live in the ASC's `BoundAttributes` (sorted by tag), unbound on
 
 `bGMCBound = true` binds `Value` and `RawValue` as two `ServerAuth_Output_ClientValidated`, `Periodic_Output` floats with the row's combine mode (`BindReplicationData`, `Private/Components/GMCAbilityComponent.cpp`). Both sides compute them inside the move, a mismatch corrects and replays the client, simulated proxies receive them through smoothing. The price: bytes in every move and state, and with `CombineIfUnchanged` a fresh move every time the value changes.
 
-| Bind it when | Keep it unbound when |
-|---|---|
-| predicted logic reads it in any move: a cost the ability checks, a cap the movement integration uses, a drain the tick applies, the `MaxAttributeTag` of a bound attribute | only the server changes it and other machines display it: health under server-side damage, score, experience |
-| the owner must see its own change at once and a replay must restore it | the owner may see it one round trip late |
+Whether a value is bound, replicated or derived is decided by the "where does this state live" table in `gmas:gmas-rules`; for attributes that means bound only when predicted logic reads it in a move (a cost, a cap, a drain, and the `MaxAttributeTag` of a bound attribute), unbound when only the server changes it and other machines display it.
 
 An unbound attribute cannot take part in prediction: `ApplyAbilityAttributeModifier` returns at once on a client for it, the server's `Value` and `RawValue` replicate through `UnBoundAttributes`, and the client-side history stays empty. Change it on the server only (`ServerAuth` or `ServerInstantAttribute` effects, `gmas:gmas-effect`). Never make it something predicted logic reads, and never bind something only the HUD reads (`gmas:gmas-rules`).
 
@@ -99,15 +96,17 @@ if (bInput_Dash && AbilitySystem->GetAttributeValueByTag(StaminaTag) >= DashCost
     Spend.ValueType     = EGMCAttributeModifierType::AMT_Value;
     Spend.ModifierValue = -DashCost;
     AbilitySystem->ApplyAbilityAttributeModifier(Spend);
-    CL_DoNotCombineNextMove();
+    CL_DoNotCombineNextMove();   // for the input flag, not the attribute (below)
 }
 ```
+
+The attribute itself needs no sealing: with `CombineIfUnchanged` a bound attribute that changes forces its own uncombined move, so the spend already lands on a move boundary. `CL_DoNotCombineNextMove()` (`Source/GMCCore/Public/Components/GMCReplicationComponent.h`) is for the input that triggered it: a flag still held next frame would otherwise let that frame combine into the move and re-run the tick from the pre-spend state (`gmas:gmc-prediction`).
 
 Limits of a direct call: only `AMT_Value` resolves (the other sources read through the source effect, which is null: an error and `0`, or `checkNoEntry` for `AMT_Custom`); `Conditions` are not evaluated; never set `bRegisterInHistory` without a live effect (an entry without an instigator trips `checkNoEntry` in `CalculateValue`); on a client it does nothing for an unbound attribute. Prefer an `Instant` effect applied `Predicted` once the change deserves a name in the debugger.
 
 **`SetAttributeValueByTag(Tag, NewValue, bResetModifiers)` is deprecated and inert.** Its write is commented out on 1.3 and 1.4: it marks the unbound set dirty and returns `true` without changing anything. Do not use it, not even for bootstrap; starting values come from the row or `SetAttributeInitialValue`.
 
-**Change notifications are presentation.** `OnAttributeChanged(Tag, OldValue, NewValue)` (dynamic) and `AddAttributeChangeDelegate` (native, same arguments) fire from `GenAncillaryTick` on the owner and the server and from `GenSimulationTick` on simulated proxies, for bound and unbound attributes alike, once per attribute whose `Value` differs from the last check. They never fire inside the prediction tick or during a replay; a correction surfaces as one net delta (a rejected spend arrives as a refund), several changes inside one frame collapse into one, and the values are one tick old. Drive HUD, sounds and cosmetics from them; decide gameplay from `GetAttributeValueByTag` inside the move. `OnPreAttributeChanged` is declared but never broadcast (its call is commented out on 1.3 and 1.4): treat it as absent.
+**Change notifications are presentation.** `OnAttributeChanged(Tag, OldValue, NewValue)` (dynamic) and `AddAttributeChangeDelegate` (native, same arguments) fire from `GenAncillaryTick` on the owner and the server and from `GenSimulationTick` on simulated proxies, for bound and unbound attributes alike, once per attribute whose `Value` differs from the last check. They never fire inside the prediction tick or during a replay: the ancillary tick runs after the frame's move, so `NewValue` is the frame's final value and `OldValue` the value at the previous ancillary tick; a correction surfaces as the net change since then (a rejected spend arrives as a refund) and several changes inside one frame collapse into one. Drive HUD, sounds and cosmetics from them; decide gameplay from `GetAttributeValueByTag` inside the move. `OnPreAttributeChanged` is declared but never broadcast (its call is commented out on 1.3 and 1.4): treat it as absent.
 
 **Inspect.** The Gameplay Debugger category `GMCAbilitySystem` lists every attribute of the debug actor, server and client side by side (`gmas:gmas-setup`). `GetAttributeByTag(Tag)->DumpDebugString()` (1.4+) prints `RawValue`, the clamp and every temporal entry with its kind and instigator. Console: `GMAS.LogApplyTrace` with `GMAS.ApplyTraceFilter` logs a call stack per effect application, and `BL.GMAS.DumpAttrBindMap` maps the local player's bound float indices to attribute tags (both 1.4+; `gmas:gmas-debug`).
 
@@ -126,8 +125,8 @@ Limits of a direct call: only `AMT_Value` resolves (the other sources read throu
 | `AddClampedBetween` | `V` clamped to `X`..`Y` |
 | `AddPercentageMissing` | `V %` of `InitialValue − Value` (not of the max clamp) |
 | `AddPercentageOfAttributeRawValue` | `V %` of the target's own `RawValue` (the `ValueAsAttribute` the editor shows for this op is ignored) |
-| `Set` (1.4+) | the base layer becomes `V`; active `Add`s keep stacking on it |
-| `SetReplace` (1.4+) | the base layer becomes `V`; `Add`s placed before it are dropped |
+| `Set` (1.4+) | the base layer becomes `V`; active `Add`s keep stacking on it; no delta scaling |
+| `SetReplace` (1.4+) | the base layer becomes `V`; `Add`s placed before it are dropped; no delta scaling |
 | `AddPercentageOfBase` (1.4+) | `V %` of the resolved base layer, computed at recalculation time |
 
 `EGMCAttributeModifierType`, where `V` comes from:
@@ -148,7 +147,7 @@ Limits of a direct call: only `AMT_Value` resolves (the other sources read throu
 - **Cap as an attribute.** `Attribute.MaxStamina` bound; `Attribute.Stamina` with `MaxAttributeTag` and `bStartFull`. The clamp reads the cap's current `Value`, so a temporal buff on the cap raises the ceiling at once, and lowering the cap clamps the value on the next recalculation. The cap must be bound when the value is: the clamp is evaluated inside the move.
 - **Regeneration** = a `Ticking` effect with `Add +20` on `Attribute.Stamina` (per second, scaled by the tick's delta) or a `Periodic` effect applying the whole amount every `PeriodicInterval`; `Predicted` for a bound attribute, listed in `StartingEffects` for a permanent one. Leave `bNegateEffectAtEnd` off: the regenerated amount must stay when the effect ends. Continuous regeneration is the one case for `AlwaysCombineOverwrite`.
 - **Server-owned stat** (health under server-side damage): an unbound row. The hit handler on the server applies an `Instant` effect with the `ServerInstantAttribute` queue type (1.4+; `ServerAuth` before); clients receive `Value` and `RawValue` through `UnBoundAttributes`, and `OnAttributeChanged` fires on their next ancillary or simulation tick. Nothing predicted may read it (`gmas:gmas-rules`).
-- **Derived stat.** `Attribute.DashSpeed` with a `Persistent` effect, `bNegateEffectAtEnd` on, whose modifier is `AddPercentageAttribute` (or `AMT_Attribute`) of `Attribute.Agility` on the same ASC. The source is read when the modifier is applied (and on each tick of a ticking effect), not continuously: re-apply the effect, or make it `Ticking`, when the source changes.
+- **Derived stat.** `Attribute.DashSpeed` with a `Persistent` effect, `bNegateEffectAtEnd` on, whose modifier is `AddPercentageAttribute` (or `AMT_Attribute`) of `Attribute.Agility` on the same ASC. The source is read when the modifier is applied, not continuously. To follow the source, tick `bReevaluateConditionsWhilePersistent` (1.4+, `FGMCAbilityEffectData`; needs `bNegateEffectAtEnd`): every tick the effect drops and re-applies each modifier's single temporal entry, re-reading the source without accumulating. Before 1.4, re-apply the effect when the source changes.
 - **Identity-driven values.** Override `GetExternalModifierValue` (1.4+) to return loadout numbers from state every machine already holds (`gmas:gmas-rules`), and use `AMT_External` modifiers in the effects.
 - **Custom calculator.** Subclass `UGMCAttributeModifierCustom_Base` (`Public/Attributes/GMCAttributeModifierCustom_Base.h`), override `float Calculate(UGMCAbilityEffect* SourceEffect, const FAttribute* Attribute)` without calling `Super` (the base forwards to the Blueprint event `K2_Calculate(SourceEffect, Tag)`). It runs on the class default object, so configuration lives in class defaults and the function must be pure: read the target's `Value`, `RawValue`, `InitialValue`, `Clamp`, or other attributes through `SourceEffect->GetOwnerAbilityComponent()`, and return the raw number the chosen `Op` then applies. Reference the class from a modifier with `ValueType = AMT_Custom`. The bundled `UGMCModifierCustom_Exponent` (`Private/Attributes/PreDefinedCustomCalculator/`, selectable in the editor only: its header is private) maps the target's `Value` through an exponential, easing, power or saturation curve into `Min`..`Max`.
 
@@ -174,7 +173,7 @@ public:
 - `ValueCombineMode` stays `CombineIfUnchanged` unless the attribute changes every tick and feeds no movement math.
 - `AttributeDataAssets` and any `SetAttributeInitialValue` override are identical on every machine and in place before the bind; each tag appears once.
 - Changes go through effects or `ApplyAbilityAttributeModifier` inside the prediction tick on both sides, before the ASC's tick; unbound attributes change on the server only; nothing calls `SetAttributeValueByTag`.
-- Direct calls use `AMT_Value` and never set `bRegisterInHistory`; a one-shot spend is followed by `CL_DoNotCombineNextMove()`.
+- Direct calls use `AMT_Value` and never set `bRegisterInHistory`; a spend triggered by a held input flag is followed by `CL_DoNotCombineNextMove()` (the attribute's own change already splits the move).
 - `OnAttributeChanged` / `AddAttributeChangeDelegate` drive presentation only; nothing binds `OnPreAttributeChanged` or the struct's own delegate.
 - `GetExternalModifierValue` returns the same value on the server and the owning client; custom calculators are pure and configured through class defaults.
 - Verified under networked PIE with a client: no `LogGMCReplication` corrections when the attribute changes (`gmas:gmas-testing`).
