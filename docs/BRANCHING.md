@@ -3,7 +3,7 @@
 | Branch | Role | Who writes |
 |---|---|---|
 | `dev` | Unstable integration. Receives automated merges from the DeepWorlds fork and the maintainer's own pushes. May not compile on a given day. | sync job, maintainer |
-| `main` | Stable. Promoted from `dev` by pull request after a local build. Releases are tags on `main` (`vX.Y.Z`). | maintainer |
+| `main` | Stable. Promoted from `dev` by the maintainer after a local build. Releases are tags on `main` (`vX.Y.Z`). | maintainer |
 | `sync/deepworlds` | Automation-owned. Exists only while a conflict pull request is open; always equals the fork's `dev` tip. | sync job |
 
 GMAS has no compile CI: it depends on the paid GMC plugin, so builds happen on the maintainer's machine.
@@ -38,8 +38,14 @@ Build locally, then push to `dev`. If a sync lands at the same moment the job re
 
 1. Build at least one downstream project against `dev` and run the GMAS specs headless:
    `UnrealEditor-Cmd.exe <Project>.uproject -ExecCmds="Automation RunTests GMAS;Quit" -unattended -nullrhi -log`
-2. Open a pull request `dev` → `main`, merge it.
-3. Tag the merge on `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+2. Bump `VersionName` in `GMCAbilitySystem.uplugin` on `dev` and push.
+3. Promote with a merge commit that carries `dev`'s tree exactly (`main`'s 1.3 history is a squash, so a plain merge conflicts):
+
+       git fetch origin
+       NEW=$(git commit-tree origin/dev^{tree} -p origin/main -p origin/dev -m "Release X.Y: promote dev to main")
+       git push origin "$NEW":main
+
+4. Tag it and publish the release notes: `git tag -a vX.Y.Z "$NEW" -m "GMAS X.Y" && git push origin vX.Y.Z`, then `gh release create vX.Y.Z --notes-file notes.md`.
 
 ## Consuming GMAS as a submodule
 
