@@ -2,9 +2,9 @@
 
 #pragma once
 #include "CoreMinimal.h"
-#include "GameplayDebuggerCategory.h"
 #include "GameplayTagContainer.h"
 #if WITH_GAMEPLAY_DEBUGGER
+#include "GameplayDebuggerCategory.h"
 
 /**
  * 

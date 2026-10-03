@@ -101,7 +101,7 @@ struct FGMCModifierCondition
 };
 
 USTRUCT(BlueprintType)
-struct FGMCAttributeModifier
+struct GMCABILITYSYSTEM_API FGMCAttributeModifier
 {
 	GENERATED_BODY()
 

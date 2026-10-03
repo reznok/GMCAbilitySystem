@@ -1,4 +1,4 @@
-#include "Tests/UGMAS_TestDelayAbility.h"
+#include "UGMAS_TestDelayAbility.h"
 #include "Ability/Tasks/WaitDelay.h"
 
 void UGMAS_TestDelayAbility::BeginAbility()

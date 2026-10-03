@@ -25,7 +25,7 @@ struct FOperationDataCacheExpiration
 };
 
 USTRUCT()
-struct  FGMASBoundQueueV2
+struct GMCABILITYSYSTEM_API FGMASBoundQueueV2
 {
 	GENERATED_BODY()
 	// Events

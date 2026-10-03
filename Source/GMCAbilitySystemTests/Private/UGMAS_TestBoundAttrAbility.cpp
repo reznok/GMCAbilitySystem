@@ -1,4 +1,4 @@
-#include "Tests/UGMAS_TestBoundAttrAbility.h"
+#include "UGMAS_TestBoundAttrAbility.h"
 #include "Components/GMCAbilityComponent.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Attributes/GMCAttributeModifier.h"
