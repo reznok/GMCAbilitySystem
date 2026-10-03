@@ -167,6 +167,7 @@ struct FGMCAbilityEffectData
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer MustNotHaveTags;
 
+	// Input tags (ability-map keys) granted while this effect is alive. Removed at end unless another live effect grants the same tag (bPreserveGrantedTagsIfMultiple). A tag granted directly with GrantAbilityByTag is not protected.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	FGameplayTagContainer GrantedAbilities;
 
@@ -280,6 +281,7 @@ public:
 
 	virtual void OnAttributeModifierApplication(const FGMCAttributeModifier& Modifier);
 
+	/** Ends the effect (idempotent). Virtual on purpose: an override point for subclasses that need cleanup before the modifiers are rolled back; call Super. */
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	virtual void EndEffect();
 
@@ -347,6 +349,9 @@ public:
 
 	bool bCompleted;
 
+	// True once StartEffect passed its gates and applied tags, abilities and the first modifiers. False on an effect refused by its application tags / ActivationQuery.
+	bool HasAppliedEffect() const { return bHasAppliedEffect; }
+
 	// Bilateral defer absolute timestamp for Predicted Remove on Ticking/Periodic effects.
 	// Both sides arm `ActionTimer + ClientGraceTime` at the same logical move tick so they
 	// end on the same logical tick regardless of DeltaTime / framerate / replay count.
@@ -395,7 +400,7 @@ private:
 	void RemoveTagsFromOwner(bool bPreserveOnMultipleInstances = true);
 
 	void AddAbilitiesToOwner();
-	void RemoveAbilitiesFromOwner();
+	void RemoveAbilitiesFromOwner(bool bPreserveOnMultipleInstances = true);
 	void EndActiveAbilitiesFromOwner(const FGameplayTagContainer& TagContainer);
 
 	// Does the owner have any of the tags from the container?

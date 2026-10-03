@@ -975,14 +975,19 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
 			const int Id = Effect->EffectData.EffectID;
-			TestTrue("Apply writes the ID into bound state (deterministic both-side writer)",
+			// An Instant effect completes inside the apply; a completed effect never enters the
+			// bound id list (it would churn bound state for one tick), so only the ActiveEffects
+			// entry remains for the cleanup pass to remove.
+			TestTrue("Apply registers the instance in ActiveEffects",
+				AbilityComp->GetActiveEffects().Contains(Id));
+			TestFalse("Apply of a completed Instant effect skips bound state",
 				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			AbilityComp->TickActiveEffects(1.f);
 
 			TestFalse("Post-tick: instant effect removed from ActiveEffects",
 				AbilityComp->GetActiveEffects().Contains(Id));
-			TestFalse("Post-tick: ID removed from bound state (symmetric cleanup)",
+			TestFalse("Post-tick: ID absent from bound state (symmetric cleanup)",
 				AbilityComp->BoundActiveEffectIDs_Contains(Id));
 
 			Effect->RemoveFromRoot();

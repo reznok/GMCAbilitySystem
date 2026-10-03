@@ -84,9 +84,11 @@ void UGMCAbilityEffect::StartEffect()
 		return;
 	}
 	
-	// Effect Query
-	if (!EffectData.ActivationQuery.IsEmpty() && !EffectData.ActivationQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
-		{
+	// Effect queries. The maintain query is also checked at start: a delayed effect whose query is
+	// unsatisfied at StartTime never applies (before, it applied and ended on its next tick).
+	if ((!EffectData.ActivationQuery.IsEmpty() && !EffectData.ActivationQuery.Matches(OwnerAbilityComponent->GetActiveTags()))
+		|| (!EffectData.MustMaintainQuery.IsEmpty() && !EffectData.MustMaintainQuery.Matches(OwnerAbilityComponent->GetActiveTags())))
+	{
 		EndEffect();
 		return;
 	}
@@ -97,11 +99,21 @@ void UGMCAbilityEffect::StartEffect()
 
 	EndActiveAbilitiesByDefinitionQuery(EffectData.EndAbilityOnActivationQuery);
 
+	// An ability ended just above may have removed this effect (RemoveEffectOnEnd, an OnAbilityEnded
+	// listener). EndEffect returned early because nothing was applied yet, so roll back the grants and
+	// let the component treat the apply as refused.
+	if (bCompleted)
+	{
+		RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
+		RemoveAbilitiesFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
+		return;
+	}
+
 	bHasAppliedEffect = true;
 
 	OwnerAbilityComponent->OnEffectApplied.Broadcast(this);
+	if (bCompleted) { return; }   // a listener removed us; EndEffect already rolled back
 
-	// Instant effects modify base value and end instantly
 	if (EffectData.EffectType == EGMASEffectType::Instant
 		|| EffectData.EffectType == EGMASEffectType::Persistent
 		|| (EffectData.EffectType == EGMASEffectType::Periodic && EffectData.bPeriodicFirstTick))
@@ -114,16 +126,17 @@ void UGMCAbilityEffect::StartEffect()
 			OwnerAbilityComponent->ApplyAbilityAttributeModifier(ModCpy);
 			OnAttributeModifierApplication(ModCpy);
 		}
-
-		if (EffectData.EffectType == EGMASEffectType::Instant)
-		{
-			EndEffect();
-		}
 	}
-	
-	StartEffectEvent();
 
+	StartEffectEvent();
+	if (bCompleted) { return; }   // the start event ended the effect; keep it Ended
 	UpdateState(EGMASEffectState::Started, true);
+
+	// Instant effects are done once their modifiers are in: start, then end, in that order.
+	if (EffectData.EffectType == EGMASEffectType::Instant)
+	{
+		EndEffect();
+	}
 }
 
 
@@ -166,7 +179,7 @@ void UGMCAbilityEffect::EndEffect()
 
 	EndActiveAbilitiesFromOwner(EffectData.CancelAbilityOnEnd);
 	RemoveTagsFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
-	RemoveAbilitiesFromOwner();
+	RemoveAbilitiesFromOwner(EffectData.bPreserveGrantedTagsIfMultiple);
 
 	OwnerAbilityComponent->OnEffectRemoved.Broadcast(this);
 
@@ -258,6 +271,14 @@ void UGMCAbilityEffect::Tick(float DeltaTime)
 	// the replacement protocol (the successor revival, if it would have happened,
 	// is moot once we've ended naturally).
 	if (bPendingDeathBySuccessor) {
+		return;
+	}
+
+	// Not started yet (Delay > 0): only the start check runs; no duration, tick event or
+	// maintain-tag check until StartEffect has applied the effect.
+	if (CurrentState == EGMASEffectState::Initialized)
+	{
+		CheckState();
 		return;
 	}
 
@@ -551,11 +572,29 @@ void UGMCAbilityEffect::AddAbilitiesToOwner()
 	}
 }
 
-void UGMCAbilityEffect::RemoveAbilitiesFromOwner()
+void UGMCAbilityEffect::RemoveAbilitiesFromOwner(bool bPreserveOnMultipleInstances)
 {
+	// Same rule as RemoveTagsFromOwner: GrantedAbilityTags is set-like, so a grant that another
+	// live effect still makes must survive this effect's end.
+	const TMap<int, UGMCAbilityEffect*> ActiveEffectsSnapshot =
+		bPreserveOnMultipleInstances && OwnerAbilityComponent ? OwnerAbilityComponent->GetActiveEffects() : TMap<int, UGMCAbilityEffect*>();
+
 	for (const FGameplayTag Tag : EffectData.GrantedAbilities)
 	{
-		OwnerAbilityComponent->RemoveGrantedAbilityByTag(Tag);
+		bool bAnotherGranterAlive = false;
+		for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffectsSnapshot)
+		{
+			const UGMCAbilityEffect* Other = Pair.Value;
+			if (Other && Other != this && !Other->bCompleted && Other->EffectData.GrantedAbilities.HasTagExact(Tag))
+			{
+				bAnotherGranterAlive = true;
+				break;
+			}
+		}
+		if (!bAnotherGranterAlive)
+		{
+			OwnerAbilityComponent->RemoveGrantedAbilityByTag(Tag);
+		}
 	}
 }
 
@@ -588,7 +627,6 @@ void UGMCAbilityEffect::CheckState()
 			if (OwnerAbilityComponent->ActionTimer >= EffectData.StartTime)
 			{
 				StartEffect();
-				UpdateState(EGMASEffectState::Started, true);
 			}
 			break;
 		case EGMASEffectState::Started:

@@ -392,7 +392,9 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(co
 	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
 
 	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
-		if (IsValid(EffectFound.Value) && bMatchExact ? EffectFound.Value->EffectData.EffectTag.MatchesTagExact(GameplayTag) : EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag)) {
+		if (!IsValid(EffectFound.Value)) { continue; }
+		const FGameplayTag& Tag = EffectFound.Value->EffectData.EffectTag;
+		if (bMatchExact ? Tag.MatchesTagExact(GameplayTag) : Tag.MatchesTag(GameplayTag)) {
 			ActiveEffectsFound.Add(EffectFound.Value);
 		}
 	}
@@ -494,7 +496,7 @@ void UGMC_AbilitySystemComponent::RemoveClientAuthActiveTag(const FGameplayTag T
 
 void UGMC_AbilitySystemComponent::AddSynchronizedTag(const FGameplayTag& Tag, bool AllowMultipleInstance)
 {
-	ensureAlwaysMsgf(HasAuthority(), TEXT("Only the server can add a synchronized tag"));
+	if (!IsAuthorityForGMASLogic()) { UE_LOG(LogGMCAbilitySystem, Error, TEXT("%hs: only the server may change a synchronized tag"), __FUNCTION__); return; }
 
 	if (!Tag.IsValid())
 	{
@@ -520,15 +522,15 @@ void UGMC_AbilitySystemComponent::AddSynchronizedTag(const FGameplayTag& Tag, bo
 
 void UGMC_AbilitySystemComponent::RemoveSynchronizedTag(const FGameplayTag& Tag, bool RemoveEveryInstance)
 {
-	ensureAlwaysMsgf(HasAuthority(), TEXT("Only the server can remove a synchronized tag"));
+	if (!IsAuthorityForGMASLogic()) { UE_LOG(LogGMCAbilitySystem, Error, TEXT("%hs: only the server may change a synchronized tag"), __FUNCTION__); return; }
 
 	if (!Tag.IsValid())
 	{
 		UE_LOGFMT(LogGMCAbilitySystem, Error, "{0} AbilityTag is invalid", __FUNCTION__);
 		return;
 	}
-	
-	RemoveActiveAbilityEffectByTag(Tag, EGMCAbilityEffectQueueType::ServerAuth, RemoveEveryInstance);
+
+	RemoveEffectByTagSafe(Tag, RemoveEveryInstance ? -1 : 1, EGMCAbilityEffectQueueType::ServerAuth);
 }
 
 FGameplayTagContainer UGMC_AbilitySystemComponent::GetActiveTags() const
@@ -1717,8 +1719,17 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// Clean expired effects
 	for (const int EffectID : CompletedActiveEffects)
 	{
-		// Notify client. Redundant.
-		if (HasAuthority()) {RPCClientEndEffect(EffectID);}
+		// Notify client. Redundant. Instant effects complete on both sides in the same apply; no
+		// redundant end RPC. An entry whose object is gone still gets the RPC (the client's copy
+		// may be live).
+		if (HasAuthority())
+		{
+			const UGMCAbilityEffect* Ended = ActiveEffects.FindRef(EffectID);
+			if (!(Ended && Ended->EffectData.EffectType == EGMASEffectType::Instant))
+			{
+				RPCClientEndEffect(EffectID);
+			}
+		}
 
 		// Revive any OLDs still suspended on this successor — covers cleanup paths
 		// that bypass the Validated/Timeout transitions.
@@ -2087,9 +2098,20 @@ void UGMC_AbilitySystemComponent::RestoreEffectFromSnapshot(const FGMCEffectSnap
 		? InitData.StartTime + InitData.Duration
 		: 0.0;
 
+	// Register before initializing, as the standard apply path does: StartEffect's broadcasts
+	// must find the instance under its id.
+	ActiveEffects.Add(InitData.EffectID, Effect);
 	Effect->InitializeEffect(InitData);
 
-	ActiveEffects.Add(InitData.EffectID, Effect);
+	if (Effect->bCompleted && !Effect->HasAppliedEffect())
+	{
+		ActiveEffects.Remove(InitData.EffectID);
+		UE_LOG(LogGMCAbilitySystem, Verbose,
+			TEXT("[ReconnectSnapshot] restore refused for %s id=%d by its application tags or query."),
+			*GetNameSafe(Snapshot.EffectClass), InitData.EffectID);
+		return;
+	}
+
 	// Snapshot effects are already server-authoritative — skip the Pending state
 	// the standard client predict path uses; mark Validated directly so the
 	// Pending->Validated promotion machinery doesn't try to confirm them.
@@ -2801,10 +2823,12 @@ void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FG
 		ApplyAbilityEffect(Data.EffectClass, DefaultData, EGMCAbilityEffectQueueType::Predicted, OutEffectHandle, OutEffectId, Effect);
 	}
 
-	// Auto validate the effect since this was added via a server operation
+	// Auto validate the effect since this was added via a server operation. Add, not [], because
+	// a completed Instant effect has no Pending entry to overwrite (its entry is removed with it
+	// on the next TickActiveEffects cleanup pass).
 	if (!HasAuthority() && Effect != nullptr)
 	{
-		ProcessedEffectIDs[Effect->EffectData.EffectID] = EGMCEffectAnswerState::Validated;
+		ProcessedEffectIDs.Add(Effect->EffectData.EffectID, EGMCEffectAnswerState::Validated);
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("Applied Effect: %s"), *GetNameSafe(Data.EffectClass));
 	}
 }
@@ -3390,20 +3414,25 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 				// Inside a movement tick — apply immediately (same as Predicted).
 				UGMCAbilityEffect* Effect = DuplicateObject(EffectClass->GetDefaultObject<UGMCAbilityEffect>(), this);
 				OutEffect = ApplyAbilityEffect(Effect, InitializationData);
-				if (OutEffect)
-				{
-					OutEffectId = OutEffect->EffectData.EffectID;
-					OutEffectHandle = OutEffectId;
-				}
+				if (OutEffect == nullptr) { return false; }
+				OutEffectId = OutEffect->EffectData.EffectID;
+				OutEffectHandle = OutEffectId;
+				return true;
 			}
-			else
-			{
-				// Outside movement tick — buffer for processing at the next tick.
-				FGMASBoundQueueV2ApplyEffectOperation ApplyOp;
-				ApplyOp.EffectClass = EffectClass;
-				ApplyOp.EffectData = InitializationData;
-				PendingPredictedOperations.Add(FInstancedStruct::Make(ApplyOp));
-			}
+
+			// Outside a movement tick — reserve the id now so the caller can keep it, and buffer
+			// the apply for the next tick (DrainPendingPredictedOperations).
+			const int ReservedID = InitializationData.EffectID != 0 ? InitializationData.EffectID : GetNextAvailableEffectID();
+			if (ReservedID == -1) { return false; }   // ActionTimer is 0; already logged
+			ReservedEffectIDs.Add(ReservedID);
+			FGMASBoundQueueV2ApplyEffectOperation ApplyOp;
+			ApplyOp.EffectClass = EffectClass;
+			ApplyOp.EffectData = InitializationData;
+			ApplyOp.EffectData.EffectID = ReservedID;
+			ApplyOp.EffectID = ReservedID;
+			PendingPredictedOperations.Add(FInstancedStruct::Make(ApplyOp));
+			OutEffectId = ReservedID;
+			OutEffectHandle = ReservedID;
 			return true;
 		}
 	case EGMCAbilityEffectQueueType::ServerAuthMove:
@@ -3436,7 +3465,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 			// Attribute modifiers reach clients via the standard FAttribute bound binding.
 			// Misuse on a non-qualifying effect would corrupt the bound state, so guards below
 			// fall back to ServerAuth rather than proceeding silently.
-			if (!HasAuthority())
+			if (!IsAuthorityForGMASLogic())
 			{
 				UE_LOG(LogGMCAbilitySystem, Error,
 					TEXT("ServerInstantAttribute apply rejected: %s called on non-authority. ServerInstantAttribute is server-only."),
@@ -3446,27 +3475,25 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 
 			const UGMCAbilityEffect* CDO = EffectClass->GetDefaultObject<UGMCAbilityEffect>();
 			const FGMCAbilityEffectData& CDOData = CDO->EffectData;
+			const FGMCAbilityEffectData& InData = InitializationData;
 
-			const bool bIsInstant         = CDOData.EffectType == EGMASEffectType::Instant;
-			const bool bHasGrantedTags    = !CDOData.GrantedTags.IsEmpty() || !InitializationData.GrantedTags.IsEmpty();
-			const bool bHasGrantedAbil    = !CDOData.GrantedAbilities.IsEmpty() || !InitializationData.GrantedAbilities.IsEmpty();
-
-			if (!bIsInstant || bHasGrantedTags || bHasGrantedAbil)
+			// Anything beyond attribute modifiers runs server-only outside the move on this path
+			// and would desync the owning client: fall back to ServerAuth, which travels in the move.
+			auto HasSideEffects = [](const FGMCAbilityEffectData& D)
 			{
-				ensureMsgf(bIsInstant,
-					TEXT("ServerInstantAttribute expects EffectType::Instant on %s — non-Instant effects need the GMC bound queue to tick correctly. Falling back to ServerAuth."),
-					*EffectClass->GetName());
-				ensureMsgf(!bHasGrantedTags,
-					TEXT("ServerInstantAttribute cannot grant tags on %s — GrantedTags route through the bound ActiveTags container and must use ServerAuth. Falling back to ServerAuth."),
-					*EffectClass->GetName());
-				ensureMsgf(!bHasGrantedAbil,
-					TEXT("ServerInstantAttribute cannot grant abilities on %s — relies on the bound ability map. Falling back to ServerAuth."),
-					*EffectClass->GetName());
-
-				UE_LOG(LogGMCAbilitySystem, Warning,
-					TEXT("ServerInstantAttribute guards failed for %s (Instant=%d GrantedTags=%d GrantedAbil=%d) — falling back to ServerAuth."),
-					*EffectClass->GetName(), bIsInstant ? 1 : 0, bHasGrantedTags ? 1 : 0, bHasGrantedAbil ? 1 : 0);
-
+				return !D.GrantedTags.IsEmpty() || !D.GrantedAbilities.IsEmpty()
+					|| !D.CancelAbilityOnActivation.IsEmpty() || !D.CancelAbilityOnEnd.IsEmpty()
+					|| D.ApplyEffectOnEnd.Num() > 0 || !D.RemoveEffectOnEnd.IsEmpty()
+					|| !D.EndAbilityOnActivationQuery.IsEmpty() || !D.EndAbilityOnEndQuery.IsEmpty();
+			};
+			// The inline data can override the CDO's type and delay, so both sources must qualify.
+			const bool bIsInstant = CDOData.EffectType == EGMASEffectType::Instant && InData.EffectType == EGMASEffectType::Instant
+				&& CDOData.Delay == 0 && InData.Delay == 0;
+			if (!bIsInstant || HasSideEffects(CDOData) || HasSideEffects(InData))
+			{
+				UE_LOG(LogGMCAbilitySystem, Error,
+					TEXT("ServerInstantAttribute rejected for %s: it needs EffectType Instant, no Delay and no GrantedTags, GrantedAbilities, CancelAbilityOn*, EndAbilityOn*Query, ApplyEffectOnEnd or RemoveEffectOnEnd (Instant=%d). Falling back to ServerAuth."),
+					*EffectClass->GetName(), bIsInstant ? 1 : 0);
 				return ApplyAbilityEffect(EffectClass, InitializationData,
 					EGMCAbilityEffectQueueType::ServerAuth, OutEffectHandle, OutEffectId, OutEffect);
 			}
@@ -3605,6 +3632,14 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		return nullptr;
 	}
 
+	// A server-auth or PredictedQueued reservation is consumed here, before any rejection below can
+	// return, so a refused apply never leaks its id. A generated id (further down) is never reserved:
+	// the generators skip ReservedEffectIDs.
+	if (InitializationData.EffectID != 0)
+	{
+		ReservedEffectIDs.Remove(InitializationData.EffectID);
+	}
+
 	// bUniqueByEffectTag: reject if a same-tag effect is functionally active; collect
 	// deferred (EndAtActionTimer >= 0) ones to replace after the new is added below.
 	// Done before InitializeEffect so a rejection has zero side effects.
@@ -3645,34 +3680,51 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 	InitializationData.OwnerAbilityComponent = this;
 	InitializationData.SourceAbilityComponent = this;
 
+	// Id and registration BEFORE InitializeEffect: StartEffect broadcasts OnEffectApplied (and,
+	// for Instant, OnEffectRemoved) and listeners must see the final id and find the instance.
+	if (InitializationData.EffectID == 0)
+	{
+		InitializationData.EffectID = GetNextAvailableEffectID();
+		if (InitializationData.EffectID == -1)
+		{
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ApplyAbilityEffect: no id for %s (ActionTimer is 0); not applied."), *GetNameSafe(Effect));
+			return nullptr;
+		}
+	}
+	const int EffectID = InitializationData.EffectID;
+	ActiveEffects.Add(EffectID, Effect);
+
 	Effect->InitializeEffect(InitializationData);
-	
-	if (Effect->EffectData.EffectID == 0)
+
+	if (Effect->bCompleted && !Effect->HasAppliedEffect())
 	{
-		Effect->EffectData.EffectID = GetNextAvailableEffectID();
+		// Refused by ApplicationMustHaveTags / MustNotHaveTags / ActivationQuery before anything
+		// was applied: no tags, no modifiers, no OnEffectApplied, and no OnEffectRemoved either.
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("ApplyAbilityEffect: %s (id %d) refused by its application tags or query."), *GetNameSafe(Effect), EffectID);
+		ActiveEffects.Remove(EffectID);
+		return nullptr;
 	}
 
-	if (HasAuthority())
+	if (!Effect->bCompleted)
 	{
-		// If this was a server-auth, the ID is already generated and needs to be cleaned up from reserved
-		ReservedEffectIDs.Remove(Effect->EffectData.EffectID);
+		// Only a live effect takes part in the bound id list and the client's Pending book-
+		// keeping; a completed Instant effect would churn both for one tick.
+		if (!HasAuthority())
+		{
+			ProcessedEffectIDs.Add(EffectID, EGMCEffectAnswerState::Pending);
+		}
+		// Both sides write deterministically; server's value overwrites client on replication.
+		BoundActiveEffectIDs_Add(EffectID);
 	}
-	else
-	{
-		ProcessedEffectIDs.Add(Effect->EffectData.EffectID, EGMCEffectAnswerState::Pending);
-	}
-
-	ActiveEffects.Add(Effect->EffectData.EffectID, Effect);
-
-	// Both sides write deterministically; server's value overwrites client on replication.
-	BoundActiveEffectIDs_Add(Effect->EffectData.EffectID);
 
 	// Replace deferred same-tag matches. Server force-ends immediately (authoritative);
 	// client suspends the OLD pending the successor's Validated/Timeout verdict so a
 	// server-rejected predict can revive the OLD instead of leaving it permanently dead.
 	// Order: ActiveEffects.Add above must precede any EndEffect here so the multi-instance
 	// preserve check counts the NEW as a sibling (no one-tick GrantedTags flicker).
-	if (HasAuthority())
+	// A successor that is already complete (an Instant unique-tag effect) has no verdict to wait
+	// for, so the client ends the olds at once too.
+	if (HasAuthority() || Effect->bCompleted)
 	{
 		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
 		{
@@ -3887,21 +3939,22 @@ int32 UGMC_AbilitySystemComponent::RemoveEffectByTagSafe(FGameplayTag InEffectTa
 
 int UGMC_AbilitySystemComponent::RemoveEffectsByQuery(const FGameplayTagQuery& Query, EGMCAbilityEffectQueueType QueueType)
 {
-	int EffectsRemoved = 0;
-
-	for (const auto& EffectEntry : ActiveEffects)
+	// Snapshot first: RemoveActiveAbilityEffectSafe can run EndEffect synchronously, and an end
+	// hook that applies another effect mutates ActiveEffects under a live iterator.
+	TArray<UGMCAbilityEffect*> Matches;
+	for (const TPair<int, UGMCAbilityEffect*>& EffectEntry : ActiveEffects)
 	{
-		if (UGMCAbilityEffect* Effect = EffectEntry.Value)
+		if (IsValid(EffectEntry.Value) && Query.Matches(EffectEntry.Value->EffectData.EffectDefinition))
 		{
-			if (Query.Matches(Effect->EffectData.EffectDefinition))
-			{
-				RemoveActiveAbilityEffectSafe(Effect, QueueType);
-				EffectsRemoved++;
-				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Removed effect %s by query"), *Effect->EffectData.EffectTag.ToString());
-			}
+			Matches.Add(EffectEntry.Value);
 		}
 	}
-	return EffectsRemoved;
+	for (UGMCAbilityEffect* Effect : Matches)
+	{
+		RemoveActiveAbilityEffectSafe(Effect, QueueType);
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Removed effect %s by query"), *Effect->EffectData.EffectTag.ToString());
+	}
+	return Matches.Num();
 }
 
 bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbilityEffectQueueType QueueType)

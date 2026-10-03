@@ -166,9 +166,12 @@ enum class EGMCAbilityEffectQueueType : uint8
 	///   - EffectType must be Instant (no Ticking/Periodic/Persistent — those need the bound cycle to tick deterministically)
 	///   - No GrantedTags (the bound ActiveTags container desyncs if mutated outside the cycle)
 	///   - No GrantedAbilities (relies on the bound ability map)
-	/// If any guard fails at runtime, the apply falls back to ServerAuth and logs a warning rather than corrupting state.
+	///   - No CancelAbilityOnActivation / CancelAbilityOnEnd and no EndAbilityOn*Query (ability ends run server-only
+	///     outside the move and desync the owning client)
+	///   - No ApplyEffectOnEnd / RemoveEffectOnEnd (chained effects would be applied or removed server-only)
+	/// If any guard fails at runtime, the apply logs an Error and falls back to ServerAuth.
 	///
-	/// Canonical use case: PlayerMaster::Server_AddHealthPoint applying EF_Damage as a one-shot Health modifier.
+	/// Typical use: a server-side damage handler applying a one-shot Health modifier.
 	ServerInstantAttribute UMETA(DisplayName="Server Instant [Attribute-Only]")
 };
 
@@ -359,6 +362,7 @@ public:
 	 * @param RemoveEveryInstance if true, it will remove the tag without taking in consideration the number of application
 	 * @warning Authority Only, effect is used under the hood, however, DO NOT use this to remove an effect, DO NOT use it with a tag already
 	 * applied by an effect.
+	 * Matches the exact tag only.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "GMCAbilitySystem")
 	void RemoveSynchronizedTag(const FGameplayTag& Tag, bool RemoveEveryInstance = false);
@@ -1275,6 +1279,8 @@ public:
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
 	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
+	// Test seam: inject entries (e.g. a null value) to exercise query guards.
+	TMap<int, UGMCAbilityEffect*>& GetActiveEffectsForTest() { return ActiveEffects; }
 	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
 	{
 		return GetEffectFromHandle(Handle, OutNetId, OutEffect);
