@@ -53,6 +53,32 @@ close_pr_and_branch() {
 	fi
 }
 
+# Sets base, count, commits_md, overlap_md for HEAD..upstream.
+describe_range() {
+	base=$(git merge-base HEAD "$upstream")
+	count=$(git rev-list --count "$base..$upstream")
+	commits_md=$(git log -n "$MAX_LISTED_COMMITS" --format='- %h %ad %an %s' --date=short "$base..$upstream")
+	if [ "$count" -gt "$MAX_LISTED_COMMITS" ]; then
+		commits_md="$commits_md"$'\n'"- … and $((count - MAX_LISTED_COMMITS)) more"
+	fi
+	overlap_md=$(comm -12 <(git diff --name-only "$base" HEAD | sort) <(git diff --name-only "$base" "$upstream" | sort) | sed 's/^/- /')
+	[ -n "$overlap_md" ] || overlap_md="- none"
+}
+
+merge_message() {
+	printf 'Sync DeepWorlds %s: %s commits (%s..%s)\n\nMerges %s %s into %s.\n\nCommits:\n%s\n\nOverlap with local changes since %s:\n%s\n' \
+		"$UPSTREAM_BRANCH" "$count" "$(short "$base")" "$(short "$upstream")" \
+		"$(upstream_label)" "$UPSTREAM_BRANCH" "$TARGET_BRANCH" "$commits_md" "$(short "$base")" "$overlap_md"
+}
+
+report_range() { # $1 = heading
+	report "$1"
+	report "$commits_md"
+	report ""
+	report "Overlap with local changes since $(short "$base"):"
+	report "$overlap_md"
+}
+
 # ---- preconditions
 current=$(git rev-parse --abbrev-ref HEAD)
 [ "$current" = "$TARGET_BRANCH" ] || die "on '$current'; check out '$TARGET_BRANCH' first"
@@ -76,4 +102,19 @@ if git merge-base --is-ancestor "$upstream" HEAD; then
 	exit 0
 fi
 
-die "merge path not implemented yet"
+describe_range
+
+if merge_out=$(git merge --no-ff --no-edit -m "$(merge_message)" "$upstream" 2>&1); then
+	if is_dry; then
+		git reset --quiet --hard ORIG_HEAD
+		report_range "## Sync DeepWorlds: dry run, would merge $count commits ($(short "$base")..$(short "$upstream"))"
+		exit 0
+	fi
+	merge_sha=$(short HEAD)
+	git push --quiet origin "HEAD:$TARGET_BRANCH"
+	close_pr_and_branch "Merged cleanly in \`$merge_sha\`."
+	report_range "## Sync DeepWorlds: merged $count commits in \`$merge_sha\`"
+	exit 0
+fi
+
+die "conflict path not implemented yet: $merge_out"

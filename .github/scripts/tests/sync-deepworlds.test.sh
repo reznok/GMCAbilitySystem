@@ -13,6 +13,7 @@ export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GH_TOKEN=fake
+unset GITHUB_STEP_SUMMARY
 export GH_LOG="$TMP/gh.log"
 export GH_PR_LIST_JSON="[]"
 
@@ -75,12 +76,39 @@ run_sync() { # fixture [VAR=value ...] -> stdout+stderr; never fails the harness
 sync_branch_sha() { git -C "$1/canonical.git" rev-parse --verify -q refs/heads/sync/deepworlds || true; }
 
 # ---- T1: up to date
+: >"$GH_LOG"
 d=$(make_fixture t1)
 before=$(git -C "$d/work" rev-parse HEAD)
 out=$(run_sync "$d")
 assert_contains "$out" "up to date" "T1 reports up to date"
 assert_eq "$(git -C "$d/work" rev-parse HEAD)" "$before" "T1 HEAD unchanged"
 assert_contains "$(cat "$GH_LOG")" "pr list" "T1 looks for a stale conflict PR"
+
+# ---- T2: clean merge, dry run (fork edits line 20 and file.txt, local edits line 1: overlap, no conflict)
+: >"$GH_LOG"
+d=$(make_fixture t2)
+local_edit "$d" shared.txt 's/^line 1$/line 1 local/' "local: line 1"
+fork_edit "$d" shared.txt 's/^line 20$/line 20 fork/' "fork: line 20"
+fork_edit "$d" file.txt 's/^base$/base fork/' "fork: file"
+before=$(git -C "$d/work" rev-parse HEAD)
+out=$(run_sync "$d" DRY_RUN=true)
+assert_contains "$out" "would merge 2 commits" "T2 dry run counts fork commits"
+assert_contains "$out" "- shared.txt" "T2 overlap lists shared.txt"
+assert_not_contains "$out" "- file.txt" "T2 overlap excludes the fork-only file"
+assert_eq "$(git -C "$d/work" rev-parse HEAD)" "$before" "T2 HEAD unchanged after dry run"
+assert_eq "$(git -C "$d/work" status --porcelain)" "" "T2 tree clean after dry run"
+
+# ---- T3: clean merge, live
+: >"$GH_LOG"
+out=$(run_sync "$d")
+assert_contains "$out" "merged 2 commits" "T3 reports the merge"
+assert_contains "$(git -C "$d/canonical.git" log -1 --format=%s dev)" "Sync DeepWorlds dev: 2 commits (" "T3 merge commit pushed to canonical dev"
+body=$(git -C "$d/canonical.git" log -1 --format=%b dev)
+assert_contains "$body" "Overlap with local changes since" "T3 merge body has the overlap section"
+assert_contains "$body" "- shared.txt" "T3 merge body lists the overlap"
+assert_contains "$body" "fork: line 20" "T3 merge body lists fork commits"
+assert_not_contains "$(cat "$GH_LOG")" "pr create" "T3 opens no PR"
+assert_eq "$(sync_branch_sha "$d")" "" "T3 leaves no sync branch"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
