@@ -34,7 +34,8 @@ private:
 	UPROPERTY()
 	float RotationSpeed;
 
-	float StartTime = 0.0f;
+	// ActionTimer at activation (move time: identical on client, server and replay).
+	double StartTime = 0.0;
 
 	void OnFinish();
 };

@@ -21,7 +21,6 @@ void UGMCAbilityTask_WaitDelay::Activate()
 {
 	Super::Activate();
 
-	bTickingTask = true;
 	TimeStarted = AbilitySystemComponent->ActionTimer;
 }
 

@@ -819,7 +819,7 @@ public:
 
 	/**
 	 * Removes a previously-added filtered delegate on tag changes.
-	 * @param Tags A list of tags the delegate was bound to
+	 * @param Tags The container the delegate was bound with (kept for compatibility; the handle alone identifies the binding).
 	 * @param Handle The handle of the delegate to unbind
 	 */
 	void RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags, FDelegateHandle Handle);

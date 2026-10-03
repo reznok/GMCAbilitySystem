@@ -10,6 +10,7 @@
 #include "UGMAS_TestMovementCmp.h"
 #include "UGMAS_TestDelayAbility.h"
 #include "UGMAS_TestBoundAttrAbility.h"
+#include "UGMAS_TestTagWatchAbility.h"
 #include "Ability/Tasks/SetTargetDataFloat.h"
 #include "Ability/Tasks/SetTargetDataInt.h"
 #include "GMAS_TestHelpers.h"
@@ -27,6 +28,7 @@ BEGIN_DEFINE_SPEC(FGMASTaskSpec,
 	UGMC_AbilitySystemComponent* AbilityComp = nullptr;
 	UGMCAttributesData*          AttrData    = nullptr;
 	FGameplayTag StaminaTag;
+	FGameplayTag WatchedTag;
 
 	void SetupHarness();
 	void TeardownHarness();
@@ -41,6 +43,11 @@ void FGMASTaskSpec::SetupHarness()
 		TEXT("GMAS.Test.Attribute.Stamina"), TEXT("Stamina for GMAS tests"),
 		ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
 	StaminaTag = SStaminaTag.GetTag();
+	static FNativeGameplayTag SWatchedTag(
+		TEXT("GMCAbilitySystem"), TEXT("GMCAbilitySystem"),
+		TEXT("GMAS.Test.Status.Watched"), TEXT("Tag watched by WaitForGameplayTagChange tests"),
+		ENativeGameplayTagToken::PRIVATE_USE_MACRO_INSTEAD);
+	WatchedTag = SWatchedTag.GetTag();
 
 	MoveCmp = NewObject<UGMAS_TestMovementCmp>(GetTransientPackage());
 	MoveCmp->AddToRoot();
@@ -69,6 +76,8 @@ void FGMASTaskSpec::TeardownHarness()
 {
 	GetMutableDefault<UGMAS_TestDelayAbility>()->DelayTime = 0.2f;
 	GetMutableDefault<UGMAS_TestBoundAttrAbility>()->StaminaMod = 25.f;
+	GetMutableDefault<UGMAS_TestTagWatchAbility>()->WatchTag = FGameplayTag();
+	GetMutableDefault<UGMAS_TestTagWatchAbility>()->WatchType = EGMCWaitForGameplayTagChangeType::Set;
 	AttrData->RemoveFromRoot();
 	AbilityComp->RemoveFromRoot();
 	MoveCmp->RemoveFromRoot();
@@ -197,6 +206,45 @@ void FGMASTaskSpec::Define()
 			Wrong.Target = 7;
 			Ability->HandleTaskData(Task->TaskID, FInstancedStruct::Make(Wrong));
 			TestTrue("task ended", Task->GetState() == EGameplayTaskState::Finished);
+		});
+	});
+
+	Describe("WaitForGameplayTagChange", [this]()
+	{
+		It("completes once on the watched tag and ignores a later change", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = true;
+			GetMutableDefault<UGMAS_TestTagWatchAbility>()->WatchTag = WatchedTag;
+			GetMutableDefault<UGMAS_TestTagWatchAbility>()->WatchType = EGMCWaitForGameplayTagChangeType::Set;
+			AbilityComp->TryActivateAbility(UGMAS_TestTagWatchAbility::StaticClass());
+			UGMCAbility* Ability = FirstActiveAbility();
+			if (!TestNotNull("instance", Ability)) { return; }
+
+			AbilityComp->AddActiveTag(WatchedTag);
+			AbilityComp->GenAncillaryTick(0.f, false);     // CheckActiveTagsChanged -> delegate -> task completes -> ability ends
+			TestEqual("ended on the tag", Ability->AbilityState, EAbilityState::Ended);
+			AbilityComp->CleanupStaleAbilitiesForTest();
+
+			// A second change must reach nobody: the binding was removed in OnDestroy.
+			AbilityComp->RemoveActiveTag(WatchedTag);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			AbilityComp->AddActiveTag(WatchedTag);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			TestEqual("no new instance, no crash", AbilityComp->GetActiveAbilities().Num(), 0);
+		});
+	});
+
+	Describe("RemoveFilteredTagChangeDelegate", [this]()
+	{
+		It("removes by handle whatever container is passed", [this]()
+		{
+			int Calls = 0;
+			const FDelegateHandle Handle = AbilityComp->AddFilteredTagChangeDelegate(FGameplayTagContainer(WatchedTag),
+				FGameplayTagFilteredMulticastDelegate::FDelegate::CreateLambda([&Calls](const FGameplayTagContainer&, const FGameplayTagContainer&) { Calls++; }));
+			AbilityComp->RemoveFilteredTagChangeDelegate(FGameplayTagContainer(), Handle);   // different container
+			AbilityComp->AddActiveTag(WatchedTag);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			TestEqual("not called after removal", Calls, 0);
 		});
 	});
 }

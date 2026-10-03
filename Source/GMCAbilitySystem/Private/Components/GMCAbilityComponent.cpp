@@ -79,17 +79,18 @@ FDelegateHandle UGMC_AbilitySystemComponent::AddFilteredTagChangeDelegate(const 
 void UGMC_AbilitySystemComponent::RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags,
 	FDelegateHandle Handle)
 {
+	// The handle identifies the binding; Tags is a hint only (a caller that passes a different
+	// container than it registered with used to remove nothing, silently).
 	for (int32 Index = FilteredTagDelegates.Num() - 1; Index >= 0; --Index)
 	{
 		TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>& SearchPair = FilteredTagDelegates[Index];
-		if (SearchPair.Key == Tags)
+		if (SearchPair.Value.Remove(Handle))
 		{
-			SearchPair.Value.Remove(Handle);
 			if (!SearchPair.Value.IsBound())
 			{
 				FilteredTagDelegates.RemoveAt(Index);
 			}
-			break;
+			return;
 		}
 	}
 }
@@ -1546,9 +1547,12 @@ void UGMC_AbilitySystemComponent::CheckActiveTagsChanged()
 			OnActiveTagsChanged.Broadcast(AddedTags, RemovedTags);
 
 			// If we have filtered tag delegates, call them if appropriate.
+			// Broadcast from a copy: a handler may unbind (WaitForGameplayTagChange::OnDestroy)
+			// while the array is being walked.
 			if (!FilteredTagDelegates.IsEmpty())
 			{
-				for (const auto& FilteredBinding : FilteredTagDelegates)
+				const TArray<TPair<FGameplayTagContainer, FGameplayTagFilteredMulticastDelegate>> Snapshot = FilteredTagDelegates;
+				for (const auto& FilteredBinding : Snapshot)
 				{
 					FGameplayTagContainer AddedMatches = AddedTags.Filter(FilteredBinding.Key);
 					FGameplayTagContainer RemovedMatches = RemovedTags.Filter(FilteredBinding.Key);

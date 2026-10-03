@@ -33,6 +33,7 @@ public:
 	static UGMCAbilityTask_WaitForGameplayTagChange* WaitForGameplayTagChange(UGMCAbility* OwningAbility, const FGameplayTagContainer& WatchedTags, EGMCWaitForGameplayTagChangeType ChangeType = Changed);
 	
 	virtual void Activate() override;
+	virtual void OnDestroy(bool bInOwnerFinished) override;
 
 	virtual void OnGameplayTagChanged(const FGameplayTagContainer& AddedTags, const FGameplayTagContainer& RemovedTags);
 	
