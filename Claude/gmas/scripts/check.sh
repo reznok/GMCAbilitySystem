@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Structural checks for the gmas Claude Code plugin. Usage: check.sh [repo-root]
-# Prints one line per check; final line "N passed, M failed"; exit 1 when anything failed.
+# Structural checks for the gmas Claude Code plugin. Usage: [GMAS_CHECK_FAST=1] check.sh [repo-root]
+# Prints one line per check; final line "N passed, M failed" (", K skipped" appended when checks
+# were skipped); exit 1 when anything failed. GMAS_CHECK_FAST=1 skips the slow checks (manifest
+# validation, hook harness) and prints a "skip" line for each; the harness uses it for the
+# doctored scenarios.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${1:-$(cd "$HERE/../../.." && pwd)}"
 PLUGIN="$ROOT/Claude/gmas"
 MARKET="$ROOT/.claude-plugin/marketplace.json"
+FAST="${GMAS_CHECK_FAST:-0}"
 
 EXPECTED_SKILLS="gmc-prediction gmas-rules gmas-setup gmas-ability gmas-effect gmas-attribute gmas-task gmas-debug gmas-review gmas-testing gmas-upgrade gmas-maintain"
 MAX_LINES=300
@@ -15,14 +19,17 @@ LEAK_WORDS='Iliad|Seek|Cynosure|OmegaShooters|MCPTesting'
 # Drive paths like D:/ or C:\ (but not the "s:/" inside https://) and home directories.
 LEAK_PATHS='(^|[^A-Za-z])[A-Za-z]:[\\/]|/Users/|/home/[a-z]'
 
-PASS=0; FAIL=0
+PASS=0; FAIL=0; SKIP=0
 ok()   { PASS=$((PASS+1)); echo "ok   - $1"; }
-fail() { FAIL=$((FAIL+1)); echo "FAIL - $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | sed 's/^/       /'; }
+skip() { SKIP=$((SKIP+1)); echo "skip - $1"; }
+fail() { FAIL=$((FAIL+1)); echo "FAIL - $1"; if [ -n "${2:-}" ]; then printf '%s\n' "$2" | sed 's/^/       /'; fi; }
 
 py() { if command -v python3 >/dev/null 2>&1; then python3 "$@"; else python "$@"; fi; }
 
-# 1. Manifests validate (strict).
-if command -v claude >/dev/null 2>&1; then
+# 1. Manifests validate (strict). Skipped in fast mode.
+if [ "$FAST" = "1" ]; then
+	skip "manifests validate (GMAS_CHECK_FAST)"
+elif command -v claude >/dev/null 2>&1; then
 	if out="$(claude plugin validate --strict "$PLUGIN" 2>&1)"; then ok "plugin manifest validates"; else fail "plugin manifest validates" "$out"; fi
 	if out="$(claude plugin validate --strict "$MARKET" 2>&1)"; then ok "marketplace manifest validates"; else fail "marketplace manifest validates" "$out"; fi
 else
@@ -75,15 +82,29 @@ hits="$(grep -rnE "${EXCL[@]}" "$LEAK_WORDS" "$PLUGIN" "$MARKET" 2>/dev/null; gr
 # 7. GMC excerpt guard: no GRIMTEC/author copyright lines; no fenced block defining a GMC symbol.
 hits="$(grep -rnE "${EXCL[@]}" 'GRIMTEC|Dominik Lips|Copyright.*GMC' "$PLUGIN" 2>/dev/null)"
 [ -z "$hits" ] && ok "no GMC copyright lines" || fail "no GMC copyright lines (GMC excerpt)" "$hits"
-hits="$(find "$PLUGIN" -name '*.md' -print0 | xargs -0 awk '
-	/^```/ { infence = !infence; next }
+# A fence line (``` or ~~~, possibly indented inside a list item) toggles the in-fence state; the
+# state resets at the start of every file so an unterminated fence cannot hide the files after it.
+# The file list is sorted so the scan order (and the order of hits) is the same everywhere.
+hits="$(find "$PLUGIN" -name '*.md' -print0 | LC_ALL=C sort -z | xargs -0 -r awk '
+	FNR == 1 { infence = 0 }
+	/^[[:space:]]*(```|~~~)/ { infence = !infence; next }
 	infence && /(GMCCORE_API|UGMC_ReplicationCmp::|UGMC_MovementUtilityCmp::|UGMC_OrganicMovementCmp::)/ { print FILENAME ":" FNR ": " $0 }')"
 [ -z "$hits" ] && ok "no GMC definitions in code blocks" || fail "no GMC definitions in code blocks (GMC excerpt)" "$hits"
 
-# 8. Hook harness (when present).
-if [ -f "$PLUGIN/hooks/tests/gmas-context.test.sh" ]; then
-	if out="$(bash "$PLUGIN/hooks/tests/gmas-context.test.sh" 2>&1)"; then ok "hook harness: $(printf '%s\n' "$out" | tail -n 1)"; else fail "hook harness" "$out"; fi
+# 8. Hook harness (when present). Skipped in fast mode. Runs with stdin closed and, where a
+#    timeout command exists, under a 120 s limit so a hung harness cannot hang the check.
+HOOK_HARNESS="$PLUGIN/hooks/tests/gmas-context.test.sh"
+if [ -f "$HOOK_HARNESS" ]; then
+	if [ "$FAST" = "1" ]; then
+		skip "hook harness (GMAS_CHECK_FAST)"
+	else
+		run=(bash "$HOOK_HARNESS")
+		if command -v timeout >/dev/null 2>&1; then run=(timeout 120 "${run[@]}"); fi
+		if out="$("${run[@]}" 2>&1 </dev/null)"; then ok "hook harness: $(printf '%s\n' "$out" | tail -n 1)"; else rc=$?; fail "hook harness (exit $rc)" "$out"; fi
+	fi
 fi
 
-echo "$PASS passed, $FAIL failed"
+summary="$PASS passed, $FAIL failed"
+if [ "$SKIP" -gt 0 ]; then summary="$summary, $SKIP skipped"; fi
+echo "$summary"
 [ "$FAIL" -eq 0 ]

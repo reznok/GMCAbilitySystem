@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Harness for scripts/check.sh: copies the plugin into a temp tree, injects one violation per
 # scenario and asserts that check.sh fails with the expected message (and passes when clean).
+# S1 runs the full check once; every doctored scenario runs with GMAS_CHECK_FAST=1, which skips
+# manifest validation and the hook harness (slow, and not what those scenarios test).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,9 +49,12 @@ all_stubs() {
 	done
 }
 
-# S1: the real tree (with stubs for skills not written yet) passes.
+# S1: the real tree (with stubs for skills not written yet) passes, on the full (slow) path.
 R="$(fresh_copy clean)"; all_stubs "$R"
 expect_pass "S1 clean tree passes" "$R"
+
+# Every scenario below doctors one file; the slow checks add nothing to them.
+export GMAS_CHECK_FAST=1
 
 # S2: a downstream project name fails the leak grep.
 R="$(fresh_copy leak)"; all_stubs "$R"
@@ -72,7 +77,7 @@ expect_fail "S4 description trigger rule" "$R" "Use when"
 # S5: name must equal the directory.
 R="$(fresh_copy name)"; all_stubs "$R"
 sed -i 's/^name: gmas-task$/name: gmas-tasks/' "$R/Claude/gmas/skills/gmas-task/SKILL.md"
-expect_fail "S5 name equals directory" "$R" "name"
+expect_fail "S5 name equals directory" "$R" "name equals"
 
 # S6: SKILL.md over 300 lines fails.
 R="$(fresh_copy long)"; all_stubs "$R"
@@ -82,12 +87,24 @@ expect_fail "S6 line budget" "$R" "300"
 # S7: a GMC copyright line fails the excerpt guard.
 R="$(fresh_copy grim)"; all_stubs "$R"
 echo "// Copyright GRIMTEC" >> "$R/Claude/gmas/skills/gmc-prediction/SKILL.md"
-expect_fail "S7 GMC excerpt guard (copyright)" "$R" "GMC"
+expect_fail "S7 GMC excerpt guard (copyright)" "$R" "copyright"
 
 # S8: a fenced block defining a GMC symbol fails the excerpt guard.
 R="$(fresh_copy excerpt)"; all_stubs "$R"
 printf '\n```cpp\nvoid UGMC_ReplicationCmp::Foo()\n{\n}\n```\n' >> "$R/Claude/gmas/skills/gmc-prediction/SKILL.md"
-expect_fail "S8 GMC excerpt guard (definition)" "$R" "GMC"
+expect_fail "S8 GMC excerpt guard (definition)" "$R" "definitions in code blocks"
+
+# S8b: an unterminated fence in an earlier file must not hide a definition in a later one
+# (check.sh scans the files in sorted order; gmas-ability sorts before gmc-prediction).
+R="$(fresh_copy carry)"; all_stubs "$R"
+printf '\n```\nunterminated fence\n' >> "$R/Claude/gmas/skills/gmas-ability/SKILL.md"
+printf '\n```cpp\nvoid UGMC_ReplicationCmp::Foo()\n{\n}\n```\n' >> "$R/Claude/gmas/skills/gmc-prediction/SKILL.md"
+expect_fail "S8b GMC excerpt guard (fence state resets per file)" "$R" "definitions in code blocks"
+
+# S8c: a fence indented inside a list item still opens a code block.
+R="$(fresh_copy indent)"; all_stubs "$R"
+printf '\n- Example:\n\n  ```cpp\n  void UGMC_ReplicationCmp::Foo()\n  {\n  }\n  ```\n' >> "$R/Claude/gmas/skills/gmc-prediction/SKILL.md"
+expect_fail "S8c GMC excerpt guard (indented fence)" "$R" "definitions in code blocks"
 
 # S9: a broken relative link fails.
 R="$(fresh_copy link)"; all_stubs "$R"
