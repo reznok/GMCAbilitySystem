@@ -1041,8 +1041,11 @@ private:
 	void EnqueueServerOperation(const int OperationID);
 
 	// True when a server-broadcast op on this pawn would never be acknowledged by an
-	// autonomous-proxy client and must therefore be applied immediately on the server.
-	// See EnqueueServerOperation. Test builds can force the result via
+	// autonomous-proxy client (AI / level-placed / unpossessed pawn on a networked server).
+	// EnqueueServerOperation then queues the op with a ZERO grace timeout, so the pawn's
+	// next BoundQueueV2.GenAncillaryTick forces it (~1 frame) instead of the full grace
+	// window. It is never applied inline; the name predates that deferral. See
+	// EnqueueServerOperation. Test builds can force the result via
 	// bForceNoAckClientForTest (headless harness can't populate GMC net-role state).
 	bool ShouldApplyServerOpImmediately() const;
 
@@ -1391,7 +1394,7 @@ public:
 	//   on every receiver after spawn (carried through the multicast, so all
 	//   sides apply identical values). Leave empty for the unparameterized
 	//   spawn. Param Name is the user-var leaf name (e.g. "SizeScale").
-	UFUNCTION(BlueprintCallable, Category="GMAS|FX")
+	UFUNCTION(BlueprintCallable, Category="GMAS|FX", meta=(AutoCreateRefTerm="UserParams"))
 	UNiagaraComponent* SpawnParticleSystemAtLocation(
 		FFXSystemSpawnParameters SpawnParams,
 		const TArray<FGMASNiagaraUserParam>& UserParams,
