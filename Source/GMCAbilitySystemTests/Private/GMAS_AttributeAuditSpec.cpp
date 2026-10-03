@@ -101,6 +101,7 @@ void FGMASAttributeAuditSpec::SetupHarness()
 	AbilityComp->AttributeDataAssets.Add(AttrData);
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
+	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 	// No BindReplicationData() here: each case adds its rows first, then binds.
 }
 
@@ -119,6 +120,7 @@ UGMAS_TestAbilityComponent* FGMASAttributeAuditSpec::MakeHookComponent(UGMCAttri
 	Comp->AttributeDataAssets.Add(Rows);   // reachable through the rooted component, so no AddToRoot
 	Comp->GMCMovementComponent = MoveCmp;
 	Comp->SetActionTimerForTest(GMASTest::StableActionTimer);
+	Comp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 	return Comp;
 }
 

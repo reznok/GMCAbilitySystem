@@ -1985,7 +1985,7 @@ void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int
 
 
 void UGMC_AbilitySystemComponent::ApplyStartingEffects(bool bForce) {
-	if (!HasAuthority() || StartingEffects.Num() == 0 || (!bForce && bStartingEffectsApplied))
+	if (!IsAuthorityForGMASLogic() || StartingEffects.Num() == 0 || (!bForce && bStartingEffectsApplied))
 	{
 		return;
 	}
@@ -2655,8 +2655,8 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 			&& OperationData.GetScriptStruct() != FGMASBoundQueueV2OperationBaseData::StaticStruct();
 		if (!(bIsReplaying && bCarriesPayload && OperationID < 0))
 		{
-			// A client operation (negative id) the server never cached is a lost operation: the
-			// slot carried only the base struct. Everything else is a benign re-read of an already
+			// A client operation (negative id) the server never cached is a lost operation: it was
+			// never cached on the server. Everything else is a benign re-read of an already
 			// processed slot (the authority drains the payload the first time, then re-reads the
 			// same bound slot until the next client move).
 			if (IsAuthorityForGMASLogic() && OperationID < 0 && !bIsReplaying
@@ -2720,7 +2720,7 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		}
 
 		// The ability can fail if it is running on the irrelevant tick, hence we preserve the payload when necessary.
-		if (HasAuthority())
+		if (IsAuthorityForGMASLogic())
 		{
 			const bool bPreserveForAncillaryTick = !bActivated && bFromMovementTick;
 			if (!bPreserveForAncillaryTick)
@@ -3012,11 +3012,6 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		// (Batched ack is handled earlier, before the OperationID==0 guard, since it carries
 		//  OperationID==0 — see the hoisted block above.)
 
-		if (!BoundQueueV2.HasPayloadByID(OperationID))
-		{
-			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
-		}
-
 		// Diagnostic: server actually received and accepted a client op. Pair this with the
 		// client-side Apply trace to see if the op makes it across the wire at all.
 		if (GMASApplyTrace::CVarLogApplyTrace.GetValueOnGameThread())
@@ -3028,10 +3023,26 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				bFromMovementTick ? 1 : 0);
 		}
 
+		// Client-auth operations are applied right here and never cached: nothing on the server
+		// drains a cached payload for them, so the cache would grow for the whole session. The
+		// live slot is re-read until the next client move arrives, so a re-read of an operation
+		// already handled (applied or refused) is skipped quietly.
+		const UScriptStruct* OperationStruct = OperationData.GetScriptStruct();
+		if (OperationStruct == FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct()
+			|| OperationStruct == FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct()
+			|| OperationStruct == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
+		{
+			if (BoundQueueV2.WasOperationRecentlyProcessed(OperationID))
+			{
+				return;
+			}
+			BoundQueueV2.MarkOperationProcessed(OperationID);
+		}
+
 		// Client-auth effect application: the payload carries everything the server needs
 		// (EffectClass, EffectID, EffectData). ProcessOperation does not have a branch for
 		// this op type, so we handle it here, before handing off to the generic pipeline.
-		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct())
+		if (OperationStruct == FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct())
 		{
 			const FGMASBoundQueueV2ClientAuthEffectOperation* Op =
 				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthEffectOperation>();
@@ -3098,7 +3109,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		// Client-auth effect removal: the payload carries the EffectIDs the client wants
 		// removed. Server validates every ID is in the client-auth reserved range before
 		// applying, preventing a malicious client from removing standard-range effects.
-		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct())
+		if (OperationStruct == FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct())
 		{
 			const FGMASBoundQueueV2ClientAuthRemoveEffectOperation* Op =
 				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthRemoveEffectOperation>();
@@ -3133,7 +3144,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		// Client-auth ability activation: the payload carries everything the server needs
 		// (AbilityClass, InputTag, InputAction). No RPCConfirmAbilityActivation is issued —
 		// the client already trusts the activation by construction.
-		if (OperationData.GetScriptStruct() == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
+		if (OperationStruct == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
 		{
 			const FGMASBoundQueueV2ClientAuthAbilityActivationOperation* Op =
 				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthAbilityActivationOperation>();
@@ -3166,6 +3177,11 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				DeriveAbilityIDFromOperation(Op->OperationID, 0));
 			// No RPCConfirmAbilityActivation -- client trusts the activation by construction.
 			return;
+		}
+
+		if (!BoundQueueV2.HasPayloadByID(OperationID))
+		{
+			BoundQueueV2.CacheOperationPayload(OperationID, OperationData);
 		}
 
 		ProcessOperation(OperationData, bFromMovementTick);
@@ -3310,27 +3326,34 @@ int UGMC_AbilitySystemComponent::AllocateEffectIDInRange(int32 RangeStart, int32
 		return -1;
 	}
 
-	// Ids are ActionTimer in centiseconds offset into the range. A session long enough to run
-	// past the range wraps to its start and says so once; the bump loop below keeps ids unique
-	// among the live and reserved ones. Negative clocks (headless specs) stay below the range.
+	// Ids are ActionTimer in centiseconds offset into the range. A clock outside the range (a
+	// session long enough to run past its end, or a negative clock) wraps into it and says so
+	// once; the bump loop below keeps ids unique among the live and reserved ones and wraps too,
+	// so an id never leaves its range (never 0, never -1, never past MAX_int32).
 	const int64 RangeSize = static_cast<int64>(RangeEnd) - RangeStart;
-	int64 Candidate = static_cast<int64>(RangeStart) + static_cast<int64>(ActionTimer * 100.0);
-	if (Candidate >= RangeEnd)
+	int64 Offset = static_cast<int64>(ActionTimer * 100.0);
+	if (Offset < 0 || Offset >= RangeSize)
 	{
-		Candidate = RangeStart + ((Candidate - RangeStart) % RangeSize);
+		Offset = ((Offset % RangeSize) + RangeSize) % RangeSize;
 		if (!bEffectIDWrapReported)
 		{
 			bEffectIDWrapReported = true;
-			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[EffectID] %s: ActionTimer %f exceeds the id range [%d, %d); ids wrap within the range from here on."), Generator, ActionTimer, RangeStart, RangeEnd);
+			UE_LOG(LogGMCAbilitySystem, Error, TEXT("[EffectID] %s: ActionTimer %f is outside the id range [%d, %d); ids wrap within the range from here on."), Generator, ActionTimer, RangeStart, RangeEnd);
 		}
 	}
-	if (Candidate == 0) { Candidate = 1; }   // 0 means "unassigned"
 
-	int NewEffectID = static_cast<int>(Candidate);
-	while (ActiveEffects.Contains(NewEffectID) || ReservedEffectIDs.Contains(NewEffectID))
+	const int64 FirstID = RangeStart > 0 ? RangeStart : 1;   // 0 means "unassigned"
+	int64 Candidate = FMath::Max<int64>(static_cast<int64>(RangeStart) + Offset, FirstID);
+	for (int64 Tries = 0; Tries < RangeSize; ++Tries)
 	{
-		NewEffectID++;
+		const int CandidateID = static_cast<int>(Candidate);
+		if (!ActiveEffects.Contains(CandidateID) && !ReservedEffectIDs.Contains(CandidateID))
+		{
+			break;
+		}
+		if (++Candidate >= RangeEnd) { Candidate = FirstID; }
 	}
+	const int NewEffectID = static_cast<int>(Candidate);
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[EffectID] %s: %d (authority %d)"), Generator, NewEffectID, HasAuthority() ? 1 : 0);
 	return NewEffectID;
 }
@@ -3507,7 +3530,7 @@ bool UGMC_AbilitySystemComponent::ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffe
 	case EGMCAbilityEffectQueueType::ServerAuth:
 		{
 			// Client does not apply effects in these queues, only the server does
-			if (!HasAuthority())
+			if (!IsAuthorityForGMASLogic())
 			{
 				return false;
 			}

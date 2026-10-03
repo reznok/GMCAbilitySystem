@@ -81,6 +81,7 @@ void FGMASChainSpec::SetupHarness()
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
 	AbilityComp->ActionTimer = -1.0;
+	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 	SimTime = 0.0;
 
 	// A = stage 1: opens Window2 on natural end.

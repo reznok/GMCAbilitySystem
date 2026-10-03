@@ -9,9 +9,10 @@ namespace GMASTest
 {
 	// The stub movement component never executes a move, so GetMoveTimestamp() returns its
 	// default -1.0 and GenPredictionTick writes that into ActionTimer. Seeding -1.0 keeps the
-	// clock stable across GenPredictionTick calls. Ids come out negative (ActionTimer*100), which
-	// the predicted, server-auth and ability id generators accept (the client-auth generator
-	// fail-fasts below its offset); only 0 is refused by the effect-id generators.
+	// clock stable across GenPredictionTick calls. A negative clock is outside every effect-id
+	// range, so each generator wraps it into its own range and reports that once per component
+	// (an Error; harnesses on this clock call SilenceEffectIDWrapReportForTest). Only 0 is
+	// refused by the effect-id generators.
 	inline constexpr double StableActionTimer = -1.0;
 
 	// Client-auth ids are ActionTimer*100 + ClientAuthEffectIDOffset and must not drop below the

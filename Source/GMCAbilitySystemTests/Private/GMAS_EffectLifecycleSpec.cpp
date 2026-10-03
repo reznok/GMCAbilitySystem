@@ -112,6 +112,7 @@ void FGMASEffectLifecycleSpec::SetupHarness()
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
 	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
+	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 
 	Recorder = NewObject<UGMAS_TestEventRecorder>(GetTransientPackage());
 	Recorder->AddToRoot();
@@ -421,7 +422,8 @@ void FGMASEffectLifecycleSpec::Define()
 			FGMCAbilityEffectData Data; Data.EffectType = EGMASEffectType::Instant; Data.EffectTag = DrainTag; Data.Modifiers.Add(MakeHealthMod(-10.f));
 			Data.CancelAbilityOnEnd.AddTag(InputTag);
 			const bool bOk = AbilityComp->ApplyAbilityEffect(UGMCAbilityEffect::StaticClass(), Data, EGMCAbilityEffectQueueType::ServerInstantAttribute, Handle, Id, Out);
-			TestFalse("ServerAuth path refuses on a non-authority harness", bOk);
+			TestTrue("queued on the ServerAuth path", bOk);
+			TestTrue("with a server-auth id", Id >= UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset && Id < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
 			TestEqual("nothing applied locally", AbilityComp->GetActiveEffects().Num(), 0);
 		});
 
@@ -432,7 +434,8 @@ void FGMASEffectLifecycleSpec::Define()
 			int Handle = -1, Id = -1; UGMCAbilityEffect* Out = nullptr;
 			FGMCAbilityEffectData Data; Data.EffectType = EGMASEffectType::Ticking; Data.EffectTag = DrainTag; Data.Modifiers.Add(MakeHealthMod(-10.f));
 			const bool bOk = AbilityComp->ApplyAbilityEffect(UGMCAbilityEffect::StaticClass(), Data, EGMCAbilityEffectQueueType::ServerInstantAttribute, Handle, Id, Out);
-			TestFalse("ServerAuth path refuses on a non-authority harness", bOk);
+			TestTrue("queued on the ServerAuth path", bOk);
+			TestTrue("with a server-auth id", Id >= UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset && Id < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
 			TestEqual("nothing applied locally", AbilityComp->GetActiveEffects().Num(), 0);
 		});
 

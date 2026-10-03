@@ -1,5 +1,6 @@
 // Component and queue audit specs: the movement pointer at bind, the effect-id allocator, lost
-// operations, the server-operation grace setting and the once-only queue state reports. Headless
+// operations, client-auth payloads on the server, starting effects, the server-operation grace
+// setting and the once-only queue state reports. Headless
 // UGMAS_TestMovementCmp + UGMC_AbilitySystemComponent harness, no world, no network stack.
 
 #include "Misc/AutomationTest.h"
@@ -8,8 +9,11 @@
 #include "Components/GMCAbilityComponent.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Settings/GMASNetworkTimingSettings.h"
 #include "Utility/GMASBoundQueueV2_Operations.h"
+#include "UGMAS_TestCountingEffect.h"
 #include "UGMAS_TestMovementCmp.h"
 #include "GMAS_TestHelpers.h"
 
@@ -125,6 +129,29 @@ void FGMASComponentAuditSpec::Define()
 			TestFalse("refused", AbilityComp->ApplyAbilityEffect(UGMCAbilityEffect::StaticClass(), Data, EGMCAbilityEffectQueueType::Predicted, Handle, Id, Out));
 			TestEqual("nothing registered", AbilityComp->GetActiveEffects().Num(), 0);
 		});
+
+		It("a negative clock wraps into the range and reports once", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("[EffectID] ServerAuth: ActionTimer"), EAutomationExpectedErrorFlags::Contains, 1);
+			AbilityComp->SetActionTimerForTest(-1.0);
+			const int First = AbilityComp->GetNextAvailableServerAuthEffectID();
+			const int Second = AbilityComp->GetNextAvailableServerAuthEffectID();
+			TestTrue("inside the server-auth range", First >= UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset && First < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
+			TestTrue("second also inside, no second report", Second >= UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset && Second < UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset);
+		});
+
+		It("the bump loop wraps to the range start instead of leaving the range", [this]()
+		{
+			// Last id of the predicted range is live: the next candidate wraps to 1, not into the
+			// server-auth range.
+			const int LastPredicted = UGMC_AbilitySystemComponent::ServerAuthEffectIDOffset - 1;
+			AbilityComp->SetActionTimerForTest(static_cast<double>(LastPredicted) / 100.0);
+			UGMCAbilityEffect* Live = NewObject<UGMCAbilityEffect>(AbilityComp);
+			AbilityComp->GetActiveEffectsForTest().Add(LastPredicted, Live);
+			const int Id = AbilityComp->GetNextAvailableEffectID();
+			TestEqual("wrapped to the first predicted id", Id, 1);
+			AbilityComp->GetActiveEffectsForTest().Remove(LastPredicted);
+		});
 	});
 
 	Describe("Operations", [this]()
@@ -137,6 +164,82 @@ void FGMASComponentAuditSpec::Define()
 			const FInstancedStruct Data = FInstancedStruct::Make(Op);
 			TestFalse("not applied", AbilityComp->ProcessOperationForTest(Data, true));
 			TestFalse("still not applied, silent", AbilityComp->ProcessOperationForTest(Data, true));
+		});
+
+		It("a refused activation re-read on the ancillary pass stays silent", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("No Abilities Granted for InputTag"), EAutomationExpectedErrorFlags::Contains, 2);   // the two refusals
+			AbilityComp->bForceAuthorityForTest = true;
+			FGMASBoundQueueV2AbilityActivationOperation Op; Op.OperationID = -9; Op.InputTag = ProbeTag;   // no ability granted: refused
+			const FInstancedStruct Data = FInstancedStruct::Make(Op);
+			AbilityComp->GetBoundQueueV2ForTest().CacheOperationPayload(-9, Data);
+			TestFalse("refused on the movement tick", AbilityComp->ProcessOperationForTest(Data, true));
+			TestTrue("kept for the ancillary pass", AbilityComp->GetBoundQueueV2ForTest().HasPayloadByID(-9));
+			TestFalse("refused on the ancillary pass", AbilityComp->ProcessOperationForTest(Data, false));
+			TestFalse("drained", AbilityComp->GetBoundQueueV2ForTest().HasPayloadByID(-9));
+			TestFalse("re-read: no [OperationLost]", AbilityComp->ProcessOperationForTest(Data, false));
+		});
+
+		It("a client-auth operation leaves no payload on the server and logs no Error", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = true;
+			AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+			FGMASBoundQueueV2ClientAuthEffectOperation Op;
+			Op.OperationID = -11;
+			Op.EffectClass = UGMCAbilityEffect::StaticClass();
+			Op.EffectID    = UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset + 300;
+			Op.EffectData.EffectType = EGMASEffectType::Persistent;
+			Op.EffectData.EffectTag  = ProbeTag;
+			const FInstancedStruct Data = FInstancedStruct::Make(Op);
+			AbilityComp->ServerProcessOperationForTest(Data, true);
+			AbilityComp->ServerProcessOperationForTest(Data, false);   // the ancillary pass re-reads the same slot
+			TestEqual("applied once", AbilityComp->GetActiveEffects().Num(), 1);
+			TestEqual("no payload left", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 0);
+			AbilityComp->GenAncillaryTick(0.f, false);   // CheckValidState: nothing to report
+		});
+
+		It("the invalid-payload report fires once per id", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("OperationPayloads has a client-made operation id"), EAutomationExpectedErrorFlags::Contains, 2);
+			FGMASBoundQueueV2OperationBaseData Base;
+			AbilityComp->GetBoundQueueV2ForTest().CacheOperationPayload(-3, FInstancedStruct::Make(Base));
+			AbilityComp->GetBoundQueueV2ForTest().CacheOperationPayload(-4, FInstancedStruct::Make(Base));
+			AbilityComp->GenAncillaryTick(0.f, false);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			AbilityComp->GetBoundQueueV2ForTest().RemovePayloadByID(-3);
+			AbilityComp->GetBoundQueueV2ForTest().RemovePayloadByID(-4);
+		});
+
+		It("starting effects apply on the ancillary tick, never the prediction tick (A#20)", [this]()
+		{
+			APawn* Pawn = NewObject<APawn>(GetTransientPackage()); Pawn->AddToRoot();
+			APlayerController* Controller = NewObject<APlayerController>(GetTransientPackage()); Controller->AddToRoot();
+			Pawn->Controller = Controller;
+			UGMAS_TestMovementCmp* Move = NewObject<UGMAS_TestMovementCmp>(Pawn);
+			UGMC_AbilitySystemComponent* Comp = NewObject<UGMC_AbilitySystemComponent>(Pawn);
+			Comp->GMCMovementComponent = Move;
+			Comp->BindReplicationData();
+			Comp->bForceAuthorityForTest = true;
+			Comp->bForceNoAckClientForTest = true;
+			Comp->BindServerOpForcedDelegateForTest();
+
+			UGMAS_TestCountingEffect* CDO = GetMutableDefault<UGMAS_TestCountingEffect>();
+			const EGMASEffectType SavedType = CDO->EffectData.EffectType;
+			CDO->EffectData.EffectType = EGMASEffectType::Persistent;
+			Comp->AddStartingEffects({UGMAS_TestCountingEffect::StaticClass()});
+
+			Comp->GenPredictionTick(0.1f);
+			TestEqual("the prediction tick applies nothing", Comp->GetActiveEffects().Num(), 0);
+			Comp->SetActionTimerForTest(GMASTest::ClientAuthActionTimer);   // GenPredictionTick wrote the stub's -1
+			Comp->GenAncillaryTick(0.1f, false);   // queued with zero grace
+			Comp->GenAncillaryTick(0.1f, false);   // forced
+			TestEqual("applied once", Comp->GetActiveEffects().Num(), 1);
+			Comp->GenAncillaryTick(0.1f, false);
+			TestEqual("still once", Comp->GetActiveEffects().Num(), 1);
+
+			CDO->EffectData.EffectType = SavedType;
+			Controller->RemoveFromRoot();
+			Pawn->RemoveFromRoot();
 		});
 
 		It("the server grace comes from the settings", [this]()

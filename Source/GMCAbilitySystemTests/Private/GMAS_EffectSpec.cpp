@@ -89,6 +89,7 @@ void FGMASEffectSpec::SetupHarness()
 	AbilityComp->BindReplicationData();
 
 	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
+	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 }
 
 void FGMASEffectSpec::TeardownHarness()

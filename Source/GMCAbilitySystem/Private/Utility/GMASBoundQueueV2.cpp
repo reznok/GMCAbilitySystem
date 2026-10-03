@@ -213,7 +213,7 @@ void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float 
 {
 	if (!OperationPayloads.Contains(OperationID))
 	{
-		UE_LOG(LogTemp, Error, TEXT("Tried to queue server operation, but server operation %d not found in payloads"), OperationID);
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("Tried to queue server operation, but server operation %d not found in payloads"), OperationID);
 		return;
 	}
 

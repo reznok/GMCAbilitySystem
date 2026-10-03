@@ -1390,6 +1390,11 @@ public:
 	// clock set it here and drive the real TickActiveAbilities / TickActiveEffects directly.
 	void SetActionTimerForTest(double InActionTimer) { ActionTimer = InActionTimer; }
 
+	// Test seam: the stub's clock is negative (GMC's move timestamp before any move), which the
+	// effect-id allocator wraps into each range with a one-time Error. Harnesses that run on that
+	// clock and are not about ids pre-set the latch so the report stays out of their specs.
+	void SilenceEffectIDWrapReportForTest() { bEffectIDWrapReported = true; }
+
 	// Test seam: tick every active ability (and its tasks) through the production entry point
 	// without GenPredictionTick resetting the clock. Pair with CleanupStaleAbilitiesForTest.
 	void TickActiveAbilitiesForTest(float DeltaTime) { TickActiveAbilities(DeltaTime); }

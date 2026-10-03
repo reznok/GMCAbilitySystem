@@ -124,6 +124,7 @@ void FGMASAbilityEndSpec::SetupHarness()
 	AbilityComp->GMCMovementComponent = MoveCmp;
 	AbilityComp->BindReplicationData();
 	AbilityComp->SetActionTimerForTest(GMASTest::StableActionTimer);
+	AbilityComp->SilenceEffectIDWrapReportForTest();   // negative clock: ids wrap into their ranges
 
 	Recorder = NewObject<UGMAS_TestEventRecorder>(GetTransientPackage());
 	Recorder->AddToRoot();
