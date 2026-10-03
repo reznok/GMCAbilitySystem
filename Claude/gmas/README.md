@@ -9,7 +9,7 @@ In Claude Code:
     /plugin marketplace add reznok/GMCAbilitySystem
     /plugin install gmas@reznok
 
-The marketplace is read from the repository's default branch, `main`, so the plugin reaches you with each GMAS release. To follow the integration branch instead:
+The marketplace is read from the repository's default branch, `main`, so the plugin reaches you with each GMAS release and with `Claude/`-only fixes cherry-picked onto `main`. To follow the integration branch instead:
 
     /plugin marketplace add reznok/GMCAbilitySystem@dev
 
@@ -19,7 +19,7 @@ Claude Code updates an installed plugin when `version` in `.claude-plugin/plugin
 
 ### Twelve skills
 
-Claude loads a skill when a request matches its trigger; you can also load one by name with `/gmas:<skill>` (for example `/gmas:gmas-rules`). Every skill opens with the same notice (verified against GMC 2.3.x and GMAS 1.4; confirm signatures in your own headers), uses neutral example names and ends with a checklist. Long tables and recipes sit next to the skill in `references/`.
+Claude loads a skill when a request matches its trigger; you can also load one by name with `/gmas:<skill>` (for example `/gmas:gmas-rules`). Every skill opens with the same notice (verified against GMC 2.3.x and GMAS 1.4; confirm signatures in your own headers), uses neutral example names and ends with a checklist (authoring skills add `## Which test to write` after it). Long tables and recipes sit next to the skill in `references/`.
 
 | Skill | Use when… |
 |---|---|
@@ -41,7 +41,7 @@ Claude loads a skill when a request matches its trigger; you can also load one b
 [`hooks/hooks.json`](hooks/hooks.json) registers one `SessionStart` hook (on startup, resume, `/clear` and compaction; 5 s timeout) that runs [`hooks/gmas-context.sh`](hooks/gmas-context.sh). The script:
 
 1. walks up from the working directory to the first folder that contains a `.uproject`, the project root, so a session started inside a plugin or source subfolder is still that project's session;
-2. looks under `<root>/Plugins/` for `GMC.uplugin` and `GMCAbilitySystem.uplugin`, whatever their folders are called (submodules and vendored copies differ; up to three folders deep, first match wins);
+2. looks under `<root>/Plugins/` for `GMC.uplugin` and `GMCAbilitySystem.uplugin`, whatever their folders are called (submodules and vendored copies differ; up to three folders deep, first in sorted order);
 3. reads `VersionName` from each `.uplugin` and tells the GMAS generation apart by the presence of `Source/GMCAbilitySystem/Public/Utility/GMASBoundQueueV2.h`;
 4. injects one paragraph into Claude's context, with paths relative to the project root:
 
@@ -68,10 +68,10 @@ The content describes GMAS 1.4 and GMC 2.3.x. Facts that differ on GMAS trees ol
 
 Changes go to `dev` as a pull request. Before opening one:
 
-- Run [`scripts/check.sh`](scripts/check.sh) from the repository root (`bash Claude/gmas/scripts/check.sh`); it must end `N passed, 0 failed`. It validates both manifests, checks that the twelve skills are present, that each frontmatter `name` equals its directory and each `description` starts with "Use when", that every `SKILL.md` is at most 300 lines, that relative links resolve, that `hooks/hooks.json` parses, that the leak grep and the GMC-excerpt guard are clean, and runs the hook harness. `GMAS_CHECK_FAST=1` skips the two slow checks while you iterate; run the full check once before pushing. `scripts/tests/check.test.sh` tests the checker itself.
+- Run [`scripts/check.sh`](scripts/check.sh) from the repository root (`bash Claude/gmas/scripts/check.sh`); it must end `N passed, 0 failed`. It needs `bash`, the `claude` CLI on `PATH` (manifest validation fails without it) and python 3 (the `hooks.json` parse and the hook harness). It validates both manifests, checks that the twelve skills are present, that each frontmatter `name` equals its directory and each `description` starts with "Use when", that every `SKILL.md` is at most 300 lines, that relative links resolve, that `hooks/hooks.json` parses, that the leak grep and the GMC-excerpt guard are clean, and runs the hook harness. `GMAS_CHECK_FAST=1` skips the two slow checks while you iterate; run the full check once before pushing. `scripts/tests/check.test.sh` tests the checker itself.
 - Keep the content generic: no project names, no drive or user paths, no game assets or features. A lesson learned in a project enters a skill as a rule with neutral example names (`AMyPawn`, `UMyAbility_Dash`, `Attribute.Stamina`), never as the story.
 - No GMC source, in any form: API names, one-line signatures, described behavior and header paths only.
-- Skill conventions: `description` states triggers only; the two-line verification notice opens the body; long material goes to `references/`; differences on older trees are tagged `(1.4+)`; sibling skills are referenced as `gmas:<skill>`; `## Checklist` comes last.
+- Skill conventions: `description` states triggers only; the two-line verification notice opens the body; long material goes to `references/`; differences on older trees are tagged `(1.4+)`; sibling skills are referenced as `gmas:<skill>`; `## Checklist` closes the skill (authoring skills add `## Which test to write` after it).
 - Bump `version` in `.claude-plugin/plugin.json` when the change should reach installed plugins.
 
-To try your change before it is merged, add your clone as a local marketplace (`/plugin marketplace add <path to the clone>`) in a project session and install `gmas` from it. Maintainers: [`docs/BRANCHING.md`](https://github.com/reznok/GMCAbilitySystem/blob/main/docs/BRANCHING.md) (the plugin ships without `docs/`) and the `gmas-maintain` skill cover promotions and `Claude/`-only fixes.
+To try your change before it is merged, add your clone as a local marketplace in a project session and install `gmas` from it. The clone's marketplace is also named `reznok` and collides with the GitHub one, so remove that first: `claude plugin marketplace remove reznok`, then `claude plugin marketplace add <path to the clone>` and `/plugin install gmas@reznok`; add the GitHub marketplace back when you are done. Maintainers: [`docs/BRANCHING.md`](https://github.com/reznok/GMCAbilitySystem/blob/main/docs/BRANCHING.md) (the plugin ships without `docs/`) and the `gmas-maintain` skill cover promotions and `Claude/`-only fixes.

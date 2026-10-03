@@ -82,7 +82,7 @@ if [ -n "$gmc_dir" ]; then
 	gmc_text="GMC (General Movement Component) at \`$gmc_dir\` ($gmc_version)"
 	gmc_source="GMC's source is licensed and exists only inside this project: read \`$gmc_dir/Source/GMCCore/Public/...\` for exact signatures and never copy GMC code into other repositories."
 else
-	gmc_text="GMC (General Movement Component), which GMAS requires"
+	gmc_text="GMC (General Movement Component), which GMAS requires,"
 	gmc_source="GMC was not found under \`Plugins/\`; it may be installed as an engine plugin (Engine/Plugins/Marketplace). GMC's source is licensed: read its headers where they are and never copy GMC code into other repositories."
 fi
 
