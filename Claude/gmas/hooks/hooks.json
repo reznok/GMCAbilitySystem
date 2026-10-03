@@ -1,0 +1,17 @@
+{
+  "description": "gmas plugin hooks: detect GMC and GMAS in the project and inject context",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/gmas-context.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
