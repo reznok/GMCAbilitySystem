@@ -1,0 +1,140 @@
+---
+name: gmas-upgrade
+description: Use when moving a project to a newer GMAS (for example 1.3 to 1.4) or when a build breaks after updating the GMAS submodule.
+---
+
+> Behavior below was verified against GMC 2.3.x and GMAS 1.4. Confirm signatures in this project's own headers (paths are relative to each plugin's root, e.g. `Source/GMCCore/Public/Components/GMCReplicationComponent.h`); GMC's source is not part of this plugin.
+
+A GMAS upgrade is three jobs: data that silently changes meaning (clamps, flipped defaults), code that stops compiling (the bound queue, apply signatures, removed forwarders), and behaviour that compiles but acts differently (activation tick, tag preservation, timing). The tables below are built from the public header diff between the two release tags and the release notes; every old/new pair was checked against `git show v1.3.0:<path>` and the 1.4 headers. GMAS paths are relative to `Source/GMCAbilitySystem/`. The rules the new behaviour follows live in `gmas:gmas-rules`; the install mechanics in `gmas:gmas-setup`.
+
+## Find the installed generation
+
+| Signal | Where | Reads |
+|---|---|---|
+| `VersionName` | `GMCAbilitySystem.uplugin` at the plugin root | `"1.3"`, `"1.4"`; release tags are `v1.3.0`, `v1.4.0` (`git -C Plugins/GMCAbilitySystem describe --tags` for a submodule) |
+| the queue header | `Public/Utility/GMASBoundQueueV2.h` present ⇒ 1.4+; `Public/Utility/GMASBoundQueue.h` present ⇒ 1.3 or older | the two never coexist |
+| the hook | this plugin's SessionStart hook prints `VersionName` and `1.4+ bound queue V2` or `pre-1.4: bound queue V1` for the GMAS it finds under `Plugins/` | |
+
+Everything the other `gmas:*` skills tag `(1.4+)` applies only after the move; a `dev` checkout between tags is "1.4+" with unreleased changes on top (`git -C Plugins/GMCAbilitySystem log --oneline v1.4.0..HEAD -- Source/GMCAbilitySystem/Public`).
+
+## 1.3 → 1.4
+
+Access is the C++ visibility on the 1.3 header; `private virtual` members were overridable from an ability-system-component subclass, so they are listed.
+
+**Bound queue** (`Public/Utility/`, `Public/Components/GMCAbilityComponent.h`):
+
+| 1.3 | 1.4 | What to change |
+|---|---|---|
+| `Utility/GMASBoundQueue.h`: `TGMASBoundQueue<C, T, ClientAuth>`, `TGMASBoundQueueOperation<C, T>`, `EGMASBoundQueueOperationType`, `FGMASBoundQueueRPCHeader`, `FGMASBoundQueueAcknowledgement(s)`, `FGMASBoundQueueOperationIdSet`, `FGMASBoundQueueEmptyData` | the header is gone | delete the include and every template instantiation. Game code should not touch the queue: `QueueAbility`, `ApplyAbilityEffect*`, `AddImpulse`, `FireCustomEvent` on the component are the API |
+| – | `Utility/GMASBoundQueueV2.h`: one untemplated `FGMASBoundQueueV2` per component (`BoundQueueV2`, private). `Utility/GMASBoundQueueV2_Operations.h`: one `USTRUCT` per operation deriving from `FGMASBoundQueueV2OperationBaseData` (`…AbilityActivationOperation`, `…ApplyEffectOperation`, `…RemoveEffectOperation`, `…AddImpulseOperation`, `…SetActorLocationOperation`, `…CustomEventOperation`, `…AcknowledgeOperation`, batch and client-auth variants), carried as `FInstancedStruct` | nothing to write; the struct names matter only to a component subclass overriding `ProcessOperation` (below) |
+| the component's queues `QueuedAbilityOperations`, `QueuedEffectOperations`, `QueuedEffectOperations_ClientAuth`, `QueuedEventOperations` (private) with the template's `GetQueuedOperations`, `GetQueuedRPCOperations`, `Num`, `NumMatching`, `GetOperationById`, `BindToGMC`, `PreLocalMovement` / `PreRemoteMovement` | no public equivalent (`BoundQueueV2.OperationQueue`, `ClientQueuedOperations`, `GetPayloadByID` are reachable only through `GetBoundQueueV2ForTest()` under `WITH_AUTOMATION_WORKER`) | drop the inspection; diagnose with `GMAS.LogApplyTrace` and the `[ProcessOp]` / `[AckTrace]` lines (`gmas:gmas-debug`) |
+| `CreateEffectOperation(…)`, `CreateSyncedEventOperation(…)` (public) | removed (two commented-out declarations remain) | `ApplyAbilityEffect` with a queue type; `FireCustomEvent` |
+| overridable `ProcessOperation(const TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>&)`, `ProcessOperation(const TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>&)` (private virtual) | `virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false)`, `virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation&)`, `virtual void ServerProcessOperation(const FInstancedStruct&, bool)`, `virtual void ServerProcessAcknowledgedOperation(int, bool)` (private virtual) | re-implement on the instanced struct (`OperationData.GetScriptStruct() == FGMASBoundQueueV2AddImpulseOperation::StaticStruct()`, then `GetPtr<T>()`) and call `Super`: the base handles acknowledgements, batches and the consumed-activation guard |
+| `PreRemoteMoveExecution()` (public, `BlueprintCallable`), forwarded by the movement component | removed; `PreLocalMoveExecution()` is the only pre-move hook | delete the forwarder line (or Blueprint node) in `UMyMovementCmp`; the five remaining hooks are listed in `gmas:gmas-rules` |
+| `CheckRemovedEffects()`, `ActiveEffectsData` (`ReplicatedUsing = OnRep_ActiveEffectsData`), `FEffectStatePrediction`, `QueuedEffectStates` (private) | gone; predicted effects are validated against the bound active-effect ids (`FGMASActiveEffectIDsState`) and reconnecting clients rehydrate from `FGMCEffectSnapshot`. `TickActiveEffects(float)` and `ProcessAttributes(bool)` survive and are public now (the specs drive them) | nothing to call; code that read `ActiveEffectsData` reads `GetActiveEffects()` |
+
+**Effects** (`Public/Components/GMCAbilityComponent.h`, `Public/Effects/GMCAbilityEffect.h`):
+
+| 1.3 | 1.4 | What to change |
+|---|---|---|
+| `UGMCAbilityEffect* ApplyAbilityEffect(Class, Data, bool bOuterActivation = false)` ("Apply Ability Effect (Legacy)"; `false` applied `Predicted`, `true` `ServerAuth`) | removed, Blueprint node included | `bool ApplyAbilityEffect(Class, Data, QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect)`, `ApplyAbilityEffectSafe(…, bool& OutSuccess, …, UGMCAbility* HandlingAbility = nullptr)` or `ApplyAbilityEffectShort(Class, QueueType, HandlingAbility)`; keep `OutEffectId` or the `EffectTag` for removal (`gmas:gmas-effect`) |
+| `OutEffectHandle` was a separate handle; `RemoveActiveAbilityEffectByHandle(Handle, QueueType)`, `RemoveEffectByHandle(Handle, QueueType)` | `OutEffectHandle` is an alias of `OutEffectId`; both `*ByHandle` removers are `UE_DEPRECATED(5.7, …)` and `DeprecatedFunction` | `RemoveEffectByIdSafe({Id}, QueueType)` |
+| `RemoveEffectByTag(Tag, Num, bOuterActivation)`, `RemoveEffectById(Ids, bOuterActivation)` ("Legacy") | still compile; deprecated for Blueprint only | `RemoveEffectByTagSafe(Tag, Num, QueueType)`, `RemoveEffectByIdSafe(Ids, QueueType)` with the queue type the apply used |
+| `EGMCAbilityEffectQueueType::ServerAuthMove`: the server queued the operation into the move cycle with the effect's `ClientGraceTime` as RPC grace | still declared (hidden in the editor), shares the `ServerAuth` case: no separate behaviour | write `ServerAuth`; the operation grace is `QueueServerOperation`'s 1 s (`Public/Utility/GMASBoundQueueV2.h`), 0 for targets without a client |
+| – | `ServerInstantAttribute` (1.4+): server-only, applied in the current server tick, `Instant` attribute-only effects, no client instance | for damage and other server-owned stats on unbound attributes (`gmas:gmas-rules`); never for an attribute predicted logic reads |
+| `GetActiveEffectsByTag(FGameplayTag, bool)`, `GetFirstActiveEffectByTag(FGameplayTag)`, `RemoveActiveAbilityEffectByTag(FGameplayTag, QueueType, bool)` | `const FGameplayTag&` | plain calls compile; re-bind function pointers and delegates |
+| `FGMCAbilityEffectData::operator==` (compared `StartTime` and `EndTime`) | removed | `TArray<FGMCAbilityEffectData>::Contains` / `Find` / `AddUnique` and `==` on the struct stop compiling: compare `EffectID` or `EffectTag` yourself |
+| `FGMCAbilityEffectData::IsValid()` true only with modifiers, tags, abilities or must-have / must-not tags | also true with `bUniqueByEffectTag` or an `EffectTag` | runtime-built data start from `UGMCAbilityEffect::GetDefaultEffectData(Class)` (1.4+); a struct carrying only a tag is now "complete" data, not a request for the class defaults |
+| `void EndEffect()` (`BlueprintCallable`, non-virtual) | `virtual void EndEffect()` | a subclass that declared its own `EndEffect()` now overrides it and is called from the component: add `override` and call `Super::EndEffect()`, or rename |
+| `StartEffectEvent`, `EndEffectEvent`: `BlueprintImplementableEvent` | `BlueprintNativeEvent` | Blueprint graphs keep their event nodes; C++ may override `StartEffectEvent_Implementation` |
+| `ClientEffectApplicationTimeout` (private field, 1 s) | `UGMASNetworkTimingSettings::ClientEffectApplicationTimeout` (0.5 s, `Public/Settings/GMASNetworkTimingSettings.h`; Project Settings → GMC Ability System → Network Timing, `DefaultGame.ini`); the field left on the component is dead | a project that raised it by editing GMAS sets the project setting instead |
+
+```cpp
+// 1.3: the bool chose the queue.
+UGMCAbilityEffect* Burn = ASC->ApplyAbilityEffect(UMyEffect_Burn::StaticClass(), Data, /*bOuterActivation=*/true);
+// 1.4: a queue type and out parameters; keep Id for RemoveEffectByIdSafe.
+int Handle = -1, Id = -1; UGMCAbilityEffect* Burn = nullptr;
+ASC->ApplyAbilityEffect(UMyEffect_Burn::StaticClass(), Data, EGMCAbilityEffectQueueType::ServerAuth, Handle, Id, Burn);
+```
+
+**Abilities, tasks and the component** (`Public/Components/GMCAbilityComponent.h`, `Public/Ability/GMCAbility.h`, `Public/Ability/Tasks/GMCAbilityTaskBase.h`):
+
+| 1.3 | 1.4 | What to change |
+|---|---|---|
+| `void TryActivateAbilitiesByInputTag(const FGameplayTag&, const UInputAction* = nullptr, bool bFromMovementTick = true)` | `bool …(…, const bool bFromMovementTick = true, const bool bForce = false, const int SourceOperationID = 0)` | calls compile; the return says whether a candidate activated. Server-only and test code; never from a client (`gmas:gmas-rules`) |
+| `bool TryActivateAbility(TSubclassOf<UGMCAbility>, const UInputAction* = nullptr, const FGameplayTag ActivationTag = EmptyTag)` | `+ bool bSkipActivationTagsCheck = false, const int ForcedAbilityID = 0` | calls compile; leave the new arguments to the component |
+| `AddImpulse(FVector, bool bVelChange = false)` private (Blueprint only) | public; a `FGMASBoundQueueV2AddImpulseOperation` | C++ may call it on the server (`gmas:gmas-rules`) |
+| `ExecuteSyncedEvent(FGMASSyncedEventContainer)` (`BlueprintCallable`), `UGMASSyncedEvent` subclasses, `OnSyncedEvent` | declared, but it validates its input and queues nothing | `FireCustomEvent(EventTag, Payload)` on the server, handled in `OnCustomEvent(EventTag, Payload)` on both sides; `SetActorLocation(FVector)` for the teleport case; port each `UGMASSyncedEvent` body into a handler keyed by tag |
+| `UGMCAbility::ServerConfirmTimeout` (private, 1 s) | protected, `EditDefaultsOnly`, 2 s | set it in class defaults where a class needs another window |
+| `TickEvent`, `AncillaryTickEvent`, `BeginAbilityEvent`, `EndAbilityEvent`: `BlueprintImplementableEvent` | `BlueprintNativeEvent` | Blueprint graphs unchanged; C++ abilities override `BeginAbilityEvent_Implementation` and friends instead of `BeginAbility` (`gmas:gmas-ability`) |
+| `UGMCAbilityTaskBase`: no `OnDestroy` override; heartbeat fields `float`, `HeartbeatInterval` 0.2 s of `ActionTimer` | `virtual void OnDestroy(bool) override` removes the task from `RunningTasks`; `double`, 1 s of real time | a task that overrides `OnDestroy` must call `Super::OnDestroy(bInOwnerFinished)` or it stays registered and keeps heartbeating (`gmas:gmas-task`) |
+| `SpawnParticleSystemAtLocation(SpawnParams, bool bIsClientPredicted = false, bool bDelayByGMCSmoothing = false)` | `(SpawnParams, const TArray<FGMASNiagaraUserParam>& UserParams, bool, bool)`; `+ SpawnParticleAtPoint`, `PlayCameraShakeAtLocation` | a C++ call `(Params, true)` fails: insert `{}` (or real params from `Utility/GMASNiagaraParams.h`); Blueprint nodes gain a `User Params` pin |
+| `GetActiveTags()` returned the bound container | returns the union of bound and client-auth tags; `GetBoundActiveTags()` is the validated set | nothing unless `ClientAuthorizedAbilities` / `ClientAuthorizedAbilityEffects` are used; gates read the union (`gmas:gmas-rules`) |
+| `FAbilityMapData` `USTRUCT()`, `EditDefaultsOnly`; `AddAbilityMapData(const FAbilityMapData&)` private | `BlueprintType`, `EditAnywhere`; the struct overload is public | nothing |
+
+**Attributes** (`Public/Attributes/`):
+
+| 1.3 | 1.4 | What to change |
+|---|---|---|
+| `FAttributeClamp { Min, Max, MinAttributeTag, MaxAttributeTag }`; `IsSet()` false when all four were zero / empty, and then no clamp at all | `+ bClampMin`, `bClampMax` (both `true`); `IsSet()` is either flag; each active bound applies on its own; `operator==` compares the flags | **every attributes DataAsset row that left `Clamp` untouched is now pinned at 0.** Set `Max` or `MaxAttributeTag`, or untick `bClampMax`, and the same for the floor (`gmas:gmas-attribute`). Code that built `FAttributeClamp{}` as "unclamped" sets both flags `false` |
+| `EModifierType`: `Add` and the `AddPercentage*` family | `+ Set`, `SetReplace`, `AddPercentageOfBase` (appended: saved assets keep their ops) | nothing to port; the layering order is in `gmas:gmas-attribute` |
+| `EGMCAttributeModifierType`: `AMT_Value`, `AMT_Attribute`, `AMT_Custom` | `+ AMT_External` with `ExternalTag`, `ExternalValueIndex`, resolved by the virtual `GetExternalModifierValue(const FGameplayTag&, int32)` on the component | nothing unless you want it |
+| `FGMCAttributeModifier`: `AttributeTag` declared first, `Op` after it | `Op` declared first, then `AttributeTag`; `+ Conditions` (`TArray<FGMCModifierCondition>`), `ExternalTag`, `ExternalValueIndex` | positional or designated initialisers of the struct: check the field order; named member assignment is unaffected |
+| `FAttributeData` | `+ bStartFull`, `ValueCombineMode` (`EGMC_CombineMode`, from GMC's `Replication/SyncSettings.h`) | nothing; `bStartFull` replaces "DefaultValue = the max" rows |
+| `FAttribute::ValueTemporalModifiers` was a `UPROPERTY()` (replicated with `UnBoundAttributes`) | no `UPROPERTY`: never replicated | clients of an unbound attribute see `Value` and `RawValue` only; nothing may read a client-side history |
+| `GMCAttributeModifierCustom_Base.h` included `GMCAbilitySystem.h` | include removed | a translation unit that got `LogGMCAbilitySystem` through that header includes `GMCAbilitySystem.h` itself |
+
+**Dependencies and includes:**
+
+| 1.3 | 1.4 | What to change |
+|---|---|---|
+| `GMCAbilitySystem.uplugin` plugins: `GMC`, `StructUtils` | `+ Niagara` (the module already linked `Niagara` privately) | Niagara is on by default; a project that disabled it must enable it again or the plugin fails to load. Game modules need `Niagara` in their `Build.cs` only when they handle `UNiagaraComponent` themselves |
+| `#include "InstancedStruct.h"` | `StructUtils/InstancedStruct.h` behind `ENGINE_MINOR_VERSION >= 5` guards in `GMCAbility.h`, the task headers and `GMASBoundQueueV2_Operations.h`; unguarded in `Utility/GMASBoundQueueV2.h` | your own includes: the same guard, or the new path on 5.5+. On 5.4 expect a missing-header error at `GMASBoundQueueV2.h:3` and fix it upstream, not in the submodule |
+| the component header included `Containers/Deque.h` | it does not | include it where you used `TDeque` through it |
+| `Build.cs` | `+ DeveloperSettings`, `UMG` (private); `Private/Tests` added to `PublicIncludePaths` | nothing; do not include the now-visible `UGMAS_Test*` headers from game code |
+
+**Compiles, behaves differently:**
+
+- `bActivateOnMovementTick` default `false` → `true` (`Public/Ability/GMCAbility.h`): every ability class that never set it moves from the ancillary tick (never replayed) to the prediction tick (replayed). Set it `false` explicitly on once-only abilities (weapon fire) and keep one value per input tag: the first granted candidate decides for the batch, a mismatch logs an `Error` (`gmas:gmas-ability`).
+- `bPreserveGrantedTagsIfMultiple` default `false` → `true`, and the test changed from "another live effect with the same `EffectTag`" to "any other live effect that still grants the tag" (`RemoveTagsFromOwner`, `Private/Effects/GMCAbilityEffect.cpp`). An effect whose end was meant to strip a tag another effect also grants sets it `false`.
+- Clamps: 1.3 ignored an all-zero clamp, 1.4 applies it. Attributes read 0 on both sides from the first frame until the rows are fixed; the debugger's Attributes row shows it at once (`gmas:gmas-debug`).
+- `ServerConfirmTimeout` 1 s → 2 s: an activation the server refuses lives twice as long on the client before `[AbilityCut]`.
+- `ClientGraceTime` default 1 → 0 and a new meaning: on 1.3 the RPC grace of a `ServerAuthMove` operation; on 1.4 the bilateral window for ending a removed `Ticking` / `Periodic` effect, `0` meaning `UGMASNetworkTimingSettings::DefaultClientGraceTime` (0.5 s). On the 1.4 tree that defer is disabled by a source-level override (`RemoveActiveAbilityEffect`, `Private/Components/GMCAbilityComponent.cpp`: `const bool bHasGracePeriod = false;`), so neither value changes anything today (`gmas:gmas-effect`).
+- `QueueAbility(…, bPreventConcurrentActivation = true)`: 1.3 refused while any live instance was of a class on the row; 1.4 refuses only when every candidate has a live instance, and a class with `bAllowMultipleInstances` never blocks.
+- Server operations whose target has no autonomous client (AI, unpossessed pawns) apply on that pawn's next ancillary tick instead of after the 1 s grace, and a server-side `QueueAbility` on a remote player's pawn becomes a server operation instead of being dropped (`gmas:gmas-rules`). Bots react a second earlier; code that waited for them adjusts.
+- Cooldowns are stored as an absolute expiry (`ActiveCooldowns`, `TMap<FGameplayTag, double>`): combined moves no longer drift them. Ability ids derive from the operation id and match on both sides; replayed activations are skipped (`ConsumedActivationOperationIDs`) instead of refused by the cooldown.
+- Log levels: the force and effect-application lines that were `Warning` are `Verbose`; a log watcher keyed on them goes quiet (`gmas:gmas-debug`).
+
+**Worth adopting after the move** (all 1.4+): `ServerInstantAttribute` for server-owned stats and `FireCustomEvent` for owner-side gameplay cues (`gmas:gmas-rules`); `bUniqueByEffectTag`, `Conditions`, `Set` / `SetReplace`, `AMT_External` with `GetExternalModifierValue`, `GetDefaultEffectData` (`gmas:gmas-effect`, `gmas:gmas-attribute`); `bStartFull` and `ValueCombineMode` rows (`gmas:gmas-attribute`); chain windows, `bBlockAllOtherAbilities`, `GetAbilityCostValues`, `IsReplayingForGMASLogic()` as the live-move guard (`gmas:gmas-ability`); `OnReplayBurstDetected` and the `GMAS.LogApplyTrace` / `BL.GMAS.DumpAttrBindMap` console tools (`gmas:gmas-debug`); the 449 `GMAS.*` specs as models (`gmas:gmas-testing`).
+
+## Procedure
+
+1. **Record the start.** Note the generation (above) and the GMC version (`GMC.uplugin`; 1.4 wants 2.3.x). Read the release notes (`gh release view v1.4.0 --json body -q .body` in a clone, or the GitHub release page) once, end to end.
+2. **Move the plugin.** Submodule: `git -C Plugins/GMCAbilitySystem fetch --tags`, `git -C Plugins/GMCAbilitySystem checkout v1.4.0`, commit the pointer (`gmas:gmas-setup`). Copied folder: `diff -r` the old folder against the release it came from first; every local patch goes upstream (or is dropped), then replace the folder wholesale. Never carry patches inside the plugin.
+3. **Data before code.** Open every `UGMCAttributesData` asset and give each row a deliberate clamp (table above). List the effect classes that share granted tags and decide `bPreserveGrantedTagsIfMultiple` per class; list the abilities that must run once and set `bActivateOnMovementTick = false` on them. Blueprint classes that never touched a property follow the new native default.
+4. **Build.** Regenerate project files, build the editor target. Fix errors top-down with the tables, in this order: includes → bound queue → effects → abilities and the component → attributes. Treat GMAS deprecation warnings (`*ByHandle`, legacy removers) as work items, not noise. Then the Blueprint side: `UnrealEditor-Cmd.exe <Project>.uproject -run=CompileAllBlueprints -unattended -log` (the engine's `UCompileAllBlueprintsCommandlet`) lists every graph still calling "Apply Ability Effect (Legacy)", "Pre Remote Move Execution" or a node whose pins changed; "Execute Synced Event" compiles and does nothing, so grep the log for it separately (`gmas:gmas-testing` for the headless invocation shape).
+5. **Specs.** Run the GMAS specs headless (`gmas:gmas-testing`: `-ExecCmds="Automation RunTests GMAS;Quit"`). On the 1.4.0 tree about 150 fail by design: `GMAS.Unit.Attribute*`, `GMAS.Stress.*`, `GMAS.Unit.ModifierMath` and the `GMAS.Unit.Ability` cooldown case (their helpers predate the clamp change). Anything else red is a problem with the tree you pulled. Then run the project's own tests and update the ones that drove the old API (`TickActiveEffects` + `ProcessAttributes(true)` replace hand-rolled move stepping).
+6. **PIE with a dedicated server and a client** (`gmas:gmas-testing`). Confirm: attributes non-zero on both sides; a press activates with no `[AbilityCut]` and no `Not Confirmed By Server`; a `ServerAuth` effect on a bot lands on its next tick; no `OnReplayBurstDetected` during ordinary play; `bActivateOnMovementTick` abilities fire once. Symptoms and their lines: `gmas:gmas-debug`.
+7. **Re-read `gmas:gmas-rules`** for what the new tree does differently by design: the server-operation funnel and its next-tick path for no-client targets, `ServerInstantAttribute`, the union tag queries, the Network Timing settings and the disabled grace defer. Revisit abilities that were designed around the old behaviour.
+8. **Commit** pointer, data and code together, naming the GMAS version in the message.
+
+## Later releases
+
+Nothing after 1.4 exists yet. Maintainer, when a release `vX.Y.0` is tagged (`gmas:gmas-maintain`):
+
+- Add a `## 1.4 → X.Y` section directly after `## 1.3 → 1.4`, same five groups plus "Compiles, behaves differently"; move the oldest table to `references/<from>-to-<to>.md` once this file nears 300 lines.
+- Build it from `gh release view vX.Y.0 --json body -q .body` (the "Breaking changes" list) and `git diff v1.4.0 vX.Y.0 -- Source/GMCAbilitySystem/Public`; for each changed header list every removed or re-signed public, protected or virtual declaration with its replacement. Verify each pair against `git show vX.Y.0:<path>`: release notes drift (1.4's listed a still-present method and a non-existent field).
+- Hunt the silent changes: defaults that flipped (`git diff v1.4.0 vX.Y.0 -- Source/GMCAbilitySystem/Public | grep -E '^[-+].*= *(true|false|[0-9.]+f?);'`), enum values hidden or aliased, semantics changed under an unchanged name, settings that moved to `UGMASNetworkTimingSettings`.
+- Update the `(1.4+)` tags across the other skills where a fact changed again, the hook's generation probe if the marker header moves, and the "Known failing set" in `gmas:gmas-testing`.
+
+## Checklist
+
+- The installed generation and the target release are known before any edit; the move is tag to tag, not to a moving `dev` unless that is the intent.
+- Every `UGMCAttributesData` row has a deliberate clamp (bounds set or flags off); attributes read non-zero on server and client in PIE.
+- No reference to `GMASBoundQueue.h`, `TGMASBoundQueue*`, `PreRemoteMoveExecution`, `ExecuteSyncedEvent`, `CreateEffectOperation` or the legacy `ApplyAbilityEffect(Class, Data, bool)` remains, in C++ or Blueprint; every apply names a queue type and keeps `OutEffectId` or an `EffectTag`; `ServerAuthMove` is written `ServerAuth`.
+- `bActivateOnMovementTick` is explicit on once-only abilities and consistent per input tag; `bPreserveGrantedTagsIfMultiple` was decided for every effect that shares a granted tag.
+- Tasks overriding `OnDestroy` call `Super`; effect subclasses with their own `EndEffect` say `override`; FX calls pass `UserParams`.
+- The build has no GMAS deprecation warnings you did not consciously keep; a 5.4 project knows about the unguarded include.
+- `GMAS.*` specs: only the known failing set fails; the project's tests are green and drive the new API.
+- Networked PIE: no `[AbilityCut]`, no `Not Confirmed By Server`, no replay bursts, server operations on bots land next tick.
+- Pointer, data and code are committed together; no local patch lives inside the plugin; `gmas:gmas-rules` was re-read.
