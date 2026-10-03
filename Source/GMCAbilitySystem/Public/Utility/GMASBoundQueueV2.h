@@ -173,15 +173,20 @@ public:
 	// Bounded ring of the most-recently dispatched sub-op IDs. A batch is only ever
 	// reprocessed within its own short lifetime (one move's prediction+ancillary
 	// tick pair, a handful of server ticks), so a small ring is always large enough
-	// to recognise the reprocess; older entries are evicted FIFO. IDs are globally
-	// monotonic (GetNextOperationID never reuses a value), so an ID found here was
-	// genuinely processed -- there are no false benign-skips. Netmode-independent
+	// to recognise the reprocess; older entries are evicted FIFO. IDs are monotonic for
+	// one connection (GetNextOperationID does not reuse a value), so an ID found here was
+	// genuinely processed -- there are no false benign-skips. A reconnecting client restarts
+	// its ids, so the server empties the ring then (ResetForNewConnection). Netmode-independent
 	// (does not depend on GMCMoveCounter, which never advances on a listen server).
 	static constexpr int32 MaxRecentlyProcessedOperations = 256;
 	TArray<int32> RecentlyProcessedOperationIDs;
 
 	// Record a sub-op as successfully dispatched on this side.
 	void MarkOperationProcessed(int32 OperationID);
+
+	// A new owning connection took over (kept-pawn reconnect): its client restarts its operation
+	// ids at -1, so forget the processed ring and every cached client-made (negative id) payload.
+	void ResetForNewConnection();
 
 	// True if this sub-op was dispatched recently (i.e. a missing payload is a
 	// benign reprocess, not a genuine divergence).

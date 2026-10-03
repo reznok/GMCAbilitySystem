@@ -253,6 +253,20 @@ void FGMASBoundQueueV2::MarkOperationProcessed(int32 OperationID)
 	}
 }
 
+void FGMASBoundQueueV2::ResetForNewConnection()
+{
+	RecentlyProcessedOperationIDs.Reset();
+	for (auto It = OperationPayloads.CreateIterator(); It; ++It)
+	{
+		if (It.Key() < 0)
+		{
+			ReportedInvalidPayloadIDs.Remove(It.Key());
+			It.RemoveCurrent();
+		}
+	}
+	OperationDataCacheExpiration.RemoveAll([this](const auto& Entry) { return Entry.OperationID < 0; });
+}
+
 bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
 {
 	return RecentlyProcessedOperationIDs.Contains(OperationID);

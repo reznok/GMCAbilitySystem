@@ -21,7 +21,8 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 		
 		if (const UGMC_AbilitySystemComponent* AbilityComponent = DebugActor->FindComponentByClass<UGMC_AbilitySystemComponent>())
 		{
-			AbilityComponent->GMCMovementComponent->SV_SwapServerState();
+			UGMC_MovementUtilityCmp* Movement = AbilityComponent->GMCMovementComponent;
+			if (Movement) { Movement->SV_SwapServerState(); }
 			DataPack.GrantedAbilities = AbilityComponent->GetGrantedAbilities().ToStringSimple();
 			DataPack.NBGrantedAbilities = AbilityComponent->GetGrantedAbilities().Num();
 			DataPack.BoundActiveTags = AbilityComponent->GetBoundActiveTags().ToStringSimple();
@@ -36,7 +37,7 @@ void FGameplayDebuggerCategory_GMCAbilitySystem::CollectData(APlayerController* 
 			DataPack.NBActiveAbilities = AbilityComponent->GetActiveAbilities().Num();
 			DataPack.NBCachedOperationPayloads = AbilityComponent->BoundQueueV2.GetPayloadCount();
 			
-			AbilityComponent->GMCMovementComponent->SV_SwapServerState();
+			if (Movement) { Movement->SV_SwapServerState(); }
 		}
 	}
 }

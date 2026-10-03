@@ -178,7 +178,7 @@ public:
 	//
 	//   Predicted/standard : [1,                       ServerAuthEffectIDOffset)   ActionTimer*100
 	//   ServerAuth          : [ServerAuthEffectIDOffset, ClientAuthEffectIDOffset)  ActionTimer*100 + ServerAuthEffectIDOffset
-	//   ClientAuth          : [ClientAuthEffectIDOffset, INT32_MAX]                 ActionTimer*100 + ClientAuthEffectIDOffset
+	//   ClientAuth          : [ClientAuthEffectIDOffset, INT32_MAX)                 ActionTimer*100 + ClientAuthEffectIDOffset
 	//
 	// All ids are ActionTimer*100 (centiseconds), so each range's capacity is time-bound: it is
 	// exhausted only after (range_size / 100) seconds of continuous ActionTimer, independent of
@@ -673,8 +673,12 @@ public:
 	int32 GetNumEffectByTag(FGameplayTag InEffectTag);
 
 	//// Event Delegates
-	// Never broadcast since the attribute refactor. Removed in 1.5 together with UGMCAttributeModifierContainer (its payload type).
-	UPROPERTY(BlueprintAssignable, meta=(DeprecatedProperty, DeprecationMessage="GMAS 1.4.1: never broadcast since the attribute refactor; use OnAttributeChanged."))
+	// Never broadcast since the attribute refactor; its re-add was planned, but it would run Blueprint
+	// code that edits modifiers inside every predicted apply and every replay (determinism and cost),
+	// so it is not restored. For pre-change logic use a custom calculator
+	// (UGMCAttributeModifierCustom_Base). Removed in 1.5 together with UGMCAttributeModifierContainer
+	// (its payload type).
+	UPROPERTY(BlueprintAssignable, meta=(DeprecatedProperty, DeprecationMessage="GMAS 1.4.1: never broadcast; not restored because it would run Blueprint code that edits modifiers inside every predicted apply and replay. Use a custom calculator (GMCAttributeModifierCustom_Base) for pre-change logic, OnAttributeChanged after."))
 	FOnPreAttributeChanged OnPreAttributeChanged;
 
 	// Called after an attribute has been changed

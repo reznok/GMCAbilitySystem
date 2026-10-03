@@ -13,6 +13,7 @@
 #include "GameFramework/Pawn.h"
 #include "Settings/GMASNetworkTimingSettings.h"
 #include "Utility/GMASBoundQueueV2_Operations.h"
+#include "UGMAS_TestAbility.h"
 #include "UGMAS_TestCountingEffect.h"
 #include "UGMAS_TestMovementCmp.h"
 #include "GMAS_TestHelpers.h"
@@ -196,6 +197,48 @@ void FGMASComponentAuditSpec::Define()
 			TestEqual("applied once", AbilityComp->GetActiveEffects().Num(), 1);
 			TestEqual("no payload left", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 0);
 			AbilityComp->GenAncillaryTick(0.f, false);   // CheckValidState: nothing to report
+		});
+
+		It("a reconnect forgets processed client ids, so a reused id is applied", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = true;
+			AbilityComp->ClientAuthorizedAbilityEffects.Add(UGMCAbilityEffect::StaticClass());
+			FGMASBoundQueueV2ClientAuthEffectOperation Op;
+			Op.OperationID = -1;
+			Op.EffectClass = UGMCAbilityEffect::StaticClass();
+			Op.EffectID    = UGMC_AbilitySystemComponent::ClientAuthEffectIDOffset + 400;
+			Op.EffectData.EffectType = EGMASEffectType::Persistent;
+			Op.EffectData.EffectTag  = ProbeTag;
+			const FInstancedStruct Data = FInstancedStruct::Make(Op);
+			AbilityComp->GetBoundQueueV2ForTest().MarkOperationProcessed(-1);   // the previous connection's -1
+			AbilityComp->ServerProcessOperationForTest(Data, false);
+			TestEqual("dropped before the reconnect", AbilityComp->GetActiveEffects().Num(), 0);
+			AbilityComp->Server_RequestActiveEffectsSnapshot_Implementation();   // the new owning client asks for its snapshot
+			AbilityComp->ServerProcessOperationForTest(Data, false);
+			TestEqual("applied after the reconnect", AbilityComp->GetActiveEffects().Num(), 1);
+		});
+
+		It("a client-auth activation read on the movement pass waits for the ancillary pass", [this]()
+		{
+			UGMAS_TestAbility* CDO = GetMutableDefault<UGMAS_TestAbility>();
+			const bool bSavedOnMove = CDO->bActivateOnMovementTick;
+			CDO->bActivateOnMovementTick = false;
+			AbilityComp->ClientAuthorizedAbilities.Add(UGMAS_TestAbility::StaticClass());
+			AbilityComp->AddAbilityMapData({ProbeTag, {UGMAS_TestAbility::StaticClass()}});
+			AbilityComp->GrantAbilityByTag(ProbeTag);
+			AbilityComp->bForceAuthorityForTest = true;
+
+			FGMASBoundQueueV2ClientAuthAbilityActivationOperation Op;
+			Op.OperationID = -21;
+			Op.AbilityClass = UGMAS_TestAbility::StaticClass();
+			Op.InputTag = ProbeTag;
+			const FInstancedStruct Data = FInstancedStruct::Make(Op);
+			AbilityComp->ServerProcessOperationForTest(Data, true);
+			TestEqual("not activated on the movement pass", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 0);
+			TestFalse("not consumed", AbilityComp->GetBoundQueueV2ForTest().WasOperationRecentlyProcessed(-21));
+			AbilityComp->ServerProcessOperationForTest(Data, false);
+			TestEqual("activated on the ancillary pass", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 1);
+			CDO->bActivateOnMovementTick = bSavedOnMove;
 		});
 
 		It("the invalid-payload report fires once per id", [this]()

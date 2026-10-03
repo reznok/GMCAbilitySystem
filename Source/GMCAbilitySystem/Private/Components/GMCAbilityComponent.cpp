@@ -2064,7 +2064,7 @@ bool UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Validate()
 
 void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementation()
 {
-	if (!HasAuthority())
+	if (!IsAuthorityForGMASLogic())
 	{
 		return;
 	}
@@ -2076,6 +2076,7 @@ void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementa
 	// valid for the lifetime of a CONNECTION, not of the component.
 	ConsumedActivationOperationIDs.Reset();
 	RecentlyEndedAbilityIDs.Reset();
+	BoundQueueV2.ResetForNewConnection();   // the processed-op ring and the client's cached payloads
 
 	TArray<FGMCEffectSnapshot> Snapshots;
 	BuildActiveEffectsSnapshot(Snapshots);
@@ -2997,8 +2998,13 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		// Client-auth operations are applied right here and never cached: nothing on the server
 		// drains a cached payload for them, so the cache would grow for the whole session. The
 		// live slot is re-read until the next client move arrives, so a re-read of an operation
-		// already handled (applied or refused) is skipped quietly.
+		// already handled (applied or refused) is skipped quietly. A client-auth activation runs off
+		// the movement tick on the client, so the server leaves it for the ancillary pass too.
 		const UScriptStruct* OperationStruct = OperationData.GetScriptStruct();
+		if (OperationStruct == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct() && bFromMovementTick)
+		{
+			return;
+		}
 		if (OperationStruct == FGMASBoundQueueV2ClientAuthEffectOperation::StaticStruct()
 			|| OperationStruct == FGMASBoundQueueV2ClientAuthRemoveEffectOperation::StaticStruct()
 			|| OperationStruct == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
@@ -3054,9 +3060,6 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				UE_LOG(LogGMCAbilitySystem, Warning,
 					TEXT("[ServerProcessOperation] ClientAuth effect %s rejected: EffectID %d already active "
 					     "(duplicate delivery or potential cheat attempt)."),
-					*Op->EffectClass->GetName(), Op->EffectID);
-				UE_LOG(LogTemp, Warning,
-					TEXT("[ServerProcessOperation] ClientAuth effect %s rejected: EffectID %d already active."),
 					*Op->EffectClass->GetName(), Op->EffectID);
 				return;
 			}
@@ -3315,14 +3318,20 @@ int UGMC_AbilitySystemComponent::AllocateEffectIDInRange(int32 RangeStart, int32
 
 	const int64 FirstID = RangeStart > 0 ? RangeStart : 1;   // 0 means "unassigned"
 	int64 Candidate = FMath::Max<int64>(static_cast<int64>(RangeStart) + Offset, FirstID);
+	bool bFound = false;
 	for (int64 Tries = 0; Tries < RangeSize; ++Tries)
 	{
 		const int CandidateID = static_cast<int>(Candidate);
 		if (!ActiveEffects.Contains(CandidateID) && !ReservedEffectIDs.Contains(CandidateID))
 		{
+			bFound = true;
 			break;
 		}
 		if (++Candidate >= RangeEnd) { Candidate = FirstID; }
+	}
+	if (!bFound)
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[EffectID] %s: every id in [%d, %d) is live or reserved; returning a used id."), Generator, RangeStart, RangeEnd);
 	}
 	const int NewEffectID = static_cast<int>(Candidate);
 	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[EffectID] %s: %d (authority %d)"), Generator, NewEffectID, HasAuthority() ? 1 : 0);
@@ -4084,7 +4093,7 @@ bool UGMC_AbilitySystemComponent::RemoveEffectByIdSafe(TArray<int> Ids, EGMCAbil
 		case EGMCAbilityEffectQueueType::ServerAuth:
 			{
 				if (QueueType == EGMCAbilityEffectQueueType::ServerAuthMove) { ReportDeprecatedUseOnce(EDeprecatedUse::ServerAuthMove, TEXT("EGMCAbilityEffectQueueType::ServerAuthMove is deprecated and behaves as ServerAuth; use ServerAuth. Reported once.")); }
-				if (!HasAuthority())
+				if (!IsAuthorityForGMASLogic())
 				{
 					return false;
 				}
