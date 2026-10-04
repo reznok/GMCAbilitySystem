@@ -20,7 +20,6 @@ UGMCAbilityTask_WaitForGMCMontageChange* UGMCAbilityTask_WaitForGMCMontageChange
 void UGMCAbilityTask_WaitForGMCMontageChange::Activate()
 {
 	Super::Activate();
-	bTickingTask = true;
 	
 	OrganicMovementCmp = Cast<UGMC_OrganicMovementCmp>(AbilitySystemComponent->GMCMovementComponent);
 	

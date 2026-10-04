@@ -6,8 +6,6 @@
 #include "Net/Serialization/FastArraySerializer.h"
 #include "GMCAttributes.generated.h"
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FAttributeChanged, float, OldValue, float, NewValue);
-
 
 
 USTRUCT()
@@ -98,9 +96,6 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	void PurgeTemporalModifier(double CurrentActionTimer);
 	
 
-	UPROPERTY(BlueprintAssignable)
-	FAttributeChanged OnAttributeChanged;
-
 	int32 BoundIndex = INDEX_NONE;
 
 	// Temporal Modifier + Accumulated Value
@@ -133,8 +128,8 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 	UPROPERTY()
 	bool bStartFull = false;
 
-	// Clamp the attribute to a certain range
-	// Clamping will only happen if this is modified
+	// Clamp the attribute to a certain range.
+	// Both bounds are active by default; an all-zero clamp pins the attribute at 0 (InstantiateAttributes reports it).
 	UPROPERTY(EditDefaultsOnly, Category = "GMCAbilitySystem", meta=(TitleProperty="({min}, {max} {MinAttributeTag}, {MaxAttributeTag})"))
 	FAttributeClamp Clamp{};
 
@@ -152,8 +147,16 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// This is the sum of permanent modification applied to this attribute.
 	// Replicated to Simulated Proxy
+	// Permanent writes (Instant effects, non-history modifiers) live here and are restored on replay
+	// only through the bound RawValue; an Instant effect that already ended is not re-applied by a
+	// replay, so one correction can follow such a write inside a replayed window.
 	UPROPERTY()
 	mutable float RawValue = 0.f;
+
+	// Diagnostic latch for FGMCAttributeModifier::CalculateModifierValue, per attribute instance so
+	// it dies with the attribute. bit 1: AddPercentageMaxClamp with bClampMax off reported; bit 2:
+	// the Min twin.
+	mutable uint8 WarnedClampOps = 0;
 
 protected:
 

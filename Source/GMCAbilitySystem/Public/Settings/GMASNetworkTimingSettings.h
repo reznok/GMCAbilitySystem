@@ -9,13 +9,17 @@
 /**
  * Server-wise tunables for the network-timing safety windows used by GMAS effects.
  *
- * Two parameters live here:
+ * Three parameters live here:
  *  - `ClientEffectApplicationTimeout`: how long the client holds a Predicted effect
  *    waiting for server confirmation before rolling it back.
  *  - `DefaultClientGraceTime`: the bilateral defer window used at Remove time for
- *    Ticking/Periodic effects so client and server end on the same logical move tick.
- *    A per-effect `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default
- *    on a per-instance basis (designers can extend the window for slow drains).
+ *    Ticking/Periodic effects so client and server end on the same logical move tick
+ *    (0 = off: a removed effect ends at once on each side). A per-effect
+ *    `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default on a per-instance
+ *    basis (designers can extend the window for slow drains, or defer one effect while the
+ *    project default is 0).
+ *  - `ServerOperationGraceSeconds`: how long the server waits for the owning client to
+ *    acknowledge a server operation before applying it on the server anyway.
  *
  * Defaults are sized for typical RTT (30-150 ms) + jitter + one server tick at 30 Hz
  * (≈33 ms). Raise above 0.5 s if shipping to high-latency regions (sat / 200+ ms RTT)
@@ -53,7 +57,20 @@ public:
 	 *
 	 * Per-effect override: set `FGMCAbilityEffectData::ClientGraceTime > 0` on the effect
 	 * itself to use a different window for that effect only (sentinel 0 = use this default).
+	 *
+	 * 0 turns the deferral off project-wide: a removed Ticking/Periodic effect ends at once on
+	 * each side (instant visual removal, at the cost of up to ~RTT of client/server drift in the
+	 * applied amount). A per-effect ClientGraceTime > 0 still defers that effect.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.05", UIMin="0.05", ForceUnits="s"))
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
 	float DefaultClientGraceTime = 0.5f;
+
+	/**
+	 * Seconds the server waits for the owning client to acknowledge a server operation (effect
+	 * apply/removal, impulse, custom event) through its move stream before applying it on the
+	 * server anyway, outside any move. Pawns without an acknowledging client (AI, unpossessed)
+	 * use 0 and apply on their next ancillary tick regardless of this value.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
+	float ServerOperationGraceSeconds = 1.0f;
 };

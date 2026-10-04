@@ -11,7 +11,7 @@ UGMCAbilityTask_SetTargetDataTransform* UGMCAbilityTask_SetTargetDataTransform::
 void UGMCAbilityTask_SetTargetDataTransform::Activate(){
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -19,8 +19,14 @@ void UGMCAbilityTask_SetTargetDataTransform::Activate(){
 
 void UGMCAbilityTask_SetTargetDataTransform::ProgressTask(FInstancedStruct& TaskData){
 	Super::ProgressTask(TaskData);
+	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataTransform::StaticStruct())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataTransform::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataTransform; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
+		EndTask();
+		return;
+	}
 	const FGMCAbilityTaskTargetDataTransform Data = TaskData.Get<FGMCAbilityTaskTargetDataTransform>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }

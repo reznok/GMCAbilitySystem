@@ -1,7 +1,7 @@
 # GMAS: repository reunification and DeepWorlds sync — design
 
 **Date:** 2026-10-02
-**Status:** draft for review
+**Status:** implemented 2026-10-02 (see the implementation notes at the end). Promotion wording below was updated 2026-10-03: `main` is promoted by a direct push of a merge commit carrying `dev`'s tree, not by a pull request (`docs/BRANCHING.md`).
 **Repo:** `reznok/GMCAbilitySystem` (canonical GMAS, public, MIT)
 
 ## 1. Context
@@ -38,7 +38,7 @@ Non-goals (deliberate):
 | Branch | Role | Who writes | Protection |
 |---|---|---|---|
 | `dev` | Unstable integration. Receives fork merges from the sync job and the maintainer's own pushes (after a local build). May be red. | sync job, maintainer | none |
-| `main` | Stable. Promoted from `dev` by a pull request after a local build of at least one downstream project. Releases are tags on `main` (`vX.Y.Z`). | maintainer | existing rules unchanged |
+| `main` | Stable. Promoted from `dev` by the maintainer (a merge commit carrying `dev`'s tree, pushed directly) after a local build of at least one downstream project. Releases are tags on `main` (`vX.Y.Z`). | maintainer | existing rules unchanged |
 | `sync/deepworlds` | Automation-owned. Exists only while a conflict PR is open; always equals the fork's `dev` tip; force-pushed by the job. | sync job | none |
 
 Fork changes are merged, never cherry-picked: the fork's history already contains ours, so after the first merge every later merge is small, and a merge commit records exactly what arrived. Unwanted fork commits are handled by `git revert` on `dev` after the fact. Cherry-picking is reserved for the rare manual case and is not automated.
@@ -92,6 +92,7 @@ jobs:
       - name: Sync
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: bash .github/scripts/sync-deepworlds.sh
 ```
@@ -104,7 +105,7 @@ GitHub runs `schedule` triggers only from the default branch, so the workflow fi
 
 All logic lives in the script so it can be run and tested in any clone. Bash, `set -euo pipefail`, no dependencies beyond `git` and (outside dry runs) `gh`.
 
-Environment (defaults in parentheses): `UPSTREAM_URL` (`https://github.com/DeepWorldsSA/DeepWorlds_GMCAbilitySystem.git`), `UPSTREAM_BRANCH` (`dev`), `UPSTREAM_REMOTE` (`deepworlds`), `TARGET_BRANCH` (`dev`), `SYNC_BRANCH` (`sync/deepworlds`), `DRY_RUN` (`false`), `GH_TOKEN` (required unless `DRY_RUN=true`), `GITHUB_STEP_SUMMARY` (when set, the report is appended there; otherwise printed to stdout).
+Environment (defaults in parentheses): `UPSTREAM_URL` (`https://github.com/DeepWorldsSA/DeepWorlds_GMCAbilitySystem.git`), `UPSTREAM_BRANCH` (`dev`), `UPSTREAM_REMOTE` (`deepworlds`), `TARGET_BRANCH` (`dev`), `SYNC_BRANCH` (`sync/deepworlds`), `DRY_RUN` (`false`), `GH_TOKEN` (required unless `DRY_RUN=true`), `GH_REPO` (set by the workflow; consumed by `gh`), `GITHUB_STEP_SUMMARY` (when set, the report is appended there; otherwise printed to stdout).
 
 Preconditions: the current branch is `TARGET_BRANCH` with full history and a clean tree; `origin` is the canonical repo. The script fails fast with a message if any is false.
 
@@ -221,6 +222,9 @@ The script is tested before the workflow ever runs on GitHub, in a research clon
 | T4 | conflict, dry run | `UPSTREAM_REMOTE`/`UPSTREAM_BRANCH` pointed at the conflict fixture | conflicting files listed, exit 0, tree clean |
 | T5 | conflict, live | as T3 with the T4 refs | bare clone has `sync/deepworlds` = fixture tip; shim log shows `gh label create`, `gh pr list`, `gh pr create` with the 5.4 title and body |
 | T6 | push rejected once | T3, plus a `pre-receive` hook on the bare clone that rejects the first push | second attempt succeeds; report mentions the retry |
+| T7 | real non-fast-forward race | T3, plus a commit pushed to the bare `dev` between fetch and push | retry re-fetches `FETCH_HEAD`, merges and pushes; one attempt only |
+
+(The shipped harness splits T5 into T5a–c: PR created, PR updated, stale PR and branch cleaned up.)
 
 Then on GitHub: `workflow_dispatch` with `dry_run=true` (expected: up to date, since reunification already merged the fork), then the first scheduled run.
 

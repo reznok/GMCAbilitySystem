@@ -16,7 +16,7 @@ USTRUCT(BlueprintType)
 struct FAbilityMapData{
 	GENERATED_BODY()
 
-	// Ability Tag
+	// Input tag: the key abilities are granted and activated by (QueueAbility, GrantAbilityByTag).
 	UPROPERTY(EditAnywhere, Category = "GMCAbilitySystem")
 	FGameplayTag InputTag;
 

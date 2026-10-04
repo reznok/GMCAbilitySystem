@@ -98,25 +98,16 @@ void UGMCAbilityTaskBase::AncillaryTick(float DeltaTime){
 	else if (LastHeartbeatReceivedTime + HeartbeatMaxInterval < Now)
 	{
 		const double TimeSinceLastHeartbeat = Now - LastHeartbeatReceivedTime;
-		UE_LOG(LogGMCReplication, Error, TEXT("Server Task Heartbeat Timeout after %.2fs (max: %.2f), Cancelling Ability: %s"),
-		  TimeSinceLastHeartbeat, HeartbeatMaxInterval, *Ability->GetName());
-		// Mirror onto LogTemp: the dedicated-server GS log export only ships a fixed category
-		// allowlist (LogTemp included, LogGMCReplication not), so a LogGMCReplication-only line
-		// is invisible in server log dumps. This watchdog is what silently cancels heal-consume.
-		// Full task dump appended: the timed-out task is merely the FIRST one to starve —
-		// when the client stops heartbeating, every task starves at once, so what matters is
-		// the whole-ability picture (which tasks had completed, which never progressed,
-		// heartbeat counts per task) plus whether the timed-out task was even still pending.
-		// last_taskdata_ability_id is the id the OTHER side was addressing. When it differs from
-		// this ability's own id, the starvation is an id divergence and the line proves it alone.
-		UE_LOG(LogTemp, Error, TEXT("[TaskHeartbeat] Timeout: cancelling ability '%s' (tag '%s') - task %s (TaskID %d, Completed=%d), %.2fs since last heartbeat (max %.2f), %d heartbeats received, last_taskdata_ability_id=%d. %s"),
+		// The timed-out task is merely the first to starve: when the client stops heartbeating
+		// every task starves at once, so the whole-ability dump matters more than this task.
+		// last_taskdata_ability_id is the id the other side was addressing; when it differs from
+		// this ability's own id the starvation is an id divergence.
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskHeartbeat] Timeout: cancelling ability '%s' (tag '%s') - task %s (TaskID %d, Completed=%d), %.2fs since last heartbeat (max %.2f), %d heartbeats received, last_taskdata_ability_id=%d. %s"),
 		  *Ability->GetName(), *Ability->AbilityTag.ToString(), *GetClass()->GetName(), TaskID,
-		  bTaskCompleted ? 1 : 0,
-		  TimeSinceLastHeartbeat, HeartbeatMaxInterval, HeartbeatReceivedCount,
-		  AbilitySystemComponent->GetLastReceivedTaskDataAbilityID(),
-		  *Ability->GetAbilityCutDiagnostics());
+		  bTaskCompleted ? 1 : 0, TimeSinceLastHeartbeat, HeartbeatMaxInterval, HeartbeatReceivedCount,
+		  AbilitySystemComponent->GetLastReceivedTaskDataAbilityID(), *Ability->GetAbilityCutDiagnostics());
 		AbilitySystemComponent->OnTaskTimeout.Broadcast(Ability->AbilityTag);
-		Ability->EndAbility();
+		Ability->CancelAbility();
 		EndTask();
 	}
 }
@@ -140,7 +131,7 @@ void UGMCAbilityTaskBase::Heartbeat()
 	HeartbeatReceivedCount++;
 }
 
-bool UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn() const
+bool UGMCAbilityTaskBase::DrivesPawnLocally() const
 {
 	// Null-safe: derived AncillaryTick bodies keep executing after the base early-returns on a
 	// dead component, so this helper must not assume the weak-ptr guard already passed.

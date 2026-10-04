@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// GMAS - GMC Ability System. MIT License, see LICENSE.
 
 
 #include "Ability/Tasks/SetTargetDataHit.h"
@@ -16,7 +16,7 @@ void UGMCAbilityTask_SetTargetDataHit::Activate()
 {
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -25,8 +25,14 @@ void UGMCAbilityTask_SetTargetDataHit::Activate()
 void UGMCAbilityTask_SetTargetDataHit::ProgressTask(FInstancedStruct& TaskData)
 {
 	Super::ProgressTask(TaskData);
+	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataHit::StaticStruct())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataHit::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataHit; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
+		EndTask();
+		return;
+	}
 	const FGMCAbilityTaskTargetDataHit Data = TaskData.Get<FGMCAbilityTaskTargetDataHit>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }

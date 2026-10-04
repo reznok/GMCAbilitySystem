@@ -29,5 +29,5 @@ private:
 	void OnTimeFinish();
 
 	float Time;
-	float TimeStarted;
+	double TimeStarted;
 };

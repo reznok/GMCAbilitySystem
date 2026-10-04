@@ -1,0 +1,15 @@
+{
+  "name": "reznok",
+  "owner": { "name": "reznok" },
+  "metadata": {
+    "description": "Claude Code plugins for GMAS (GMC Ability System) and related Unreal Engine plugins"
+  },
+  "plugins": [
+    {
+      "name": "gmas",
+      "source": "./Claude/gmas",
+      "description": "GMC-aware skills for authoring, debugging, reviewing and testing GMAS gameplay",
+      "category": "development"
+    }
+  ]
+}

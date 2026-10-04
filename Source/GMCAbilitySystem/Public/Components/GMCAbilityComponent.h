@@ -23,6 +23,7 @@ class UNiagaraSystem;
 class UGMCAbilityAnimInstance;
 class UGMCAbilityMapData;
 class UGMCAttributesData;
+// Payload of the deprecated OnPreAttributeChanged; removed in 1.5.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnPreAttributeChanged, UGMCAttributeModifierContainer*, AttributeModifierContainer, UGMC_AbilitySystemComponent*,
                                              SourceAbilityComponent);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnAttributeChanged, FGameplayTag, AttributeTag, float, OldValue, float, NewValue);
@@ -30,12 +31,14 @@ DECLARE_MULTICAST_DELEGATE_ThreeParams(FGameplayAttributeChangedNative, const FG
 				
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAncillaryTick, float, DeltaTime);
 
+// Payload of the deprecated OnSyncedEvent; removed in 1.5.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSyncedEvent, const FGMASSyncedEventContainer&, EventData);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCustomEvent, FGameplayTag, EventTag, FInstancedStruct, Payload);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAbilityActivated, UGMCAbility*, Ability, FGameplayTag, AbilityTag);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityEnded, UGMCAbility*, Ability);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAbilityCancelled, UGMCAbility*, Ability);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveTagsChanged, FGameplayTagContainer, AddedTags, FGameplayTagContainer, RemovedTags);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameplayTagFilteredMulticastDelegate, const FGameplayTagContainer&, const FGameplayTagContainer&);
@@ -49,20 +52,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTaskTimeout, FGameplayTag, TaskTa
 // configured in UGMASReplayBurstSettings. Counts frames-with-replay, not moves.
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnReplayBurstDetected, int32, BurstCount, float, WindowSeconds);
 
-USTRUCT()
-struct FEffectStatePrediction
-{
-	GENERATED_BODY()
-
-	FEffectStatePrediction(): EffectID(-1), State(-1){}
-
-	UPROPERTY()
-	int EffectID;
-
-	UPROPERTY()
-	uint8 State;
-};
-
 // Move-bound list of currently-active effect IDs. Replicated atomically with the
 // move state, drives the Pending → Validated promotion on Predicted effects.
 USTRUCT()
@@ -72,21 +61,6 @@ struct FGMASActiveEffectIDsState
 
 	UPROPERTY()
 	TArray<int> IDs;
-};
-
-USTRUCT()
-struct FGMASQueueOperationHandle
-{
-	GENERATED_BODY()
-
-	UPROPERTY()
-	int32 Handle { -1 };
-
-	UPROPERTY()
-	int32 OperationId { -1 };
-
-	UPROPERTY()
-	int32 NetworkId { -1 };
 };
 
 // Snapshot of one active effect, sent server -> owning client on reconnect to
@@ -146,10 +120,8 @@ enum class EGMCAbilityEffectQueueType : uint8
 	/// GMC movement cycle. You almost certainly don't want to use this, but it's here for the sake of completeness.
 	ClientAuth UMETA(Hidden, DisplayName="Client Auth"),
 
-	/// Only valid on server; queued from server and recorded in the GMC move history. Valid even outside of the GMC
-	/// movement cycle. Slower than ServerAuth, only use this if you really need to preserve the effect application in
-	/// the movement history. you almost certainly don't want to use this, but it's here for the sake of completeness.
-	ServerAuthMove UMETA(Hidden, DisplayName="ADVANCED: Server Auth [Movement Cycle]"),
+	/// Deprecated alias of ServerAuth (1.3's move-history variant is gone); logs once when used; removed in 1.5.
+	ServerAuthMove UMETA(Hidden, DisplayName="DEPRECATED: use ServerAuth"),
 
 	/// Server-authoritative, applied INSTANTLY in the current server tick — a fast-path variant of ServerAuth that
 	/// skips BoundQueueV2 entirely. The attribute modifiers reach clients through the normal replicated FAttribute
@@ -166,9 +138,12 @@ enum class EGMCAbilityEffectQueueType : uint8
 	///   - EffectType must be Instant (no Ticking/Periodic/Persistent — those need the bound cycle to tick deterministically)
 	///   - No GrantedTags (the bound ActiveTags container desyncs if mutated outside the cycle)
 	///   - No GrantedAbilities (relies on the bound ability map)
-	/// If any guard fails at runtime, the apply falls back to ServerAuth and logs a warning rather than corrupting state.
+	///   - No CancelAbilityOnActivation / CancelAbilityOnEnd and no EndAbilityOn*Query (ability ends run server-only
+	///     outside the move and desync the owning client)
+	///   - No ApplyEffectOnEnd / RemoveEffectOnEnd (chained effects would be applied or removed server-only)
+	/// If any guard fails at runtime, the apply logs an Error and falls back to ServerAuth.
 	///
-	/// Canonical use case: PlayerMaster::Server_AddHealthPoint applying EF_Damage as a one-shot Health modifier.
+	/// Typical use: a server-side damage handler applying a one-shot Health modifier.
 	ServerInstantAttribute UMETA(DisplayName="Server Instant [Attribute-Only]")
 };
 
@@ -186,7 +161,7 @@ enum class EGMCEffectAnswerState : uint8
 class UGMCAbility;
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent, DisplayName="GMC Ability System Component"), meta=(Categories="GMAS"))
-class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent //  : public UGMC_MovementUtilityCmp
+class GMCABILITYSYSTEM_API UGMC_AbilitySystemComponent : public UGameplayTasksComponent
 {
 	GENERATED_BODY()
 
@@ -203,18 +178,16 @@ public:
 	//
 	//   Predicted/standard : [1,                       ServerAuthEffectIDOffset)   ActionTimer*100
 	//   ServerAuth          : [ServerAuthEffectIDOffset, ClientAuthEffectIDOffset)  ActionTimer*100 + ServerAuthEffectIDOffset
-	//   ClientAuth          : [ClientAuthEffectIDOffset, INT32_MAX]                 ActionTimer*100 + ClientAuthEffectIDOffset
+	//   ClientAuth          : [ClientAuthEffectIDOffset, INT32_MAX)                 ActionTimer*100 + ClientAuthEffectIDOffset
 	//
 	// All ids are ActionTimer*100 (centiseconds), so each range's capacity is time-bound: it is
 	// exhausted only after (range_size / 100) seconds of continuous ActionTimer, independent of
 	// effect count. The positive int32 space is split into three EQUAL thirds → each branch holds
-	// ~715.8M ids ≈ 82.8 days of continuous ActionTimer. A match uses ~0.1%.
+	// ~715.8M ids ≈ 82.8 days of continuous ActionTimer. Past the range the generator wraps to its start (one Error) instead of asserting.
 	static constexpr int32 ServerAuthEffectIDOffset = 0x2AAAAAAA; // 715827882   (~ INT32_MAX / 3)
 	static constexpr int32 ClientAuthEffectIDOffset = 0x55555554; // 1431655764  (~ 2 * INT32_MAX / 3)
 
-	// Will apply the starting effects and abilities to the component,
-	// bForce will re-apply the effects, usefull if we want to re-apply the effects after a reset (like a death)
-	// Must be called on the server only
+	// Applies StartingEffects (ServerAuth) once the owner pawn has a controller; polled from the server's ancillary tick, never the prediction tick. bForce re-applies (after a reset such as a death).
 	virtual void ApplyStartingEffects(bool bForce = false);
 
 	// Reconnection rehydration. The owning client requests a snapshot of every
@@ -223,11 +196,10 @@ public:
 	// the apply pipeline (no bUniqueByEffectTag check, server EffectIDs preserved).
 	// Triggered automatically from BeginPlay on the autonomous-proxy side.
 	//
-	// Fixes the kept-pawn reconnect drift: AGameModeMaster::PostLogin_ReconnectingPlayer
-	// reuses the existing pawn (and its ASC), so bStartingEffectsApplied stays true and
-	// no per-effect RPC is broadcast to the brand-new owning connection. Without this,
-	// the new client never instantiates Recovery / Bleed / etc. locally and all bound
-	// attributes drift permanently.
+	// Fixes the kept-pawn reconnect drift: a game mode that reuses the pawn (and its ASC) for a
+	// reconnecting player leaves bStartingEffectsApplied true, so no per-effect RPC reaches the
+	// new connection and the client never instantiates the effects locally; bound attributes
+	// then drift.
 	UFUNCTION(Server, Reliable, WithValidation)
 	void Server_RequestActiveEffectsSnapshot();
 
@@ -271,7 +243,8 @@ public:
 	// Return the active ability effects
 	TMap<int, UGMCAbilityEffect*> GetActiveEffects() const { return ActiveEffects; }
 
-	UGMCAbilityEffect* GetActiveEffectByHandle(int EffectID) const;
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: use GetEffectById.")
+	UGMCAbilityEffect* GetActiveEffectByHandle(int EffectID) const { return GetEffectById(EffectID); }
 
 	// Return active Effect with tag
 	// Match exact doesn't look for depth in the tag, it will only match the exact tag
@@ -301,14 +274,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void RemoveStartingEffects(TArray<TSubclassOf<UGMCAbilityEffect>> EffectsToRemove);
 
-	// Add an ability to the GrantedAbilities array
+	// Grant / revoke an input tag (ability-map key) on this component.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void GrantAbilityByTag(const FGameplayTag AbilityTag);
 
-	// Remove an ability from the GrantedAbilities array
+	// Grant / revoke an input tag (ability-map key) on this component.
 	UFUNCTION(BlueprintCallable, Category = "GMCAbilitySystem")
 	void RemoveGrantedAbilityByTag(const FGameplayTag AbilityTag);
 
+	// Whether the input tag (ability-map key) is granted.
 	UFUNCTION(BlueprintPure, meta=(Categories="Ability"), Category = "GMCAbilitySystem")
 	bool HasGrantedAbilityTag(const FGameplayTag GameplayTag) const;
 
@@ -359,6 +333,7 @@ public:
 	 * @param RemoveEveryInstance if true, it will remove the tag without taking in consideration the number of application
 	 * @warning Authority Only, effect is used under the hood, however, DO NOT use this to remove an effect, DO NOT use it with a tag already
 	 * applied by an effect.
+	 * Matches the exact tag only.
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "GMCAbilitySystem")
 	void RemoveSynchronizedTag(const FGameplayTag& Tag, bool RemoveEveryInstance = false);
@@ -442,6 +417,11 @@ public:
 	// Do not call directly on client, go through QueueAbility
 	// SourceOperationID: BoundQueueV2 operation that carried this activation (0 = none).
 	// When set, AbilityIDs are derived from it so client and server agree by construction.
+	// A server-sent activation that reaches the client batched with other operations, whose candidates
+	// all fail their tag gates there, is not acknowledged and applies on the server through the grace
+	// force (~ServerOperationGraceSeconds late). Keep the first candidate of an input tag one that
+	// passes on both sides. A candidate that activates and is then refused (cost, cooldown, pre-check)
+	// still consumes the press: it does not fall through to the next candidate.
 	bool TryActivateAbilitiesByInputTag(const FGameplayTag& InputTag, const UInputAction* InputAction = nullptr, const bool bFromMovementTick=true, const bool bForce=false, const int SourceOperationID = 0);
 
 	// Do not call directly on client, go through QueueAbility. Can be used to call server-side abilities (like AI).
@@ -468,7 +448,10 @@ public:
 	void QueueAbility(UPARAM(meta=(Categories="Input"))
 	                  FGameplayTag InputTag, const UInputAction* InputAction = nullptr, bool bPreventConcurrentActivation = false);
 
-	UFUNCTION(BlueprintCallable, DisplayName="Count Queued Ability Instances", Category="GMAS|Abilities")
+	// Always 0 since the bound-queue rewrite (activations are not queued per tag any more). Logs once.
+	// Removed in 1.5.
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: always 0 since the bound-queue rewrite; removed in 1.5.")
+	UFUNCTION(BlueprintCallable, DisplayName="Count Queued Ability Instances", Category="GMAS|Abilities", meta=(DeprecatedFunction, DeprecationMessage="GMAS 1.4.1: always 0; no replacement."))
 	int32 GetQueuedAbilityCount(FGameplayTag AbilityTag);
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances", Category="GMAS|Abilities")
@@ -486,8 +469,17 @@ public:
 	int EndAbilitiesByClass(TSubclassOf<UGMCAbility> AbilityClass);
 	
 	UFUNCTION(BlueprintCallable, DisplayName = "End Abilities (By Definition Query)", Category="GMAS|Abilities")
-	// End all abilities matching query
+	// Flag every ability whose AbilityDefinition matches for a natural end on its next Tick.
 	int EndAbilitiesByQuery(const FGameplayTagQuery& Query);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Cancel Abilities (By Tag)", Category="GMAS|Abilities")
+	// Cancel (abnormal end: no end event, no chain window) every active ability whose AbilityTag
+	// matches; returns the number cancelled. EndAbilitiesByTag is the natural end.
+	int CancelAbilitiesByTag(FGameplayTag AbilityTag);
+
+	UFUNCTION(BlueprintCallable, DisplayName="Cancel Abilities (By Definition Query)", Category="GMAS|Abilities")
+	// Flag every ability whose AbilityDefinition matches for cancellation on its next Tick.
+	int CancelAbilitiesByQuery(const FGameplayTagQuery& Query);
 
 	UFUNCTION(BlueprintCallable, DisplayName="Count Activated Ability Instances (by tag)", Category="GMAS|Abilities")
 	int32 GetActiveAbilityCountByTag(FGameplayTag AbilityTag);
@@ -554,8 +546,6 @@ public:
 	// ActionTimer is zero (uninitialized component / smoothed listen-server pawn).
 	int GetNextAvailableClientAuthEffectID() const;
 	bool CheckIfEffectIDQueued(int EffectID) const;
-	// int CreateEffectOperation(TGMASBoundQueueOperation<UGMCAbilityEffect, FGMCAbilityEffectData>& OutOperation, const TSubclassOf<UGMCAbilityEffect>& Effect, const FGMCAbilityEffectData& EffectData, bool bForcedEffectId = true, EGMCAbilityEffectQueueType QueueType = EGMCAbilityEffectQueueType::Predicted);
-	// int CreateSyncedEventOperation(TGMASBoundQueueOperation<UGMASSyncedEvent, FGMASSyncedEventContainer>& OutOperation, const FGMASSyncedEventContainer& EventData);
 	
 	// BP-specific version of 
 	
@@ -599,13 +589,17 @@ public:
 	 */
 	bool ApplyAbilityEffect(TSubclassOf<UGMCAbilityEffect> EffectClass, FGMCAbilityEffectData InitializationData, EGMCAbilityEffectQueueType QueueType, int& OutEffectHandle, int& OutEffectId, UGMCAbilityEffect*& OutEffect);
 
-	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operatio);
+	UGMCAbilityEffect* ApplyAbilityEffectViaOperation(const FGMASBoundQueueV2ApplyEffectOperation& Operation);
 	
 	// Do not call this directly unless you know what you are doing. Otherwise, always go through the above ApplyAbilityEffect variant!
 	UGMCAbilityEffect* ApplyAbilityEffect(UGMCAbilityEffect* Effect, FGMCAbilityEffectData InitializationData);
 	
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	UGMCAbilityEffect* GetEffectById(const int EffectId) const;
+
+	// The client's answer state for an effect id, for logs and the debugger: Pending / Validated /
+	// Timeout from the client's tracking, Authority on the server, Unknown otherwise.
+	FString DescribeEffectAnswerState(int EffectID) const;
 
 	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
 	TArray<UGMCAbilityEffect*> GetEffectsByIds(const TArray<int> EffectIds) const;
@@ -679,8 +673,12 @@ public:
 	int32 GetNumEffectByTag(FGameplayTag InEffectTag);
 
 	//// Event Delegates
-	// Called before an attribute is about to be changed
-	UPROPERTY(BlueprintAssignable)
+	// Never broadcast since the attribute refactor; its re-add was planned, but it would run Blueprint
+	// code that edits modifiers inside every predicted apply and every replay (determinism and cost),
+	// so it is not restored. For pre-change logic use a custom calculator
+	// (UGMCAttributeModifierCustom_Base). Removed in 1.5 together with UGMCAttributeModifierContainer
+	// (its payload type).
+	UPROPERTY(BlueprintAssignable, meta=(DeprecatedProperty, DeprecationMessage="GMAS 1.4.1: never broadcast; not restored because it would run Blueprint code that edits modifiers inside every predicted apply and replay. Use a custom calculator (GMCAttributeModifierCustom_Base) for pre-change logic, OnAttributeChanged after."))
 	FOnPreAttributeChanged OnPreAttributeChanged;
 
 	// Called after an attribute has been changed
@@ -701,15 +699,22 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FOnActiveTagsChanged OnActiveTagsChanged;
 
-	// Called when an ability is successfully activated
+	// Called when an ability is successfully activated. The ability is Initialized (IsActive() true) when
+	// this fires; cancelling it from the handler stops the activation before its cooldown and
+	// BeginAbilityEvent (the cancel hooks fire).
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityActivated OnAbilityActivated;
 
 	UPROPERTY(BlueprintAssignable)
 	FOnAbilityEnded OnAbilityEnded;
 
-	// Called when a synced event is executed
+	// The abnormal-end twin of OnAbilityEnded. Not fired for an activation refused in PreBeginAbility
+	// (the ability never began).
 	UPROPERTY(BlueprintAssignable)
+	FOnAbilityCancelled OnAbilityCancelled;
+
+	// Never broadcast since the bound-queue rewrite. Removed in 1.5 with ExecuteSyncedEvent.
+	UPROPERTY(BlueprintAssignable, meta=(DeprecatedProperty, DeprecationMessage="GMAS 1.4.1: never broadcast; bind OnCustomEvent."))
 	FOnSyncedEvent OnSyncedEvent;
 
 	FGameplayTagContainer PreviousActiveTags;
@@ -751,13 +756,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="GMAS|Attributes")
 	FAttributeClamp GetAttributeClampByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
-	// Set Attribute value by Tag
-	// Will NOT trigger an "OnAttributeChanged" Event
-	// bResetModifiers: Will reset all modifiers on the attribute to the base value. DO NOT USE if you have any active effects that modify this attribute.
-	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes", meta=(DeprecatedFunction, DeprecationMessage="Please use ApplyAbilityAttributeModifier instead."))
+	// Deprecated and inert since the attribute refactor: attributes change only through modifiers
+	// (an effect with a Set / SetReplace modifier, or ApplyAbilityAttributeModifier inside the
+	// move). Returns false and logs once. Removed in 1.5.
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: inert; apply a Set modifier through an effect or ApplyAbilityAttributeModifier.")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes", meta=(DeprecatedFunction, DeprecationMessage="GMAS 1.4.1: inert, returns false; apply a Set modifier through an effect or ApplyAbilityAttributeModifier."))
 	bool SetAttributeValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag, float NewValue, bool bResetModifiers = false);
 	
-	/** Get the default value of an attribute from the data assets. */
+	/** The initial value actually applied (after bStartFull and SetAttributeInitialValue); -1 and a one-time Warning for an unknown tag. */
 	UFUNCTION(BlueprintCallable, Category="GMAS|Attributes")
 	float GetAttributeInitialValueByTag(UPARAM(meta=(Categories="Attribute"))FGameplayTag AttributeTag) const;
 	
@@ -776,6 +782,7 @@ public:
 	// context" vs "outside any tick" to pick the right effect-removal path.
 	bool IsInAncillaryTick() const { return bInAncillaryTick; }
 	
+	// The GMC movement component the ability component binds to. Set it before BindReplicationData, or leave it null and the owner's UGMC_MovementUtilityCmp is used.
 	UPROPERTY(BlueprintReadWrite, AdvancedDisplay, Category = "GMCAbilitySystem")
 	UGMC_MovementUtilityCmp* GMCMovementComponent;
 
@@ -793,7 +800,7 @@ public:
 
 	/**
 	 * Removes a previously-added filtered delegate on tag changes.
-	 * @param Tags A list of tags the delegate was bound to
+	 * @param Tags The container the delegate was bound with (kept for compatibility; the handle alone identifies the binding).
 	 * @param Handle The handle of the delegate to unbind
 	 */
 	void RemoveFilteredTagChangeDelegate(const FGameplayTagContainer& Tags, FDelegateHandle Handle);
@@ -835,9 +842,6 @@ public:
 #pragma region ToStringHelpers
 	/** Get all attributes in string format. Used in the gameplay debugger. */
 	FString GetAllAttributesString() const;
-
-	/** Get all active effect data in string format. Used in the gameplay debugger. */
-	FString GetActiveEffectsDataString() const;
 
 	/** Get all active effects in string format. Used in the gameplay debugger. */
 	FString GetActiveEffectsString() const;
@@ -910,6 +914,12 @@ private:
 
 	bool bStartingEffectsApplied = false;
 
+	// Shared allocator behind the three GetNextAvailable*EffectID generators: ActionTimer in
+	// centiseconds offset into [RangeStart, RangeEnd), wrapping (one Error) past the end. -1 when
+	// ActionTimer is 0.
+	int AllocateEffectIDInRange(int32 RangeStart, int32 RangeEnd, const TCHAR* Generator) const;
+	mutable bool bEffectIDWrapReported = false;
+
 	// Reconnect-snapshot client-pull state. The Server RPC requires the actor to
 	// have an established owning connection AND the local role to be AutonomousProxy
 	// — neither is guaranteed at component-BeginPlay time on a freshly-replicated
@@ -946,8 +956,14 @@ public:
 	// Empty the AbilityMap and remove all granted abilities from existing maps
 	UFUNCTION(BlueprintCallable, Category="GMAS|Abilities")
 	void ClearAbilityMap();
-	
 
+	// Project hook to seed an attribute's initial value. Called once per attribute after the rows
+	// exist and resolved their defaults; a changed value is applied, then every row is settled again
+	// so bStartFull and attribute-driven clamps see the overrides. The hook wins over bStartFull,
+	// never over the clamp (an Error and the clamped value). A value equal to the resolved default
+	// counts as untouched. Dependencies resolve one level deep: a row whose bStartFull or clamp reads
+	// a second row that itself depends on an overridden third row sees the second row's pre-override
+	// value.
 	virtual void SetAttributeInitialValue(const FGameplayTag& AttributeTag, float& BaseValue);
 
 	UFUNCTION(BlueprintImplementableEvent, Category="GMAS|Abilities")
@@ -1028,8 +1044,9 @@ private:
 	//     enqueue via BoundQueueV2.QueueServerOperation -> Client RPC + grace window,
 	//     client acks via its move stream within RTT (unchanged legacy behaviour).
 	//   - NO acking client (AI / level-placed / server-controlled pawn with no owning
-	//     client connection): the Client RPC has no recipient, so with the 1.0s grace
-	//     window the op would only apply when the grace timeout forced it (~1s late).
+	//     client connection): the Client RPC has no recipient, so with the server-operation
+	//     grace (`ServerOperationGraceSeconds`) the op would only apply when the grace
+	//     timeout forced it (that late).
 	//     Queue it with a ZERO grace timeout instead: the pawn's next
 	//     BoundQueueV2.GenAncillaryTick forces it (OnServerOperationForced ->
 	//     ProcessOperation(bForce=true)), ~1 frame later and outside any other pawn's
@@ -1058,8 +1075,10 @@ private:
 
 	// Event Implementations
 
-	// Execute an event that is created by the server where execution is synced between server and client
-	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent")
+	// 1.3's synced events never came back after the bound-queue rewrite; FireCustomEvent /
+	// OnCustomEvent are the replacement. Removed in 1.5.
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: ExecuteSyncedEvent does nothing on 1.4; use FireCustomEvent / OnCustomEvent.")
+	UFUNCTION(BlueprintCallable, Category = "GMASSyncedEvent", meta=(DeprecatedFunction, DeprecationMessage="GMAS 1.4.1: does nothing; use FireCustomEvent / OnCustomEvent."))
 	void ExecuteSyncedEvent(FGMASSyncedEventContainer EventData);
 
 	UPROPERTY()
@@ -1163,12 +1182,6 @@ private:
 	// Tick ability cooldowns
 	void TickActiveCooldowns(float DeltaTime);
 
-	// Legacy field — runtime reads `UGMASNetworkTimingSettings::ClientEffectApplicationTimeout`
-	// (Project Settings → GMC Ability System → Network Timing, default 0.5s). Kept here for
-	// back-compat with any external code that may still reference it; mutating it has no effect
-	// on the predicted-effect timeout check, which reads the project settings directly.
-	float ClientEffectApplicationTimeout = 0.5f;
-
 	UPROPERTY()
 	TMap<int, UGMCAbilityEffect*> ActiveEffects;
 
@@ -1191,18 +1204,26 @@ private:
 	// IDs that have been claimed by server-auth effect applications
 	TArray<int> ReservedEffectIDs;
 
-	UPROPERTY()
-	TMap<int, FGMASQueueOperationHandle> EffectHandles;
+	// Tags GetAttributeInitialValueByTag already reported as unknown on this component (one Warning
+	// per tag per instance; mutable because the getter is const).
+	mutable TSet<FGameplayTag> UnknownInitialValueTagsWarned;
 
-	int GetNextAvailableEffectHandle() const;
-
-	UFUNCTION(BlueprintCallable, Category="GMAS|Effects")
+	// Handles are effect ids (OutEffectHandle mirrors OutEffectId); this forwards to GetEffectById.
+	UE_DEPRECATED(5.8, "GMAS 1.4.1: handles are effect ids; use GetEffectById.")
+	UFUNCTION(BlueprintCallable, Category="GMAS|Effects", meta=(DeprecatedFunction, DeprecationMessage="GMAS 1.4.1: handles are effect ids; use GetEffectById."))
 	void GetEffectFromHandle_BP(int EffectHandle, bool& bOutSuccess, int32& OutEffectNetworkId, UGMCAbilityEffect*& OutEffect);
-	
-	bool GetEffectFromHandle(int EffectHandle, int32& OutEffectNetworkId, UGMCAbilityEffect*& OutEffect) const;
-	bool GetEffectHandle(int EffectHandle, FGMASQueueOperationHandle& HandleData) const;
 
-	void RemoveEffectHandle(int EffectHandle);
+	// One-shot deprecation warnings, latched per component.
+	enum class EDeprecatedUse : uint8
+	{
+		ExecuteSyncedEvent     = 1 << 0,
+		SetAttributeValueByTag = 1 << 1,
+		GetQueuedAbilityCount  = 1 << 2,
+		ServerAuthMove         = 1 << 3,
+		GetEffectFromHandle    = 1 << 4,
+	};
+	mutable uint8 DeprecatedUseReported = 0;
+	void ReportDeprecatedUseOnce(EDeprecatedUse Use, const FString& Message) const;
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInAncillaryTick = false;
@@ -1264,11 +1285,11 @@ private:
 public:
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
-	TMap<int, FGMASQueueOperationHandle>&  GetEffectHandlesForTest()       { return EffectHandles; }
-	bool GetEffectFromHandleForTest(int Handle, int32& OutNetId, UGMCAbilityEffect*& OutEffect) const
-	{
-		return GetEffectFromHandle(Handle, OutNetId, OutEffect);
-	}
+	// Test seam: inject entries (e.g. a null value) to exercise query guards.
+	TMap<int, UGMCAbilityEffect*>& GetActiveEffectsForTest() { return ActiveEffects; }
+	// Empties the once-per-owner-class latch of the SetCooldownForAbility empty-tag report, so a spec
+	// can expect that Error on every in-process run.
+	static void ResetCooldownTagReportForTest();
 
 	// Test seam for the replay-skip gate in TickActiveEffects. CL_IsReplaying() on
 	// the GMC movement component is non-virtual so the headless harness can't
@@ -1293,10 +1314,9 @@ public:
 		return ProcessOperation(OperationData, bFromMovementTick, bForce);
 	}
 
-	// Test seams for the immediate server-op-apply routing. EnqueueServerOperation and
-	// ShouldApplyServerOpImmediately are private (production callers are in-class); these
-	// thin wrappers expose them under WITH_AUTOMATION_WORKER only so the BugFix spec can
-	// drive both branches (immediate apply vs grace/ack queue) directly.
+	// Test seams for the server-op routing. EnqueueServerOperation and ShouldApplyServerOpImmediately
+	// are private; these wrappers let the BugFix spec drive both branches (next-tick force for pawns
+	// without a client vs the grace/ack queue).
 	void EnqueueServerOperationForTest(const int OperationID) { EnqueueServerOperation(OperationID); }
 	bool ShouldApplyServerOpImmediatelyForTest() const { return ShouldApplyServerOpImmediately(); }
 
@@ -1311,16 +1331,21 @@ public:
 		BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
 	}
 
-	// Test seam for the HasAuthority() guard in ServerProcessOperation. Orphan components
-	// in the headless harness always report HasAuthority()==false; setting this flag forces
-	// IsAuthorityForGMASLogic() to return true so server-side dispatch paths can be exercised.
+	// Test seam for the HasAuthority() guard in ServerProcessOperation and the confirm-timeout
+	// cut in UGMCAbility::Tick. Orphan components in the headless harness always report
+	// HasAuthority()==false; setting this flag forces IsAuthorityForGMASLogic() to return true
+	// so server-side dispatch paths can be exercised.
 	bool bForceAuthorityForTest = false;
+
+	// Test seam: the headless harness is NM_Standalone, where the grace deferral never arms. Set
+	// to exercise RemoveActiveAbilityEffect's networked branch.
+	bool bForceNetworkedForTest = false;
 
 	// Test seam for ShouldApplyServerOpImmediately(). The GMC net-role helpers it relies on
 	// (IsNetworkedServer / IsPlayerControlledPawn) can't be populated for an orphan component
 	// in the headless harness (always reports NM_Standalone). Setting this flag forces the
-	// "no acknowledging client" decision so EnqueueServerOperation's immediate-apply branch
-	// can be exercised; left false, EnqueueServerOperation takes the legacy queue path.
+	// "no acknowledging client" decision (next-tick force) can be exercised; left false,
+	// EnqueueServerOperation takes the grace/ack path.
 	bool bForceNoAckClientForTest = false;
 
 	// Test seam: pre-seed BoundQueueV2.OperationData with a valid base struct so that
@@ -1338,6 +1363,26 @@ public:
 	// without exposing the queue to production callers. Returning a reference
 	// keeps the call sites symmetric with how internal functions touch it.
 	FGMASBoundQueueV2& GetBoundQueueV2ForTest() { return BoundQueueV2; }
+
+	// Test seam: GenPredictionTick overwrites ActionTimer from the movement component's move
+	// timestamp (non-virtual in GMC, so the stub cannot change it). Specs that need a controlled
+	// clock set it here and drive the real TickActiveAbilities / TickActiveEffects directly.
+	void SetActionTimerForTest(double InActionTimer) { ActionTimer = InActionTimer; }
+
+	// Test seam: the stub's clock is negative (GMC's move timestamp before any move), which the
+	// effect-id allocator wraps into each range with a one-time Error. Harnesses that run on that
+	// clock and are not about ids pre-set the latch so the report stays out of their specs.
+	void SilenceEffectIDWrapReportForTest() { bEffectIDWrapReported = true; }
+
+	// Test seam: tick every active ability (and its tasks) through the production entry point
+	// without GenPredictionTick resetting the clock. Pair with CleanupStaleAbilitiesForTest.
+	void TickActiveAbilitiesForTest(float DeltaTime) { TickActiveAbilities(DeltaTime); }
+
+	// Test seam: purge Ended instances the way GenPredictionTick does at the end of a tick.
+	void CleanupStaleAbilitiesForTest() { CleanupStaleAbilities(); }
+
+	// Test seam: cooldown GC is only observable through the private map.
+	const TMap<FGameplayTag, double>& GetActiveCooldownsForTest() const { return ActiveCooldowns; }
 
 	// Test seam for TryActivateClientAuthAbility. The function is private so tests cannot
 	// call it directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only.
@@ -1368,8 +1413,9 @@ public:
 
 	// Centralized authority check for GMAS server-side dispatch. Production delegates to
 	// AActor::HasAuthority(); test builds layer bForceAuthorityForTest on top so that
-	// ServerProcessOperation can be exercised in the headless harness where orphan
-	// components always report HasAuthority()==false.
+	// ServerProcessOperation and the confirm-timeout cut in UGMCAbility::Tick can be
+	// exercised in the headless harness where orphan components always report
+	// HasAuthority()==false.
 	bool IsAuthorityForGMASLogic() const;
 
 	// Networked FX

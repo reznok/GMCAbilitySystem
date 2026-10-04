@@ -16,7 +16,7 @@ void UGMCAbilityTask_SetTargetDataInt::Activate()
 {
 	Super::Activate();
 
-	if (IsClientOrRemoteListenServerPawn())
+	if (DrivesPawnLocally())
 	{
 		ClientProgressTask();
 	}
@@ -25,8 +25,14 @@ void UGMCAbilityTask_SetTargetDataInt::Activate()
 void UGMCAbilityTask_SetTargetDataInt::ProgressTask(FInstancedStruct& TaskData)
 {
 	Super::ProgressTask(TaskData);
+	if (TaskData.GetScriptStruct() != FGMCAbilityTaskTargetDataInt::StaticStruct())
+	{
+		UE_LOG(LogGMCAbilitySystem, Error, TEXT("UGMCAbilityTask_SetTargetDataInt::ProgressTask: payload is %s, expected FGMCAbilityTaskTargetDataInt; dropped (owner %s)."),
+			TaskData.GetScriptStruct() ? *TaskData.GetScriptStruct()->GetName() : TEXT("null"), *GetNameSafe(Ability ? Ability->GetOwnerActor() : nullptr));
+		EndTask();
+		return;
+	}
 	const FGMCAbilityTaskTargetDataInt Data = TaskData.Get<FGMCAbilityTaskTargetDataInt>();
-	
 	Completed.Broadcast(Data.Target);
 	EndTask();
 }

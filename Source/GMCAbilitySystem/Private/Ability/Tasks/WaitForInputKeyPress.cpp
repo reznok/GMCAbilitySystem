@@ -17,52 +17,50 @@ UGMCAbilityTask_WaitForInputKeyPress* UGMCAbilityTask_WaitForInputKeyPress::Wait
 void UGMCAbilityTask_WaitForInputKeyPress::Activate()
 {
 	Super::Activate();
-	
+
 	StartTime = AbilitySystemComponent->ActionTimer;
-	
+
 	if (Ability->bAllowMultipleInstances) {
 		UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Ability %s is set to allow multiple instances and this should not be used with WaitForInputKeyPress AbilityTask !"), *Ability->GetName());
+		if (DrivesPawnLocally()) { ClientProgressTask(); }
+		return;
+	}
+
+	// A server for a remote pawn never polls input or binds: it waits for the client's payload
+	// (its own queue is never drained for a remote pawn).
+	if (!DrivesPawnLocally()) { return; }
+
+	UEnhancedInputComponent* EnhancedInputComponent = GetEnhancedInputComponent();
+	if (Ability->AbilityInputAction == nullptr || EnhancedInputComponent == nullptr)
+	{
+		// Nothing to wait for on the driving machine: complete deterministically through the payload.
 		ClientProgressTask();
 		return;
 	}
-	
-	UEnhancedInputComponent* EnhancedInputComponent = GetEnhancedInputComponent();
-	
-	if (Ability->AbilityInputAction != nullptr && InputComponent != nullptr)
+
+	const FEnhancedInputActionEventBinding& Binding = EnhancedInputComponent->BindAction(
+		Ability->AbilityInputAction, ETriggerEvent::Started, this,
+		&UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed);
+	InputBindingHandle = Binding.GetHandle();
+
+	// Already pressed when the task starts: complete now. Live input is never read during a
+	// replay (the replay sees today's key against yesterday's move); the original run queued
+	// the payload, which replays deterministically.
+	if (bShouldCheckForPressDuringActivation && !AbilitySystemComponent->IsReplayingForGMASLogic())
 	{
-		const FEnhancedInputActionEventBinding& Binding = EnhancedInputComponent->BindAction(
-			Ability->AbilityInputAction, ETriggerEvent::Started, this,
-			&UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed);
-
-		
-	
-		InputBindingHandle = Binding.GetHandle();
-
-		// Check if button was held when entering the task.
-		// Only the locally-controlled client (or listen server host) can read the real key state.
-		// On a dedicated server / remote pawn, PC->GetLocalPlayer() is null, the magnitude check
-		// silently sees 0, and we'd queue a Progress payload server-side that ends the task before
-		// the client's press ever arrives — the task would never be "confirmed" by the server.
-		if (bShouldCheckForPressDuringActivation && IsClientOrRemoteListenServerPawn())
-		{
-			FInputActionValue ActionValue = FInputActionValue();
-			// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
-			// guard the chain instead of dereferencing blindly.
-			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
-			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
-				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
-			}
-
-			if (!ActionValue.GetMagnitude())
-			{
-				InputBindingHandle = -1;
-				ClientProgressTask();
-			}
+		FInputActionValue ActionValue = FInputActionValue();
+		// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
+		// guard the chain instead of dereferencing blindly.
+		APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
+		if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
+			ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
 		}
-	}
-	else
-	{
-		ClientProgressTask();
+		if (ActionValue.GetMagnitude() != 0.f)
+		{
+			EnhancedInputComponent->RemoveActionBindingForHandle(InputBindingHandle);
+			InputBindingHandle = -1;
+			ClientProgressTask();
+		}
 	}
 }
 
@@ -81,7 +79,7 @@ void UGMCAbilityTask_WaitForInputKeyPress::AncillaryTick(float DeltaTime)
 		// never drained for remote pawns — unbounded growth for the remaining ability life.
 		// bTimedOut must still latch server-side so the payload-driven OnTaskCompleted picks
 		// the TimedOut broadcast on both machines.
-		if (IsClientOrRemoteListenServerPawn())
+		if (DrivesPawnLocally())
 		{
 			ClientProgressTask();
 		}
@@ -104,10 +102,12 @@ void UGMCAbilityTask_WaitForInputKeyPress::OnKeyPressed(const FInputActionValue&
 
 UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyPress::GetEnhancedInputComponent()
 {
-	InputComponent = Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>();
+	InputComponent = (Ability->OwnerAbilityComponent && Ability->OwnerAbilityComponent->GetOwner()) ? Ability->OwnerAbilityComponent->GetOwner()->GetComponentByClass<UInputComponent>() : nullptr;
 	if (InputComponent)
 	{
-		if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(InputComponent))
+		// Cast, not CastChecked: a legacy input component has nothing to bind, so the task falls to
+		// the "nothing to wait for" path instead of asserting.
+		if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(InputComponent))
 		{
 			return EnhancedInputComponent;
 		}
