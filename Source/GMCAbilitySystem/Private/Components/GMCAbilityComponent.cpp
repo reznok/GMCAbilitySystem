@@ -1184,7 +1184,18 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenPredictionTick)
 
-	bJustTeleported = false;
+	// A teleport made outside a move (ancillary tick, forced operation) is carried into the first
+	// live move that follows, so that move's output state records it. A replay never consumes it:
+	// replayed moves re-apply their own operations and set the flag themselves.
+	if (GMCMovementComponent && GMCMovementComponent->CL_IsReplaying())
+	{
+		bJustTeleported = false;
+	}
+	else
+	{
+		bJustTeleported = bTeleportPendingForMove;
+		bTeleportPendingForMove = false;
+	}
 	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
 
 	// Replay-burst diagnostic — sticky flag, consumed by GenAncillaryTick.
@@ -2862,7 +2873,11 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 	if (StructType == FGMASBoundQueueV2SetActorLocationOperation::StaticStruct())
 	{
 		const FGMASBoundQueueV2SetActorLocationOperation LocationData = PayloadData.Get<FGMASBoundQueueV2SetActorLocationOperation>();
-		GetOwner()->SetActorLocation(LocationData.Location);
+		if (AActor* LocationOwner = GetOwner()) { LocationOwner->SetActorLocation(LocationData.Location); }
+		// Mark the teleport so simulated proxies snap instead of interpolating across the gap.
+		// Inside a move the flag lands in that move's output state; outside one it waits for the next.
+		if (bFromMovementTick) { bJustTeleported = true; }
+		else { bTeleportPendingForMove = true; }
 		if (!HasAuthority() && !BoundQueueV2.bInBatchDispatch)
 		{
 			// Make an operation to confirm the location change

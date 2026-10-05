@@ -2186,6 +2186,50 @@ void FGMASBugFixSpec::Define()
 			TestFalse("server id 7 is skipped", FGMASBoundQueueV2::IsClientMadeOperationID(7));
 		});
 	});
+
+	// A server-authored SetActorLocation operation marks the teleport so simulated proxies snap
+	// (bJustTeleported is bound to the output state). Inside a move the flag is set for that
+	// move; outside one it is carried into the next live GenPredictionTick; the move after clears it.
+	Describe("SetActorLocation operation teleport mark", [this]()
+	{
+		// Outside a move the dispatch only applies a forced operation (the grace expiry of a pawn without a client).
+		auto ApplyTeleportOp = [this](bool bFromMovementTick)
+		{
+			FGMASBoundQueueV2SetActorLocationOperation Op;
+			Op.Location = FVector(500.0, 0.0, 0.0);
+			const int OpID = AbilityComp->GetBoundQueueV2ForTest().MakeOperationData<FGMASBoundQueueV2SetActorLocationOperation>(Op);
+			FGMASBoundQueueV2OperationBaseData Wrapper;
+			Wrapper.OperationID = OpID;
+			const bool bApplied = AbilityComp->ProcessOperationForTest(FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(Wrapper), bFromMovementTick, !bFromMovementTick);
+			// MakeOperationData also fills the live slot; later moves would re-read it and re-apply the cached payload.
+			AbilityComp->GetBoundQueueV2ForTest().RemovePayloadByID(OpID);
+			AbilityComp->GetBoundQueueV2ForTest().OperationData = FInstancedStruct::Make<FGMASBoundQueueV2OperationBaseData>(FGMASBoundQueueV2OperationBaseData());
+			return bApplied;
+		};
+
+		It("sets the flag for the current move when applied inside a move", [this, ApplyTeleportOp]()
+		{
+			AbilityComp->GenPredictionTick(0.f);
+			TestFalse("flag clear at the start of the move", AbilityComp->bJustTeleported);
+			TestTrue("op applied", ApplyTeleportOp(true));
+			TestTrue("flag set for this move's output", AbilityComp->bJustTeleported);
+			TestFalse("nothing pending: the next move is not marked twice", AbilityComp->GetTeleportPendingForMoveForTest());
+			AbilityComp->GenPredictionTick(0.f);
+			TestFalse("flag cleared on the move after", AbilityComp->bJustTeleported);
+		});
+
+		It("carries an op applied outside a move into the next GenPredictionTick", [this, ApplyTeleportOp]()
+		{
+			AbilityComp->GenPredictionTick(0.f);
+			TestTrue("op applied outside a move", ApplyTeleportOp(false));
+			TestTrue("pending until the next move", AbilityComp->GetTeleportPendingForMoveForTest());
+			AbilityComp->GenPredictionTick(0.f);
+			TestTrue("the next move carries the flag", AbilityComp->bJustTeleported);
+			TestFalse("pending consumed", AbilityComp->GetTeleportPendingForMoveForTest());
+			AbilityComp->GenPredictionTick(0.f);
+			TestFalse("flag cleared on the move after", AbilityComp->bJustTeleported);
+		});
+	});
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

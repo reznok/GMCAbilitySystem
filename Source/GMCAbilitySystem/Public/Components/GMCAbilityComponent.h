@@ -1227,6 +1227,9 @@ private:
 	
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem", meta=(AllowPrivateAccess="true"))
 	bool bInAncillaryTick = false;
+
+	// A teleport applied outside a move; moved into bJustTeleported by the next live GenPredictionTick.
+	bool bTeleportPendingForMove = false;
 	
 
 	int LateApplicationIDCounter = 0;
@@ -1309,6 +1312,8 @@ public:
 	// directly; this thin wrapper exposes it under WITH_AUTOMATION_WORKER only. Used by
 	// the batch-reprocess dedup spec to drive a FGMASBoundQueueV2BatchOperation through
 	// the dispatch path more than once.
+	bool GetTeleportPendingForMoveForTest() const { return bTeleportPendingForMove; }
+
 	bool ProcessOperationForTest(FInstancedStruct OperationData, bool bFromMovementTick, bool bForce = false)
 	{
 		return ProcessOperation(OperationData, bFromMovementTick, bForce);
