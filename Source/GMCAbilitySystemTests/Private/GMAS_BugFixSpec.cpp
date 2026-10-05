@@ -2176,6 +2176,16 @@ void FGMASBugFixSpec::Define()
 				Q.WasOperationRecentlyProcessed(1000 + FGMASBoundQueueV2::MaxRecentlyProcessedOperations + 49));
 		});
 	});
+
+	Describe("Live-slot operation ownership", [this]()
+	{
+		It("treats only negative ids as client-made", [this]()
+		{
+			TestTrue ("client id -3 is client-made", FGMASBoundQueueV2::IsClientMadeOperationID(-3));
+			TestFalse("0 (empty slot / batch wrapper) is skipped", FGMASBoundQueueV2::IsClientMadeOperationID(0));
+			TestFalse("server id 7 is skipped", FGMASBoundQueueV2::IsClientMadeOperationID(7));
+		});
+	});
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
