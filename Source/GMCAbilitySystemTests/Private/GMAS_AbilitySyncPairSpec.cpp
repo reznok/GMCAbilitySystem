@@ -256,6 +256,36 @@ void FGMASAbilitySyncPairSpec::Define()
 			TestEqual(TEXT("cancel hook"), Client->CancelAbilityEventCount, 1);
 		});
 
+		It("answers Rejected when the server has no ability granted for the input tag; the client cancels within one delivery", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("No Abilities Granted for InputTag"), EAutomationExpectedErrorFlags::Contains, 1);
+			Pair.Server->RemoveGrantedAbilityByTag(FGMASAbilitySyncPairHarness::InputTag());
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			TestEqual(TEXT("no server instance"), Pair.Server->GetActiveAbilities().Num(), 0);
+
+			const TPair<bool, FGMASAbilitySyncMessage>* Answer = OnlyOutbox(EGMASAbilitySyncType::Answer);
+			if (!TestNotNull(TEXT("exactly one answer"), Answer)) { return; }
+			TestEqual(TEXT("rejected"), Answer->Value.Answer, EGMASAbilityAnswer::Rejected);
+			TestEqual(TEXT("operation"), Answer->Value.OperationID, OpID);
+			TestEqual(TEXT("no candidate"), Answer->Value.CandidateIndex, 0);
+			TestEqual(TEXT("no ability id"), Answer->Value.AbilityID, 0);
+
+			UGMAS_TestAbility* Client = ClientA();
+			if (!TestNotNull(TEXT("client instance"), Client)) { return; }
+			Pair.DeliverAll();
+			TestEqual(TEXT("cancelled"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("cancel hook"), Client->CancelAbilityEventCount, 1);
+		});
+
+		It("answers a server without the grant once, even when the operation is processed again", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("No Abilities Granted for InputTag"), EAutomationExpectedErrorFlags::Contains, 0);   // once or twice: a redelivery may stop earlier
+			Pair.Server->RemoveGrantedAbilityByTag(FGMASAbilitySyncPairHarness::InputTag());
+			Pair.ActivateServerFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.ActivateServerFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			TestEqual(TEXT("one answer"), Pair.CountOutbox(EGMASAbilitySyncType::Answer), 1);
+		});
+
 		It("answers Confirmed for an ability that began and ended inside its activation", [this]()
 		{
 			GetMutableDefault<UGMAS_TestAbility>()->bEndOnBegin = true;
@@ -677,6 +707,24 @@ void FGMASAbilitySyncPairSpec::Define()
 			Digest.DigestIDs = { IDFor(0) };
 			Pair.Client->ReceiveAbilitySyncForTest(Digest);
 			TestEqual(TEXT("no report"), Pair.Outbox.Num(), 0);
+		});
+
+		It("does not report again a server instance without a twin whose report already went out", [this]()
+		{
+			Pair.Server->AddActiveTag(BlockA());   // the server runs candidate 1, the client candidate 0
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();                     // the mismatched answer: the client reports IDFor(1)
+			Pair.Tick();                           // the report is flushed (no longer pending)
+			TestTrue(TEXT("the report is in flight"), Pair.DropNext(EGMASAbilitySyncType::Ended));
+			TestEqual(TEXT("nothing pending"), Pair.Outbox.Num(), 0);
+
+			// A digest sent before the server received the report still lists its instance.
+			Pair.AdvanceClocks(0.3);
+			FGMASAbilitySyncMessage Digest;
+			Digest.Type = EGMASAbilitySyncType::Digest;
+			Digest.DigestIDs = { IDFor(1) };
+			Pair.Client->ReceiveAbilitySyncForTest(Digest);
+			TestEqual(TEXT("no second report"), CountOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true), 0);
 		});
 
 		It("ends a client-only orphan once it is MinAge + Interval old, not before", [this]()

@@ -711,6 +711,14 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	if (GrantedAbilities.Num() == 0)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("No Abilities Granted for InputTag: %s"), *InputTag.ToString());
+		// Ability sync: the client may hold the grant and have predicted an instance. Answer Rejected on the
+		// operation's first consumption, so that instance ends within one round trip, not at its timeout.
+		if (SourceOperationID != 0 && IsAuthorityForGMASLogic() && HasRemoteAbilityTwin()
+			&& !WasActivationOperationConsumed(SourceOperationID))
+		{
+			NoteActivationOperationConsumed(SourceOperationID);
+			SendAbilityAnswer(SourceOperationID, INDEX_NONE);
+		}
 		return false;
 	}
 	bool bFirstAbilityActivatesDuringMovementTick = GrantedAbilities[0]->GetDefaultObject<UGMCAbility>()->bActivateOnMovementTick;
@@ -2338,7 +2346,7 @@ void UGMC_AbilitySystemComponent::TickAbilitySync()
 	// A covered instance created inside a replayed move skipped its held messages; apply them here.
 	if (HeldSyncMessages.Num() > 0)
 	{
-		TArray<UGMCAbility*> Live;
+		FGMASLiveAbilities Live;
 		for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
 		{
 			if (Pair.Value && Pair.Value->IsCovered() && Pair.Value->AbilityState != EAbilityState::Ended)
@@ -2369,7 +2377,7 @@ void UGMC_AbilitySystemComponent::TickAbilitySync()
 
 void UGMC_AbilitySystemComponent::ResetAbilitySyncForNewConnection()
 {
-	TArray<UGMCAbility*> Live;
+	FGMASLiveAbilities Live;
 	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
 	for (UGMCAbility* Ability : Live)
 	{
@@ -2434,6 +2442,14 @@ void UGMC_AbilitySystemComponent::FlushAbilityEndSyncs()
 		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end %d (%s) sent to the %s from %s"),
 			Ended.AbilityID, Ended.EndKind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
 			bToServer ? TEXT("server") : TEXT("client"), *GetNameSafe(GetOwner()));
+		if (bToServer)
+		{
+			// Client: a report is no longer pending once sent, but a digest already in flight may still list
+			// the instance (a server instance with no twin here is never in the ring otherwise). The timed
+			// ring spares it for one digest interval; a later digest that still lists it means the report
+			// was lost, and it is reported again.
+			NoteAbilityEnded(Ended.AbilityID);
+		}
 		SendAbilitySync(Ended, bToServer);
 	}
 }
@@ -2519,7 +2535,7 @@ void UGMC_AbilitySystemComponent::TickPeerEnds()
 	}
 }
 
-void UGMC_AbilitySystemComponent::GatherLiveCoveredAbilities(TArray<UGMCAbility*>& OutAbilities, bool bSkipPeerEnding) const
+void UGMC_AbilitySystemComponent::GatherLiveCoveredAbilities(FGMASLiveAbilities& OutAbilities, bool bSkipPeerEnding) const
 {
 	OutAbilities.Reset();
 	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
@@ -2535,20 +2551,34 @@ void UGMC_AbilitySystemComponent::TickAbilityDigest()
 {
 	const UGMASNetworkTimingSettings* Settings = GetDefault<UGMASNetworkTimingSettings>();
 	const double Now = GetConfirmClock();
+	const bool bServerSide = IsAuthorityForGMASLogic();
 
-	TArray<UGMCAbility*> Live;
-	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/IsAuthorityForGMASLogic());
-	TArray<FGMASCoveredAbility> Covered;
+	// Runs every ancillary tick: the cadence checks come first, and nothing is gathered between digests
+	// (server) or while digests keep arriving (client). These are the same conditions the rules unit
+	// applies below, checked before the covered set is built.
+	if (bServerSide)
+	{
+		if (Now - LastDigestSentAt < Settings->AbilityDigestInterval) { return; }
+	}
+	else if (Now - LastDigestReceivedAt < 2.0 * Settings->AbilityDigestInterval
+		|| Now - LastDigestRequestedAt < Settings->AbilityDigestInterval)
+	{
+		return;
+	}
+
+	FGMASLiveAbilities Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/bServerSide);
+	if (Live.Num() == 0) { return; }
+	TArray<FGMASCoveredAbility, TInlineAllocator<8>> Covered;
 	Covered.Reserve(Live.Num());
 	for (const UGMCAbility* Ability : Live)
 	{
 		Covered.Add(DescribeCoveredAbility(*Ability));
 	}
 
-	if (IsAuthorityForGMASLogic())
+	if (bServerSide)
 	{
-		if (Now - LastDigestSentAt >= Settings->AbilityDigestInterval
-			&& GMASAbilitySyncRules::ShouldServerSendDigest(Covered, Now, Settings->AbilityReconcileMinAge))
+		if (GMASAbilitySyncRules::ShouldServerSendDigest(Covered, Now, Settings->AbilityReconcileMinAge))
 		{
 			SendAbilityDigest();
 		}
@@ -2572,7 +2602,7 @@ void UGMC_AbilitySystemComponent::SendAbilityDigest()
 	// Ends first, so the client never sees a digest that predates an end already decided here.
 	FlushAbilityEndSyncs();
 
-	TArray<UGMCAbility*> Live;
+	FGMASLiveAbilities Live;
 	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/true);
 	FGMASAbilitySyncMessage Digest;
 	Digest.Type = EGMASAbilitySyncType::Digest;
@@ -2593,9 +2623,9 @@ void UGMC_AbilitySystemComponent::HandleAbilityDigest(const FGMASAbilitySyncMess
 	const double Now = GetConfirmClock();
 	LastDigestReceivedAt = Now;
 
-	TArray<UGMCAbility*> Live;
+	FGMASLiveAbilities Live;
 	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
-	TArray<FGMASCoveredAbility> Covered;
+	TArray<FGMASCoveredAbility, TInlineAllocator<8>> Covered;
 	Covered.Reserve(Live.Num());
 	for (const UGMCAbility* Ability : Live)
 	{

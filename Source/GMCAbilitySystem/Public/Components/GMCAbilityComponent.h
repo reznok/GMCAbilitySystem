@@ -1400,7 +1400,9 @@ private:
 	void HandleAbilityDigest(const FGMASAbilitySyncMessage& Message);
 
 	// The live (not ended) covered instances; bSkipPeerEnding leaves out those with a scheduled peer end.
-	void GatherLiveCoveredAbilities(TArray<UGMCAbility*>& OutAbilities, bool bSkipPeerEnding) const;
+	// Inline storage: gathered from the ancillary tick, where a pawn holds a handful of instances at most.
+	using FGMASLiveAbilities = TArray<UGMCAbility*, TInlineAllocator<8>>;
+	void GatherLiveCoveredAbilities(FGMASLiveAbilities& OutAbilities, bool bSkipPeerEnding) const;
 
 	// Ends waiting for FlushAbilityEndSyncs, oldest first.
 	TArray<FGMASAbilitySyncMessage> PendingEndSyncs;
