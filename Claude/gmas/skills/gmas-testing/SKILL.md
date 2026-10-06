@@ -68,6 +68,8 @@ void FMyAbilitySpec::Define()
 | `GenAncillaryTick(Dt, false)` | cooldown expiry, task-payload dispatch for `bActivateOnMovementTick = false` abilities, `OnAttributeChanged` / `OnActiveTagsChanged` | runs no gameplay replay logic (it does consume the replay-burst diagnostic's per-frame flag, 1.4+); safe to call freely |
 | `PreLocalMoveExecution()` | moves the oldest queued task payload and operation into their bound slots | one payload per call: `N` payloads take `N` moves |
 
+**Pair harness (1.5+).** `FGMASAbilitySyncPairHarness` (`Source/GMCAbilitySystemTests/Private/GMAS_AbilitySyncPairHarness.h`, used by `GMAS_AbilitySyncPairSpec.cpp`) builds a client and a server component on stub movement components, forces the server to authority and both to have a remote twin, and routes every sync message into one outbox. `Setup(Candidates)` grants the same candidates on both sides; `ActivateBothFromOperation(Tag, OperationID)` (a negative id, as a client stamps it) runs one activation through the real operation paths, with `ActivateClientFromOperation` / `ActivateServerFromOperation` for one side only (held-message cases). The test then chooses the network: `DeliverAll()`, `DeliverNext()`, `DropNext(Type)`, `Reorder()`, `CountOutbox(Type)`. Time: `AdvanceClocks(Seconds)` moves both confirm clocks, `Tick(Dt)` ticks and purges abilities, `AncillaryTick(Dt)` runs held-message expiry, pending end sends and the server's deferred peer ends; `FindByID(Side, AbilityID)` finds an instance. A reconnect case needs `SeedBoundQueueOperationDataForTest(0)` first. `Teardown()` ends every spec.
+
 **Seams (1.4+, `WITH_AUTOMATION_WORKER` only, bottom of `Public/Components/GMCAbilityComponent.h`).** They exist because GMC's role and replay queries are not virtual and several dispatch paths are private. `GMAS_BugFixSpec.cpp`, `GMAS_ClientAuthSpec.cpp`, `GMAS_TaskSpec.cpp` and `GMAS_AbilityEndSpec.cpp` show each in use. They are inspection hatches, not a substitute for layer 3: a forced flag proves the branch runs, not that the network takes it.
 
 | Seam | Opens |
@@ -83,6 +85,10 @@ void FMyAbilitySpec::Define()
 | `SeedBoundQueueOperationDataForTest(OperationID)` | a valid base struct in the operation slot when `BindReplicationData()` was not called |
 | `GetBoundQueueV2ForTest()` | the bound queue itself: seed client operations and payloads, call the drain helpers |
 | `TryActivateClientAuthAbilityForTest`, `CheckActivationTagsForClientAuthForTest` | the client-auth activation path without `QueueAbility`'s role gate |
+| `SyncSendHookForTest`, `ReceiveAbilitySyncForTest(Message)`, `SendAbilitySyncForTest(Message, bToServer)` (1.5+) | the ability-sync wire: the hook receives every message instead of the RPC; the receiver delivers one to this side; the sender injects one |
+| `bForceRemoteTwinForTest`, `HasRemoteAbilityTwinForTest()` (1.5+) | the "a remote peer exists" test that makes an orphan stub send and cover instances |
+| `GetHeldSyncMessagesForTest()`, `DeriveAbilityIDFromOperationForTest(OperationID, ActivationIndex)` (1.5+) | the early-message table, and the activation-id derivation both sides share |
+| `AdvanceConfirmClockForTest(Seconds)` (1.5+) | the local confirm clock: the 1 s grace, 2 s timeout, 5 s hold and digest cadence |
 | `GetProcessedEffectIDsForTest` | effect ids and their answer states (`GetEffectHandlesForTest` / `GetEffectFromHandleForTest` went with the handle registry in 1.4.1) |
 
 **Running.** From a project with GMC and GMAS enabled, with the editor closed (the two would share `Saved/` and, for PIE tests, the server port):
