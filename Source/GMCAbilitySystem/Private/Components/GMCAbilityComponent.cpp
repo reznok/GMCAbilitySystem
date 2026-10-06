@@ -327,10 +327,13 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		// An empty slot and a client-direction batch wrapper both carry OperationID 0, so both are
 		// skipped quietly: the batch is server-direction only, and its ack reaches us through the
 		// OutputState path above.
+		// A server-made operation (positive id) aimed at this client is echoed back in the client's
+		// next move; it is applied through the acknowledgement path, so it is skipped quietly too
+		// instead of failing the client-input allowlist.
 		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			const FGMASBoundQueueV2OperationBaseData* LiveOperation = BoundQueueV2.OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
-			if (LiveOperation && LiveOperation->OperationID != 0
+			if (LiveOperation && FGMASBoundQueueV2::IsClientMadeOperationID(LiveOperation->OperationID)
 				&& BoundQueueV2.IsValidClientOperation(BoundQueueV2.OperationData))
 			{
 				ProcessOperation(BoundQueueV2.OperationData, false);

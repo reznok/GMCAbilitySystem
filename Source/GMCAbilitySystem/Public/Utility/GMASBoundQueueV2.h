@@ -151,6 +151,10 @@ public:
 	
 	bool IsValidClientOperation(const FInstancedStruct& Data) const;
 
+	// Only negative ids are client-made. Positive ids are server-made (confirmed to the client through
+	// the acknowledgement path) and 0 is an empty slot or a batch wrapper.
+	static bool IsClientMadeOperationID(int OperationID) { return OperationID < 0; }
+
 	// Queue a Client operation
 	void QueueClientOperation(const int OperationID);
 
