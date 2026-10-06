@@ -1296,8 +1296,32 @@ private:
 	void ServerAbilitySync(const FGMASAbilitySyncMessage& Message);
 
 	// Sends one ability-sync message to the peer (bToServer: client -> server, else server -> client).
-	// Automation builds hand it to SyncSendHookForTest instead when the hook is bound.
+	// Non-shipping builds apply the fault-injection console variables first (GMAS.Debug.DropAbilityAnswers,
+	// GMAS.Debug.DropAbilityEnds, GMAS.Debug.DelayAbilityMessagesMs); then DispatchAbilitySync.
 	void SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer);
+
+	// The wire: the RPC, or SyncSendHookForTest when an automation build has it bound.
+	void DispatchAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer);
+
+	// A send held back by GMAS.Debug.DelayAbilityMessagesMs, released in order from the ancillary tick.
+	struct FDelayedAbilitySync
+	{
+		FGMASAbilitySyncMessage Message;
+		bool bToServer = false;
+		double ReleaseAt = 0.0;   // confirm clock
+	};
+	TArray<FDelayedAbilitySync> DelayedAbilitySyncs;
+
+	// Dispatches the delayed sends that are due, oldest first; a later one never overtakes an earlier one.
+	void FlushDelayedAbilitySyncs();
+
+	// Server, connection reset (a new owning connection took the pawn): cancels every covered instance
+	// without telling the new client (its ids restart and could meet them), drops them at once, and clears
+	// the held, pending and delayed messages and the digest cadence.
+	void ResetAbilitySyncForNewConnection();
+
+	// Server: an owning connection already requested its snapshot, so the next request is a reconnect.
+	bool bAbilitySyncConnectionSeen = false;
 
 	// Receives one ability-sync message; the role decides the client or server behaviour.
 	void HandleAbilitySync(const FGMASAbilitySyncMessage& Message);

@@ -42,6 +42,31 @@ namespace GMASApplyTrace {
 		ECVF_Default);
 }
 
+#if !UE_BUILD_SHIPPING
+namespace GMASAbilitySyncDebug {
+	// Fault injection for networked tests of the ability-sync convergence; applied by SendAbilitySync on the sender.
+	static TAutoConsoleVariable<int32> CVarDropAbilityAnswers(
+		TEXT("GMAS.Debug.DropAbilityAnswers"),
+		0,
+		TEXT("1: the server drops every ability answer (Confirmed / Rejected) it would send. Client instances then ")
+		TEXT("converge through the confirm timeout and their reported end."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDropAbilityEnds(
+		TEXT("GMAS.Debug.DropAbilityEnds"),
+		0,
+		TEXT("1: both sides drop every ability Ended message they would send. Orphans are then ended by the digest."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDelayAbilityMessagesMs(
+		TEXT("GMAS.Debug.DelayAbilityMessagesMs"),
+		0,
+		TEXT("Holds every ability-sync message on the sender for this many milliseconds of confirm clock ")
+		TEXT("(released in order from the ancillary tick). 0 = off."),
+		ECVF_Default);
+}
+#endif
+
 
 
 // Sets default values for this component's properties
@@ -2071,6 +2096,53 @@ void UGMC_AbilitySystemComponent::ServerAbilitySync_Implementation(const FGMASAb
 
 void UGMC_AbilitySystemComponent::SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer)
 {
+#if !UE_BUILD_SHIPPING
+	if (Message.Type == EGMASAbilitySyncType::Answer && GMASAbilitySyncDebug::CVarDropAbilityAnswers.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] answer op=%d dropped by GMAS.Debug.DropAbilityAnswers on %s"),
+			Message.OperationID, *GetNameSafe(GetOwner()));
+		return;
+	}
+	if (Message.Type == EGMASAbilitySyncType::Ended && GMASAbilitySyncDebug::CVarDropAbilityEnds.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] end %d dropped by GMAS.Debug.DropAbilityEnds on %s"),
+			Message.AbilityID, *GetNameSafe(GetOwner()));
+		return;
+	}
+	const int32 DelayMs = FMath::Max(0, GMASAbilitySyncDebug::CVarDelayAbilityMessagesMs.GetValueOnGameThread());
+	// While earlier sends are held, later ones queue behind them even with the delay back at 0: order is kept.
+	if (DelayMs > 0 || DelayedAbilitySyncs.Num() > 0)
+	{
+		FDelayedAbilitySync& Delayed = DelayedAbilitySyncs.AddDefaulted_GetRef();
+		Delayed.Message = Message;
+		Delayed.bToServer = bToServer;
+		Delayed.ReleaseAt = GetConfirmClock() + DelayMs / 1000.0;
+		return;
+	}
+#endif
+	DispatchAbilitySync(Message, bToServer);
+}
+
+void UGMC_AbilitySystemComponent::FlushDelayedAbilitySyncs()
+{
+	if (DelayedAbilitySyncs.Num() == 0) { return; }
+	const double Now = GetConfirmClock();
+	int32 Due = 0;
+	while (Due < DelayedAbilitySyncs.Num() && DelayedAbilitySyncs[Due].ReleaseAt <= Now)
+	{
+		++Due;
+	}
+	if (Due == 0) { return; }
+	TArray<FDelayedAbilitySync> ToSend(DelayedAbilitySyncs.GetData(), Due);
+	DelayedAbilitySyncs.RemoveAt(0, Due);
+	for (const FDelayedAbilitySync& Delayed : ToSend)
+	{
+		DispatchAbilitySync(Delayed.Message, Delayed.bToServer);
+	}
+}
+
+void UGMC_AbilitySystemComponent::DispatchAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer)
+{
 #if WITH_AUTOMATION_WORKER
 	if (SyncSendHookForTest)
 	{
@@ -2291,6 +2363,41 @@ void UGMC_AbilitySystemComponent::TickAbilitySync()
 	{
 		TickAbilityDigest();
 	}
+
+	FlushDelayedAbilitySyncs();
+}
+
+void UGMC_AbilitySystemComponent::ResetAbilitySyncForNewConnection()
+{
+	TArray<UGMCAbility*> Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
+	for (UGMCAbility* Ability : Live)
+	{
+		Ability->bEndSyncNoted = true;   // the new connection never had it: nothing to report
+		Ability->PeerEndAt = 0.0;
+		Ability->CancelAbility();
+	}
+
+	// Drop the cancelled instances now, not at the next purge: the new client's operation ids restart and
+	// derive the same AbilityIDs, which must not meet an old instance (or the recently-ended ring).
+	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
+	{
+		if (It.Value() && It.Value()->IsCovered() && It.Value()->AbilityState == EAbilityState::Ended)
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	HeldSyncMessages.Reset();
+	PendingEndSyncs.Reset();
+	DelayedAbilitySyncs.Reset();
+	const double Now = GetConfirmClock();
+	LastDigestReceivedAt = Now;
+	LastDigestRequestedAt = Now;
+	LastDigestSentAt = Now;
+
+	UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] connection reset on %s: %d covered instance(s) cancelled"),
+		*GetNameSafe(GetOwner()), Live.Num());
 }
 
 void UGMC_AbilitySystemComponent::NoteAbilityEndedForSync(UGMCAbility* Ability)
@@ -2679,8 +2786,17 @@ void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementa
 	// FGMASBoundQueueV2::NextOperationID at 0 and re-issues -1, -2, -3 ... Keeping the rings would
 	// make the server refuse every re-issued id as already consumed, permanently. The rings are
 	// valid for the lifetime of a CONNECTION, not of the component.
+	// On a reconnect, covered abilities end first (the new client starts with none); game logic
+	// re-activates. A pawn's first owning connection asks too, right after login: its covered instances
+	// already belong to that connection and are kept.
+	if (bAbilitySyncConnectionSeen)
+	{
+		ResetAbilitySyncForNewConnection();
+	}
+	bAbilitySyncConnectionSeen = true;
 	ConsumedActivationOperationIDs.Reset();
 	RecentlyEndedAbilityIDs.Reset();
+	RecentlyEndedAbilityTimes.Reset();
 	BoundQueueV2.ResetForNewConnection();   // the processed-op ring and the client's cached payloads
 
 	TArray<FGMCEffectSnapshot> Snapshots;

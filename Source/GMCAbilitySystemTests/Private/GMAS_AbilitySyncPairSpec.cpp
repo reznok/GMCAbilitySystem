@@ -6,6 +6,7 @@
 #include "UGMAS_TestAbility.h"
 #include "UGMAS_TestAbilityB.h"
 #include "UGMAS_TestEventRecorder.h"
+#include "HAL/IConsoleManager.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -88,6 +89,15 @@ BEGIN_DEFINE_SPEC(FGMASAbilitySyncPairSpec,
 		return Count;
 	}
 
+	// Sets one of the fault-injection console variables; false when it does not exist (shipping, or missing).
+	static bool SetDebugCVar(const TCHAR* Name, int32 Value)
+	{
+		IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name);
+		if (!CVar) { return false; }
+		CVar->Set(Value, ECVF_SetByCode);
+		return true;
+	}
+
 END_DEFINE_SPEC(FGMASAbilitySyncPairSpec)
 
 void FGMASAbilitySyncPairSpec::Define()
@@ -123,6 +133,9 @@ void FGMASAbilitySyncPairSpec::Define()
 		}
 		GetMutableDefault<UGMAS_TestAbility>()->bEndOnBegin = false;
 		GetMutableDefault<UGMAS_TestAbility>()->bActivateOnMovementTick = true;
+		SetDebugCVar(TEXT("GMAS.Debug.DropAbilityAnswers"), 0);
+		SetDebugCVar(TEXT("GMAS.Debug.DropAbilityEnds"), 0);
+		SetDebugCVar(TEXT("GMAS.Debug.DelayAbilityMessagesMs"), 0);
 	});
 
 	Describe("Harness", [this]()
@@ -801,6 +814,99 @@ void FGMASAbilitySyncPairSpec::Define()
 			TestEqual(TEXT("client running"), Client->AbilityState, EAbilityState::Initialized);
 			TestEqual(TEXT("server running"), Server->AbilityState, EAbilityState::Initialized);
 			TestEqual(TEXT("nothing pending"), Pair.Outbox.Num(), 0);
+		});
+	});
+
+	Describe("Reconnect", [this]()
+	{
+		It("a reconnect cancels every covered instance and clears the held table, sending nothing", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("server"), Server)) { return; }
+			TestTrue(TEXT("server-only"), Pair.Server->TryActivateAbility(UGMAS_TestAbilityB::StaticClass()));
+
+			FGMASAbilitySyncMessage Early;   // a client end for an instance the server has not created
+			Early.Type = EGMASAbilitySyncType::Ended;
+			Early.AbilityID = IDFor(1) + 1000;
+			Pair.Server->ReceiveAbilitySyncForTest(Early);
+			TestEqual(TEXT("held before the reset"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 1);
+
+			// The first request is the owning connection's own, right after login: its instances are kept.
+			Pair.Server->Server_RequestActiveEffectsSnapshot_Implementation();
+			TestEqual(TEXT("kept on the first connection's request"), Server->AbilityState, EAbilityState::Initialized);
+			TestEqual(TEXT("held kept on the first request"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 1);
+
+			// A later request is a new connection taking the pawn over.
+			Pair.Server->Server_RequestActiveEffectsSnapshot_Implementation();
+			TestEqual(TEXT("covered instance cancelled"), Server->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("cancel hook"), Server->CancelAbilityEventCount, 1);
+			TestNull(TEXT("and gone, so a new connection's ids cannot meet it"), ServerA());
+			TestEqual(TEXT("held table cleared"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 0);
+			TestEqual(TEXT("server-only instance kept"), Pair.Server->GetActiveAbilities().Num(), 1);
+
+			// The new client's first move overwrites the bound operation slot that still holds the old -3.
+			Pair.Server->SeedBoundQueueOperationDataForTest(0);
+			Pair.Tick();
+			Pair.AdvanceClocks(1.1);
+			Pair.Server->GenAncillaryTick(0.f, false);
+			TestEqual(TEXT("nothing sent to the new connection"), Pair.Outbox.Num(), 0);
+		});
+	});
+
+	Describe("FaultInjection", [this]()
+	{
+		It("dropped answers (DropAbilityAnswers cvar): the pair converges through the timeout and the reported end", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("[AbilityCut] Client cancelling unconfirmed ability"), EAutomationExpectedErrorFlags::Contains, 1);
+			if (!TestTrue(TEXT("cvar exists"), SetDebugCVar(TEXT("GMAS.Debug.DropAbilityAnswers"), 1))) { return; }
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			SetDebugCVar(TEXT("GMAS.Debug.DropAbilityAnswers"), 0);
+			TestEqual(TEXT("answer dropped"), Pair.CountOutbox(EGMASAbilitySyncType::Answer), 0);
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Pair.AdvanceClocks(2.5);
+			Pair.Tick();
+			TestEqual(TEXT("client timed out"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("its end reported"), CountOutbox(EGMASAbilitySyncType::Ended, true), 1);
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(1.1);
+			Pair.AncillaryTick();
+			Pair.DeliverAll();
+			TestEqual(TEXT("server cancelled"), Server->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("server cancel hook"), Server->CancelAbilityEventCount, 1);
+		});
+
+		It("the DropAbilityEnds cvar drops ends in both directions", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			if (!TestTrue(TEXT("cvar exists"), SetDebugCVar(TEXT("GMAS.Debug.DropAbilityEnds"), 1))) { return; }
+			ClientA()->EndAbility();
+			ServerA()->EndAbility();
+			Pair.Tick();
+			Pair.AncillaryTick();
+			TestEqual(TEXT("no Ended sent"), Pair.CountOutbox(EGMASAbilitySyncType::Ended), 0);
+		});
+
+		It("the DelayAbilityMessagesMs cvar holds sends on the sender and releases them in order", [this]()
+		{
+			if (!TestTrue(TEXT("cvar exists"), SetDebugCVar(TEXT("GMAS.Debug.DelayAbilityMessagesMs"), 500))) { return; }
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			ServerA()->EndAbility();
+			Pair.Tick();
+			TestEqual(TEXT("nothing sent yet"), Pair.Outbox.Num(), 0);
+			Pair.AdvanceClocks(0.3);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("still held at 0.3 s"), Pair.Outbox.Num(), 0);
+			Pair.AdvanceClocks(0.3);
+			Pair.AncillaryTick();
+			if (!TestEqual(TEXT("released at 0.6 s"), Pair.Outbox.Num(), 2)) { return; }
+			TestEqual(TEXT("the answer first"), Pair.Outbox[0].Value.Type, EGMASAbilitySyncType::Answer);
+			TestEqual(TEXT("then the end"), Pair.Outbox[1].Value.Type, EGMASAbilitySyncType::Ended);
 		});
 	});
 }
