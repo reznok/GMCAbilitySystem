@@ -4,6 +4,8 @@
 #include "Components/GMCAbilityComponent.h"
 
 #include "GMCAbilitySystem.h"
+#include "CoreGlobals.h"
+#include "HAL/PlatformTime.h"
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "NiagaraComponent.h"
@@ -790,7 +792,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 					break;
 				}
 			}
-			const double BlockerAge = Blocker ? ActionTimer - Blocker->GetClientStartTime() : 0.0;
+			const double BlockerAge = Blocker ? GetConfirmClock() - Blocker->GetClientConfirmStartTime() : 0.0;
 			if (Blocker && BlockerAge > SuspiciousBlockerAge)
 			{
 				UE_LOG(LogGMCAbilitySystem, Warning,
@@ -842,7 +844,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs. Without this
 	// gate the client receives RPCConfirmAbilityActivation for an ability the server
 	// just cancelled, sets bServerConfirmed=true, and the Tick-time
-	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
+	// `ClientConfirmStartTime + ServerConfirmTimeout < confirm clock` check never fires —
 	// the predicted ability runs indefinitely on the client.
 	// Skip the confirm RPC when the activation came from the client-auth path
 	// (the client never expects confirmation for trust-based activations).
@@ -1160,6 +1162,22 @@ void UGMC_AbilitySystemComponent::MatchTagToBool(const FGameplayTag& InTag, bool
 	else{
 		RemoveActiveTag(InTag);
 	}
+}
+
+double UGMC_AbilitySystemComponent::GetConfirmClock()
+{
+	const uint64 Frame = GFrameCounter;
+	if (Frame != LastConfirmFrame)
+	{
+		const double RealNow = FPlatformTime::Seconds();
+		if (LastConfirmFrame != static_cast<uint64>(-1))
+		{
+			ConfirmClock += FMath::Clamp(RealNow - LastConfirmRealTime, 0.0, MaxConfirmClockStep);
+		}
+		LastConfirmRealTime = RealNow;
+		LastConfirmFrame = Frame;
+	}
+	return ConfirmClock;
 }
 
 bool UGMC_AbilitySystemComponent::IsServerOnly() const
@@ -1810,7 +1828,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			!EffectValue->EffectData.bServerAuth
 			&& ProcessedEffectIDs.Contains(Key)
 			&& ProcessedEffectIDs[Key] == EGMCEffectAnswerState::Pending
-			&& EffectValue->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+			&& EffectValue->ClientConfirmStartTime + ClientEffectApplicationTimeout < GetConfirmClock())
 		{
 			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);

@@ -28,12 +28,13 @@ FString UGMCAbility::GetAbilityCutDiagnostics() const
 	const bool bAuthority = OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority();
 	const bool bReplaying = OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic();
 	const double Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
+	const double ConfirmNow = OwnerAbilityComponent ? OwnerAbilityComponent->GetConfirmClock() : -1.0;
 
 	FString Out = FString::Printf(
-		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f Tasks=%d"),
+		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f ConfirmClock=%.3f ConfirmAge=%.3f Tasks=%d"),
 		*GetName(), *AbilityTag.ToString(), AbilityID, *EnumToString(AbilityState),
 		bServerConfirmed ? 1 : 0, bActivateOnMovementTick ? 1 : 0, bAuthority ? 1 : 0, bReplaying ? 1 : 0,
-		Timer, ClientStartTime, Timer - ClientStartTime, RunningTasks.Num());
+		Timer, ClientStartTime, Timer - ClientStartTime, ConfirmNow, ConfirmNow - ClientConfirmStartTime, RunningTasks.Num());
 
 	for (const TPair<int, UGMCAbilityTaskBase*>& TaskPair : RunningTasks)
 	{
@@ -105,7 +106,10 @@ void UGMCAbility::Tick(float DeltaTime)
 
 	if (!OwnerAbilityComponent->IsAuthorityForGMASLogic())
 	{
-		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
+		// Timed on the confirm clock, not ActionTimer: ActionTimer is the move timestamp and jumps to
+		// the server's clock when a joining client's first moves are acknowledged, which would read
+		// as an age of thousands of seconds and cancel a healthy prediction.
+		if (!bServerConfirmed && ClientConfirmStartTime + ServerConfirmTimeout < OwnerAbilityComponent->GetConfirmClock())
 		{
 			// [AbilityCut] probe: the server never confirmed this AbilityID within the timeout.
 			// Either the server rejected/never ran the activation, or client/server generated
@@ -230,6 +234,7 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
+	this->ClientConfirmStartTime = InAbilityComponent->GetConfirmClock();
 	PreBeginAbility();
 }
 

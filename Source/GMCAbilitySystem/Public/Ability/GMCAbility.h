@@ -354,6 +354,7 @@ public:
 	// Local activation time, in ActionTimer units. Diagnostics only: subtract it from the
 	// component's ActionTimer to age an instance that is holding a gate.
 	double GetClientStartTime() const { return ClientStartTime; }
+	double GetClientConfirmStartTime() const { return ClientConfirmStartTime; }
 
 protected:
 
@@ -393,6 +394,11 @@ private:
 	TSet<int> WarnedDivergentTaskIDs;
 
 	double ClientStartTime = 0.0;
+
+	// Start stamp for the unconfirmed-activation timeout, taken from the component's confirm clock
+	// (UGMC_AbilitySystemComponent::GetConfirmClock), never from ActionTimer, which re-bases to the
+	// server clock when a client joins.
+	double ClientConfirmStartTime = 0.0;
 	
 
 

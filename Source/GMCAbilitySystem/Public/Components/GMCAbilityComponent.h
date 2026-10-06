@@ -220,6 +220,23 @@ public:
 	// Is this a server-only pawn (not player-controlled)?
 	bool IsServerOnly() const;
 
+	/**
+	 * Client-side "confirm clock": a monotonic local clock, in seconds, for timeouts that wait on a
+	 * network answer (server confirmation of a predicted ability or effect).
+	 *
+	 * ActionTimer cannot serve: it is the GMC move timestamp, which re-bases to the server's clock
+	 * once a joining client's first moves are acknowledged (near 0, then thousands of seconds on a
+	 * long-running server). A start stamp taken before the jump compared with ActionTimer after it
+	 * reads as an age of thousands of seconds and cancels a perfectly healthy prediction.
+	 *
+	 * The clock advances by real frame time, at most once per engine frame (replays and combined
+	 * moves inside one frame see one value), and each step is capped at MaxConfirmClockStep so a
+	 * loading hitch does not count as waiting for the server. It is independent of ActionTimer.
+	 */
+	double GetConfirmClock();
+
+	static constexpr double MaxConfirmClockStep = 0.25;
+
 	// Draw to log the attribute
 	void DrawDebugAttribute(const FGameplayTag& AttributeTag) const;
 	
@@ -1286,6 +1303,9 @@ private:
 
 #if WITH_AUTOMATION_WORKER
 public:
+	// Test seam: moves the confirm clock forward by an exact amount, bypassing the real-time cap.
+	void AdvanceConfirmClockForTest(double Seconds) { GetConfirmClock(); ConfirmClock += Seconds; }
+
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
 	// Test seam: inject entries (e.g. a null value) to exercise query guards.
@@ -1408,6 +1428,12 @@ public:
 	}
 private:
 #endif
+
+private:
+	// State of GetConfirmClock(). Never bound or replicated: purely local.
+	double ConfirmClock = 0.0;
+	double LastConfirmRealTime = 0.0;
+	uint64 LastConfirmFrame = static_cast<uint64>(-1);
 
 public:
 	// Centralized "are we currently inside a GMC replay?" check used by GMAS-side

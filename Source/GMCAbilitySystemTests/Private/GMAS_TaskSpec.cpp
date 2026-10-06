@@ -155,6 +155,7 @@ void FGMASTaskSpec::Define()
 			if (!TestNotNull("instance", Ability)) { return; }
 
 			AbilityComp->SetActionTimerForTest(kStart + 2.5);   // ClientStartTime kStart + ServerConfirmTimeout 2.0 < kStart + 2.5
+			AbilityComp->AdvanceConfirmClockForTest(2.5);   // the confirm timeout runs on the confirm clock
 			AbilityComp->TickActiveAbilitiesForTest(0.5f);
 			TestEqual("ended by the confirm timeout", Ability->AbilityState, EAbilityState::Ended);
 		});

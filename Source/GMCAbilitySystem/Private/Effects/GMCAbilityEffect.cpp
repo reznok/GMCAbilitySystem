@@ -40,6 +40,7 @@ void UGMCAbilityEffect::InitializeEffect(FGMCAbilityEffectData InitializationDat
 	}
 	
 	ClientEffectApplicationTime = OwnerAbilityComponent->ActionTimer;
+	ClientConfirmStartTime = OwnerAbilityComponent->GetConfirmClock();
 
 	// If server sends times, use those
 	// Only used in the case of a non predicted effect

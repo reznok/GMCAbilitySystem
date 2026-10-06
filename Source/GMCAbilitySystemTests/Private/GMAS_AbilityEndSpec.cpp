@@ -314,6 +314,7 @@ void FGMASAbilityEndSpec::Define()
 			UGMAS_TestAbility* Ability = FirstLiveAbility();
 			if (!TestNotNull("instance", Ability)) { return; }
 			AbilityComp->SetActionTimerForTest(3.5);
+			AbilityComp->AdvanceConfirmClockForTest(2.5);   // the confirm timeout runs on the confirm clock
 			AbilityComp->TickActiveAbilitiesForTest(0.5f);
 			TestEqual("Ended", Ability->AbilityState, EAbilityState::Ended);
 			TestEqual("no end event", Ability->EndAbilityEventCount, 0);
