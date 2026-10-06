@@ -1277,11 +1277,6 @@ private:
 	// for safety — entries naturally expire if the effect UObject is GC'd.
 	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
 
-	// Let the client know that the server has activated this ability as well
-	// Needed for the client to cancel mis-predicted abilities
-	UFUNCTION(Client, Reliable)
-	void RPCConfirmAbilityActivation(int AbilityID);
-
 	// Let the client know that the server has ended an ability
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
@@ -1313,6 +1308,34 @@ private:
 	// connection: on the server, a pawn controlled by a remote client; on a client, its autonomous proxy.
 	// Standalone, the listen host's own pawn and AI have none, and are never synced.
 	bool HasRemoteAbilityTwin() const;
+
+	// Server: answers the covered activation operation OperationID once, after its candidate loop.
+	// ActivatedIndex is the candidate whose TryActivateAbility succeeded (INDEX_NONE: none passed its gates).
+	// Confirmed when that instance began, Rejected otherwise (gates refused, or PreBeginAbility refused it).
+	void SendAbilityAnswer(int OperationID, int ActivatedIndex);
+
+	// Client: an answer for one of its activation operations arrived.
+	void HandleAbilityAnswer(const FGMASAbilitySyncMessage& Message);
+
+	// Applies the held messages naming a covered instance that was just created (its operation's answer,
+	// an end for its AbilityID) and removes them from the held table.
+	void ApplyHeldSyncMessages(UGMCAbility* Created);
+
+	// Carries out a GMASAbilitySyncRules decision on a local covered instance.
+	void ApplyAbilitySyncAction(UGMCAbility* Ability, EGMASSyncAction Action, const FGMASAbilitySyncMessage& Message);
+
+	// Holds a message for an operation or AbilityID this side does not have yet (AbilityAnswerHoldTime).
+	void HoldAbilitySyncMessage(const FGMASAbilitySyncMessage& Message);
+
+	// Ancillary tick: drops expired held messages and applies held ones to covered instances created
+	// where they could not be applied at once (inside a replayed move).
+	void TickAbilitySync();
+
+	// The live (not ended) covered instance created from OperationID, or null.
+	UGMCAbility* FindLiveCoveredAbilityByOperation(int OperationID) const;
+
+	// The rules unit's view of a covered instance.
+	FGMASCoveredAbility DescribeCoveredAbility(const UGMCAbility& Ability) const;
 
 	// Messages that arrived for an operation or AbilityID this side does not have yet.
 	TArray<FGMASHeldSyncMessage> HeldSyncMessages;

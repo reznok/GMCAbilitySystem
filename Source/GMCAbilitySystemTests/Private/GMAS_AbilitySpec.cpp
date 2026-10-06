@@ -10,8 +10,8 @@
 //
 // Limitations at this layer (covered in Layer 3):
 //   • Ability queuing via BoundQueueV2 — requires a real GMC move loop.
-//   • Networked ability confirmation (RPCConfirmAbilityActivation is skipped
-//     because the stub has no owner → HasAuthority() = false).
+//   • Networked ability confirmation: ability-sync answers need a remote twin, which an
+//     ownerless stub lacks (the two-component pair harness covers it: GMAS.Unit.AbilitySync.Pair).
 
 #include "Misc/AutomationTest.h"
 #include "NativeGameplayTags.h"

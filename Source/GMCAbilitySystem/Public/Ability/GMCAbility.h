@@ -363,10 +363,13 @@ public:
 	int32 GetSourceCandidateIndex() const { return SourceCandidateIndex; }
 	// Created on the authority without an operation: no client twin, never synced.
 	bool IsServerOnly() const { return bServerOnly; }
-	// Created through the client-authorized activation path: the server never answers it.
+	// Created through the client-authorized activation path: exempt from the client confirm timeout.
 	bool IsClientAuthorized() const { return bClientAuthorized; }
 	// Covered instances have a twin on the other side of an owning-client connection and converge with it.
 	bool IsCovered() const { return SourceOperationID != 0 && !bServerOnly; }
+	// True once the activation passed every gate of PreBeginAbility and its activation broadcast, i.e. the
+	// ability began (it may have ended since). False for an activation refused there.
+	bool HasPassedActivationGates() const { return bPassedActivationGates; }
 
 protected:
 
@@ -417,6 +420,10 @@ private:
 	int32 SourceCandidateIndex = 0;
 	bool bServerOnly = false;
 	bool bClientAuthorized = false;
+
+	// Set in PreBeginAbility right before BeginAbility: the server answers Confirmed for an instance
+	// that began, Rejected for one refused at activation.
+	bool bPassedActivationGates = false;
 
 	friend class UGMC_AbilitySystemComponent;
 

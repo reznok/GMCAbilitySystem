@@ -90,6 +90,8 @@ void FGMASClientAuthSpec::TeardownHarness()
     if (AbilityComp)
     {
         AbilityComp->bForceAuthorityForTest = false;
+        AbilityComp->bForceRemoteTwinForTest = false;
+        AbilityComp->SyncSendHookForTest = nullptr;
     }
 
     if (AbilityComp) { AbilityComp->RemoveFromRoot(); AbilityComp = nullptr; }
@@ -274,14 +276,23 @@ void FGMASClientAuthSpec::Define()
             Op.InputTag = AbilityTagA;
             Op.InputAction = nullptr;
 
+            // A remote owning client: the refusal is answered so its predicted instance ends at once.
+            TArray<FGMASAbilitySyncMessage> Sent;
+            AbilityComp->bForceRemoteTwinForTest = true;
+            AbilityComp->SyncSendHookForTest = [&Sent](const FGMASAbilitySyncMessage& Message, bool) { Sent.Add(Message); };
+
             FInstancedStruct InstancedOp = FInstancedStruct::Make(Op);
             AbilityComp->ServerProcessOperationForTest(InstancedOp, false);
 
             TestEqual(TEXT("Spoofed activation must not produce an active ability"),
                 AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 0);
+            TestEqual(TEXT("one answer"), Sent.Num(), 1);
+            TestTrue(TEXT("answered Rejected"), Sent.Num() == 1
+                && Sent[0].Type == EGMASAbilitySyncType::Answer && Sent[0].Answer == EGMASAbilityAnswer::Rejected
+                && Sent[0].OperationID == -1);
         });
 
-        It("server activates whitelisted client-auth ability without RPCConfirm", [this]()
+        It("server activates whitelisted client-auth ability and answers it Confirmed", [this]()
         {
             UGMAS_TestAbility* CDO = GetMutableDefault<UGMAS_TestAbility>();
             CDO->bActivateOnMovementTick = false;
@@ -298,11 +309,42 @@ void FGMASClientAuthSpec::Define()
             Op.InputTag = AbilityTagA;
             Op.InputAction = nullptr;
 
+            TArray<FGMASAbilitySyncMessage> Sent;
+            AbilityComp->bForceRemoteTwinForTest = true;
+            AbilityComp->SyncSendHookForTest = [&Sent](const FGMASAbilitySyncMessage& Message, bool) { Sent.Add(Message); };
+
             FInstancedStruct InstancedOp = FInstancedStruct::Make(Op);
             AbilityComp->ServerProcessOperationForTest(InstancedOp, false);
+            AbilityComp->ServerProcessOperationForTest(InstancedOp, false);   // a re-read of the same slot
 
             TestEqual(TEXT("Whitelisted activation must produce an active ability"),
                 AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 1);
+            TestEqual(TEXT("answered once"), Sent.Num(), 1);
+            TestTrue(TEXT("answered Confirmed with the operation-derived id"), Sent.Num() == 1
+                && Sent[0].Type == EGMASAbilitySyncType::Answer && Sent[0].Answer == EGMASAbilityAnswer::Confirmed
+                && Sent[0].OperationID == -1
+                && Sent[0].AbilityID == UGMC_AbilitySystemComponent::DeriveAbilityIDFromOperationForTest(-1, 0));
+        });
+
+        It("a client-authorized instance never times out on the client", [this]()
+        {
+            UGMAS_TestAbility* CDO = GetMutableDefault<UGMAS_TestAbility>();
+            CDO->bActivateOnMovementTick = false;
+            AbilityComp->ClientAuthorizedAbilities.Add(UGMAS_TestAbility::StaticClass());
+            AbilityComp->AddAbilityMapData({AbilityTagA, {UGMAS_TestAbility::StaticClass()}});
+            AbilityComp->GrantAbilityByTag(AbilityTagA);
+
+            // Client side (no authority): the operation-derived activation, never answered by a confirm.
+            TestTrue(TEXT("activated"), AbilityComp->TryActivateClientAuthAbilityForTest(
+                UGMAS_TestAbility::StaticClass(), AbilityTagA, nullptr));
+            UGMCAbility* Ability = nullptr;
+            for (const TPair<int, UGMCAbility*>& Pair : AbilityComp->GetActiveAbilities()) { Ability = Pair.Value; }
+            if (!TestNotNull(TEXT("instance"), Ability)) { return; }
+            TestTrue(TEXT("client-authorized"), Ability->IsClientAuthorized());
+
+            AbilityComp->AdvanceConfirmClockForTest(5.0);
+            AbilityComp->TickActiveAbilitiesForTest(0.016f);
+            TestEqual(TEXT("still running past ServerConfirmTimeout"), Ability->AbilityState, EAbilityState::Initialized);
         });
 
         It("server rejects ClientAuth effect with non-client-auth ID range (anti-cheat)", [this]()

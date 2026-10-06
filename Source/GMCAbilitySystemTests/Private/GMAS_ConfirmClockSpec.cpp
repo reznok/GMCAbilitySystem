@@ -96,6 +96,29 @@ void FGMASConfirmClockSpec::Define()
 			AbilityComp->TickActiveAbilitiesForTest(0.016f);
 			TestEqual("still running", Ability->AbilityState, EAbilityState::Initialized);
 		});
+
+		It("stays when the server's Confirmed answer for its operation arrives before the timeout", [this]()
+		{
+			constexpr int OpID = -5;
+			const int AbilityID = UGMC_AbilitySystemComponent::DeriveAbilityIDFromOperationForTest(OpID, 0);
+			AbilityComp->TryActivateAbility(UGMAS_TestDelayAbility::StaticClass(), nullptr, FGameplayTag::EmptyTag,
+				false, AbilityID, OpID, /*SourceCandidateIndex=*/0);
+			UGMCAbility* Ability = FirstActiveAbility();
+			if (!TestNotNull("instance", Ability)) { return; }
+
+			FGMASAbilitySyncMessage Answer;
+			Answer.Type = EGMASAbilitySyncType::Answer;
+			Answer.OperationID = OpID;
+			Answer.AbilityID = AbilityID;
+			Answer.Answer = EGMASAbilityAnswer::Confirmed;
+			AbilityComp->ReceiveAbilitySyncForTest(Answer);
+			TestTrue("confirmed by the answer", Ability->IsServerConfirmed());
+
+			AbilityComp->SetActionTimerForTest(3006.326);
+			AbilityComp->AdvanceConfirmClockForTest(kPastConfirmTimeout);
+			AbilityComp->TickActiveAbilitiesForTest(0.016f);
+			TestEqual("still running", Ability->AbilityState, EAbilityState::Initialized);
+		});
 	});
 
 	Describe("Pending predicted effect", [this]()

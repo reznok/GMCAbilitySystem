@@ -1,7 +1,7 @@
 // Ability end paths: the natural end (EndAbility: end event, OnAbilityEnded, chain window) against
 // the cancel (CancelAbility: FinishEndAbility only) on every path that interrupts an ability from
-// outside: CancelAbilitiesByTag / ByQuery, an effect's CancelAbilityOnActivation and the client
-// confirm timeout. Also the AbilityCost gate (refusal before BeginAbility, a committed Instant cost,
+// outside: CancelAbilitiesByTag / ByQuery, an effect's CancelAbilityOnActivation, the client
+// confirm timeout and the server's Rejected answer. Also the AbilityCost gate (refusal before BeginAbility, a committed Instant cost,
 // a declared lasting cost, GetAbilityCostValues) and the instance defaults an activation inherits
 // from its CDO. Headless UGMAS_TestMovementCmp + UGMC_AbilitySystemComponent harness, no world.
 
@@ -316,6 +316,28 @@ void FGMASAbilityEndSpec::Define()
 			AbilityComp->SetActionTimerForTest(3.5);
 			AbilityComp->AdvanceConfirmClockForTest(2.5);   // the confirm timeout runs on the confirm clock
 			AbilityComp->TickActiveAbilitiesForTest(0.5f);
+			TestEqual("Ended", Ability->AbilityState, EAbilityState::Ended);
+			TestEqual("no end event", Ability->EndAbilityEventCount, 0);
+			TestEqual("cancel event once", Ability->CancelAbilityEventCount, 1);
+			TestEqual("OnAbilityCancelled once", Recorder->AbilityCancelledCount, 1);
+			TestFalse("no window", AbilityComp->HasActiveTag(WindowTag));
+		});
+
+		It("the server's Rejected answer cancels", [this]()
+		{
+			AbilityComp->bForceAuthorityForTest = false;
+			constexpr int OpID = -9;
+			const int AbilityID = UGMC_AbilitySystemComponent::DeriveAbilityIDFromOperationForTest(OpID, 0);
+			AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass(), nullptr, FGameplayTag::EmptyTag,
+				false, AbilityID, OpID, /*SourceCandidateIndex=*/0);
+			UGMAS_TestAbility* Ability = FirstLiveAbility();
+			if (!TestNotNull("instance", Ability)) { return; }
+
+			FGMASAbilitySyncMessage Answer;
+			Answer.Type = EGMASAbilitySyncType::Answer;
+			Answer.OperationID = OpID;
+			Answer.Answer = EGMASAbilityAnswer::Rejected;
+			AbilityComp->ReceiveAbilitySyncForTest(Answer);
 			TestEqual("Ended", Ability->AbilityState, EAbilityState::Ended);
 			TestEqual("no end event", Ability->EndAbilityEventCount, 0);
 			TestEqual("cancel event once", Ability->CancelAbilityEventCount, 1);

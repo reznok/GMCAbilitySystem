@@ -109,14 +109,20 @@ void UGMCAbility::Tick(float DeltaTime)
 		// Timed on the confirm clock, not ActionTimer: ActionTimer is the move timestamp and jumps to
 		// the server's clock when a joining client's first moves are acknowledged, which would read
 		// as an age of thousands of seconds and cancel a healthy prediction.
-		if (!bServerConfirmed && ClientConfirmStartTime + ServerConfirmTimeout < OwnerAbilityComponent->GetConfirmClock())
+		// The last resort of ability sync: the server answers every covered activation (Confirmed or
+		// Rejected), so only an activation the server never processed (a lost operation) reaches this.
+		// Client-authorized instances are never answered by a confirm and never time out.
+		FGMASCoveredAbility Covered;
+		Covered.bConfirmed = bServerConfirmed;
+		Covered.bClientAuthorized = bClientAuthorized;
+		Covered.StartConfirmClock = ClientConfirmStartTime;
+		if (GMASAbilitySyncRules::ShouldTimeOut(Covered, OwnerAbilityComponent->GetConfirmClock(), ServerConfirmTimeout))
 		{
-			// [AbilityCut] probe: the server never confirmed this AbilityID within the timeout.
-			// Either the server rejected/never ran the activation, or client/server generated
-			// diverging AbilityIDs and the confirm RPC targeted an instance we don't have.
-			// Full task dump so the log shows what the prediction was doing when it died.
+			// [AbilityCut] probe: no answer for this activation within the timeout. The server never
+			// ran the activation (its operation was lost), or the answer was lost. Full task dump so
+			// the log shows what the prediction was doing when it died.
 			UE_LOG(LogGMCAbilitySystem, Error,
-				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
+				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no ability answer received). %s"),
 				ServerConfirmTimeout, *GetAbilityCutDiagnostics());
 			CancelAbility();
 			return;
@@ -842,6 +848,7 @@ bool UGMCAbility::PreBeginAbility()
 		return false;
 	}
 
+	bPassedActivationGates = true;
 	BeginAbility();
 
 	return true;
