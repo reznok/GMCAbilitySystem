@@ -134,6 +134,22 @@ Hits, damage and anything else that decides an outcome belong on the server, ins
 - GMC can roll *other* pawns back to the executing pawn's view time while a move runs (`bRollBackServerPawns`, `bRollBackClientPawns`, both default true; `OnPawnRolledBack`). This is why hooks fire with historical states on pawns that are not the one moving.
 - The displayed transform of a simulated proxy lags the authoritative one, so local distance checks between a predicted pawn and a simulated proxy compare *now* with *then*. Decide outcomes on the server.
 
+## Teleports and other discontinuities
+
+A teleport is seen three ways: the owning client predicts it, the server executes it, simulated proxies interpolate it. Each needs its own handling.
+
+| Who | Goes wrong as | Handling |
+|---|---|---|
+| owning client | a correction (rubber band) when client and server do not move the pawn in the same logical move | a server-authored teleport through the target's ASC, `SetActorLocation(FVector)`: a server operation applied inside the target's move on both sides and re-applied by replays (`gmas:gmas-rules`). Never write the location on the server outside a move (GMC corrects the client to it), and never from an RPC |
+| simulated proxies | interpolation slides the pawn across the gap | mark the move: GMAS binds `bJustTeleported` (server-authoritative output, simulated); a proxy whose smoothing target carries it snaps instead of interpolating (`GenSimulationTick`). The `SetActorLocation` operation sets it (1.4.2+); a teleport an ability performs calls `SetOwnerJustTeleported(true)` in the same move. Fallback: the smoothing params' `TeleportThreshold` (`Public/Replication/Smoothing.h`, default 2500 uu) snaps any jump between two states longer than it; for fast but short-jumping pawns, set it per movement component just above the farthest the pawn moves between two states |
+| server-only pawns (AI) | the operation applies outside a move (forced path) | GMAS carries the mark into the next move (1.4.2+) |
+
+Predicted logic that reads *other* pawns right after a teleport (push-apart, overlap, proximity) sees them as smoothed proxies at their old spots on the client, while the server sees their true positions. Any rule that relaxes such logic around a teleport (for example no push-apart between two swapped pawns) must be bound and derived from the move itself: a bound grace timer started in the move where `bJustTeleported` is true, so both sides and every replay agree. A server-only exemption differs from the client on every move it applies, and each difference is a correction.
+
+Prove it in networked PIE with two clients:
+- the owning client's replays around the teleport do not exceed a baseline measured in the same session (an ordinary hit); `gmc.LogClientReplay` plus `gmc.ForceFullSyncDataValidation` name the deviating value when they do;
+- the second client samples the proxy's displayed location every frame and never sees it between the old and new spot.
+
 ## Detecting state changes
 
 `OnSyncDataApplied(const FGMC_PawnState& State, EGMC_NetContext Context)` fires each time GMC loads a state into the pawn: before and after a local move, when a server state is adopted, before and after *each replayed move* (`LocalClientPawn_PreReplayMoveExecution` / `LocalClientPawn_PostReplayMoveExecution`), around remote-move execution on the server, on every smoothing step of a simulated proxy (`RemoteClientPawn_Simulation`), and during rollback swaps (`RollbackSwap`). The contexts are in `Public/Replication/NetTypes.h`. During a replay the values are historical and the hook can fire many times per frame, so "the death flag just became true" seen there may be a state from 100 ms ago that is about to be re-executed.
@@ -177,4 +193,5 @@ GMC is a licensed plugin: read it inside the project, cite names and paths, neve
 - Exactly one `AGMC_WorldTimeReplicator` is spawned (game mode, server) before move timestamps are compared across machines.
 - Data a simulated proxy needs at spawn also replicates as an ordinary actor property (`PostSpawnSmoothingPause`).
 - Transitions are detected in `WorldTickEnd`, not in `OnSyncDataApplied`.
+- Teleports go through the target's `SetActorLocation` operation (or an ability with `SetOwnerJustTeleported`); proxies snap (`bJustTeleported`, `TeleportThreshold` as fallback); any rule relaxed around the teleport is bound, never server-only.
 - Behavior was checked under networked PIE with a client, not only standalone (`gmas:gmas-testing`); corrections inspected with `gmc.ShowClientCorrections` and `gmc.LogClientReplay`.
