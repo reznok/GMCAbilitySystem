@@ -731,7 +731,8 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 		const int ForcedAbilityID = SourceOperationID != 0
 			? DeriveAbilityIDFromOperation(SourceOperationID, ActivationIndex)
 			: 0;
-		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID))
+		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID,
+			SourceOperationID, ActivationIndex))
 		{
 			return true;
 		}
@@ -740,7 +741,8 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	return false;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID,
+	const int SourceOperationID, const int SourceCandidateIndex, const bool bClientAuthorized)
 {
 
 	if (ActivatedAbility == nullptr) return false;
@@ -834,6 +836,13 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	UGMCAbility* Ability = NewObject<UGMCAbility>(this, ActivatedAbility, NAME_None, RF_NoFlags, /*Template*/ nullptr, /*bCopyTransientsFromClassDefaults*/ true);
 	Ability->AbilityData = AbilityData;
 	Ability->AbilityData.InputTag = ActivationTag;
+
+	// Ability sync source, before Execute so every hook (and an end inside PreBeginAbility) sees it. An
+	// authority activation without an operation has no client twin: server-only, never synced.
+	Ability->SourceOperationID = SourceOperationID;
+	Ability->SourceCandidateIndex = SourceCandidateIndex;
+	Ability->bClientAuthorized = bClientAuthorized;
+	Ability->bServerOnly = SourceOperationID == 0 && IsAuthorityForGMASLogic();
 
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
@@ -2031,6 +2040,54 @@ void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int Ability
 	}
 }
 
+void UGMC_AbilitySystemComponent::ClientAbilitySync_Implementation(const FGMASAbilitySyncMessage& Message)
+{
+	HandleAbilitySync(Message);
+}
+
+void UGMC_AbilitySystemComponent::ServerAbilitySync_Implementation(const FGMASAbilitySyncMessage& Message)
+{
+	HandleAbilitySync(Message);
+}
+
+void UGMC_AbilitySystemComponent::SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer)
+{
+#if WITH_AUTOMATION_WORKER
+	if (SyncSendHookForTest)
+	{
+		SyncSendHookForTest(Message, bToServer);
+		return;
+	}
+#endif
+	if (bToServer)
+	{
+		ServerAbilitySync(Message);
+	}
+	else
+	{
+		ClientAbilitySync(Message);
+	}
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilitySync(const FGMASAbilitySyncMessage& Message)
+{
+	// Plumbing only: the per-type behaviour (answers, ends, digests) is wired on top of this entry point.
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] received type=%d op=%d idx=%d id=%d on %s (authority=%d)"),
+		static_cast<int32>(Message.Type), Message.OperationID, Message.CandidateIndex, Message.AbilityID,
+		*GetNameSafe(GetOwner()), IsAuthorityForGMASLogic() ? 1 : 0);
+}
+
+bool UGMC_AbilitySystemComponent::HasRemoteAbilityTwin() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceRemoteTwinForTest) { return true; }
+#endif
+	if (!GMCMovementComponent) { return false; }
+	// Server: a pawn controlled through a remote client connection (dedicated or listen). Client: its own
+	// autonomous proxy. Standalone, the listen host's own pawn and AI pawns have no twin to converge with.
+	return GMCMovementComponent->IsRemotelyControlledServerPawn() || GMCMovementComponent->IsAutonomousProxy();
+}
+
 void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int AbilityID)
 {
 	if (ActiveAbilities.Contains(AbilityID))
@@ -2451,7 +2508,8 @@ bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
 	if (HasAuthority())
 	{
 		return TryActivateAbility(AbilityClass, InputAction, InputTag,
-			/*bSkipActivationTagsCheck=*/true);
+			/*bSkipActivationTagsCheck=*/true, /*ForcedAbilityID=*/0,
+			/*SourceOperationID=*/0, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
 	}
 
 	// Build the operation FIRST so the local activation can use the operation-derived
@@ -2468,7 +2526,8 @@ bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
 	// CheckActivationTagsForClientAuth already enforced the reduced gate set.
 	const bool bActivated = TryActivateAbility(AbilityClass, InputAction, InputTag,
 		/*bSkipActivationTagsCheck=*/true,
-		DeriveAbilityIDFromOperation(OpID, 0));
+		DeriveAbilityIDFromOperation(OpID, 0),
+		OpID, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
 	if (!bActivated)
 	{
 		// Don't ship an operation whose local activation failed; drop its cached payload.
@@ -3207,7 +3266,8 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			// activation (heartbeats and task payloads address abilities by this ID).
 			TryActivateAbility(Op->AbilityClass, Op->InputAction, Op->InputTag,
 				/*bSkipActivationTagsCheck=*/true,
-				DeriveAbilityIDFromOperation(Op->OperationID, 0));
+				DeriveAbilityIDFromOperation(Op->OperationID, 0),
+				Op->OperationID, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
 			// No RPCConfirmAbilityActivation -- client trusts the activation by construction.
 			return;
 		}

@@ -10,6 +10,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
+#include "Utility/GMASAbilitySyncRules.h"
 #include "Utility/GMASBoundQueueV2.h"
 #include "Utility/GMASNiagaraParams.h"
 #include "Utility/GMASSyncedEvent.h"
@@ -446,11 +447,18 @@ public:
 	// client-auth path; default false preserves all existing call sites.
 	// ForcedAbilityID: operation-derived ID shared by client and server (0 = generate
 	// locally from ActionTimer — only safe for activations with no remote twin, e.g. AI).
+	// SourceOperationID / SourceCandidateIndex / bClientAuthorized: the activation operation that created
+	// this instance, the candidate's index among the input tag's granted abilities, and whether it came
+	// through the client-authorized path. Recorded on the instance for ability sync (UGMCAbility::IsCovered);
+	// an authority activation without an operation is server-only and never synced.
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility,
 	                        const UInputAction* InputAction = nullptr,
 	                        const FGameplayTag ActivationTag = FGameplayTag::EmptyTag,
 	                        bool bSkipActivationTagsCheck = false,
-	                        const int ForcedAbilityID = 0);
+	                        const int ForcedAbilityID = 0,
+	                        const int SourceOperationID = 0,
+	                        const int SourceCandidateIndex = 0,
+	                        const bool bClientAuthorized = false);
 
 
 	/**
@@ -1286,6 +1294,34 @@ private:
 	UFUNCTION(Client, Reliable)
 	void RPCClientEndEffect(int EffectID);
 
+	// Ability sync (client/server convergence of covered ability instances). One message struct, one
+	// reliable RPC per direction; GMASAbilitySyncRules decides what each side does with it.
+	UFUNCTION(Client, Reliable)
+	void ClientAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	UFUNCTION(Server, Reliable)
+	void ServerAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	// Sends one ability-sync message to the peer (bToServer: client -> server, else server -> client).
+	// Automation builds hand it to SyncSendHookForTest instead when the hook is bound.
+	void SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer);
+
+	// Receives one ability-sync message; the role decides the client or server behaviour.
+	void HandleAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	// True when this pawn's covered abilities have a twin on the other side of an owning-client
+	// connection: on the server, a pawn controlled by a remote client; on a client, its autonomous proxy.
+	// Standalone, the listen host's own pawn and AI have none, and are never synced.
+	bool HasRemoteAbilityTwin() const;
+
+	// Messages that arrived for an operation or AbilityID this side does not have yet.
+	TArray<FGMASHeldSyncMessage> HeldSyncMessages;
+
+	// Confirm-clock stamps of the digest cadence (client: last digest received / requested; server: last sent).
+	double LastDigestReceivedAt = 0.0;
+	double LastDigestRequestedAt = 0.0;
+	double LastDigestSentAt = 0.0;
+
 	// Set in GenPredictionTick (re-entrant during replay), consumed once in GenAncillaryTick.
 	bool bReplayObservedThisFrame = false;
 
@@ -1425,6 +1461,22 @@ public:
 	bool CheckActivationTagsForClientAuthForTest(const UGMCAbility* Ability) const
 	{
 		return CheckActivationTagsForClientAuth(Ability);
+	}
+
+	// Ability-sync seams. A bound hook receives every outgoing message instead of the RPC, so a pair
+	// harness can deliver, drop or reorder them; ReceiveAbilitySyncForTest delivers one to this side.
+	TFunction<void(const FGMASAbilitySyncMessage& /*Message*/, bool /*bToServer*/)> SyncSendHookForTest;
+	void ReceiveAbilitySyncForTest(const FGMASAbilitySyncMessage& Message) { HandleAbilitySync(Message); }
+
+	// Orphan components have no owning connection; this makes HasRemoteAbilityTwin() answer true.
+	bool bForceRemoteTwinForTest = false;
+
+	TConstArrayView<FGMASHeldSyncMessage> GetHeldSyncMessagesForTest() const { return HeldSyncMessages; }
+	void SendAbilitySyncForTest(const FGMASAbilitySyncMessage& Message, bool bToServer) { SendAbilitySync(Message, bToServer); }
+	bool HasRemoteAbilityTwinForTest() const { return HasRemoteAbilityTwin(); }
+	static int DeriveAbilityIDFromOperationForTest(int OperationID, int ActivationIndex)
+	{
+		return DeriveAbilityIDFromOperation(OperationID, ActivationIndex);
 	}
 private:
 #endif

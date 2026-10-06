@@ -73,4 +73,29 @@ public:
 	 */
 	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
 	float ServerOperationGraceSeconds = 1.0f;
+
+	/**
+	 * Ability convergence: a covered ability instance (one created from an activation operation, with a
+	 * twin on the owning client) at least this old (seconds, local confirm clock) makes the server send
+	 * periodic digests of its covered instances, and lets the client request one when none arrives.
+	 * Younger instances converge through answers and mirrored ends alone.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.1", UIMin="0.1", ForceUnits="s"))
+	float AbilityReconcileMinAge = 1.0f;
+
+	/**
+	 * Ability convergence: seconds between two server digests while a covered instance is at least
+	 * AbilityReconcileMinAge old. The client ends a local covered instance missing from a digest only once
+	 * it is AbilityReconcileMinAge + this old (margin for a digest already in flight).
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.1", UIMin="0.1", ForceUnits="s"))
+	float AbilityDigestInterval = 1.0f;
+
+	/**
+	 * Ability convergence: seconds (local confirm clock) an answer or end is held when it arrives before
+	 * the instance it names exists on the receiving side; it is applied when the instance is created and
+	 * dropped after this time.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.1", UIMin="0.1", ForceUnits="s"))
+	float AbilityAnswerHoldTime = 5.0f;
 };
