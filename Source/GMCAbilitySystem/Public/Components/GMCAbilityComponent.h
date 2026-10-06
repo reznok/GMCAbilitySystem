@@ -1277,12 +1277,6 @@ private:
 	// for safety — entries naturally expire if the effect UObject is GC'd.
 	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
 
-	// Let the client know that the server has ended an ability
-	// In most cases, the client should have predicted this already,
-	// this is just for redundancy
-	UFUNCTION(Client, Reliable)
-	void RPCClientEndAbility(int AbilityID);
-	
 	// Let the client know that the server has ended an effect
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
@@ -1336,6 +1330,37 @@ private:
 
 	// The rules unit's view of a covered instance.
 	FGMASCoveredAbility DescribeCoveredAbility(const UGMCAbility& Ability) const;
+
+	// Called by UGMCAbility once its end finished (both end paths). Queues an Ended for the peer when the
+	// instance is covered, has a remote twin, did not end because of the peer, and (server) began: a
+	// refused server activation was already answered Rejected. At most once per instance.
+	void NoteAbilityEndedForSync(UGMCAbility* Ability);
+	friend class UGMCAbility;
+
+	// Queues an Ended{AbilityID, Kind} for the peer (also for an instance this side never had: the
+	// client's report of a server instance with no twin).
+	void QueueAbilityEndSync(int AbilityID, EGMASAbilityEndKind Kind);
+
+	// Sends the queued ends, never inside a replayed move. Runs at the end of CleanupStaleAbilities and
+	// in the ancillary tick.
+	void FlushAbilityEndSyncs();
+
+	// Either side: the peer's twin of AbilityID ended.
+	void HandleAbilityEnded(const FGMASAbilitySyncMessage& Message);
+
+	// Ends a covered instance because its peer ended or refused it; it is not echoed back.
+	void EndAbilityFromPeer(UGMCAbility* Ability, EGMASAbilityEndKind Kind);
+
+	// Server: a client end is applied after ServerOperationGraceSeconds of confirm clock, so the client
+	// moves that precede it (and usually end the instance in-move, at the same move as on the client)
+	// run first. A reliable end overtakes the unreliable moves it follows.
+	void SchedulePeerEnd(UGMCAbility* Ability, EGMASAbilityEndKind Kind);
+
+	// Server, ancillary tick: applies the scheduled peer ends that are due.
+	void TickPeerEnds();
+
+	// Ends waiting for FlushAbilityEndSyncs, oldest first.
+	TArray<FGMASAbilitySyncMessage> PendingEndSyncs;
 
 	// Messages that arrived for an operation or AbilityID this side does not have yet.
 	TArray<FGMASHeldSyncMessage> HeldSyncMessages;

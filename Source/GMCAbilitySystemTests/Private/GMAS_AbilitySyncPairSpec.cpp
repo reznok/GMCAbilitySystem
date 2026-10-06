@@ -350,6 +350,260 @@ void FGMASAbilitySyncPairSpec::Define()
 			TestEqual(TEXT("dropped after the hold time"), Pair.Client->GetHeldSyncMessagesForTest().Num(), 0);
 		});
 	});
+
+	Describe("Ended", [this]()
+	{
+		// Seconds past the server's peer-end grace (ServerOperationGraceSeconds, 1 s by default): a client
+		// end is applied on the server only once its own moves had the time to end the instance in-move.
+		constexpr double PastPeerEndGrace = 1.1;
+
+		It("a server natural end runs EndAbility on the client (end hooks, not cancel hooks)", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Server->EndAbility();
+			TestEqual(TEXT("kind recorded"), Server->GetEndKind(), EGMASAbilityEndKind::Natural);
+			Pair.Tick();
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended);
+			if (!TestNotNull(TEXT("one Ended to the client"), Ended)) { return; }
+			TestEqual(TEXT("id"), Ended->Value.AbilityID, IDFor(0));
+			TestEqual(TEXT("natural"), Ended->Value.EndKind, EGMASAbilityEndKind::Natural);
+
+			Pair.DeliverAll();
+			TestEqual(TEXT("client ended"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("end hook"), Client->EndAbilityEventCount, 1);
+			TestEqual(TEXT("no cancel hook"), Client->CancelAbilityEventCount, 0);
+			TestEqual(TEXT("OnAbilityEnded"), ClientRecorder->AbilityEndedCount, 1);
+
+			Pair.Tick();
+			Pair.AncillaryTick();
+			TestEqual(TEXT("the client does not echo a server end"), Pair.Outbox.Num(), 0);
+		});
+
+		It("a server cancel runs CancelAbility on the client", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("[AbilityCut] Server cancelled an ability that was still active locally"),
+				ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Server->CancelAbility();
+			TestEqual(TEXT("kind recorded"), Server->GetEndKind(), EGMASAbilityEndKind::Cancelled);
+			Pair.Tick();
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended);
+			if (!TestNotNull(TEXT("one Ended to the client"), Ended)) { return; }
+			TestEqual(TEXT("cancelled"), Ended->Value.EndKind, EGMASAbilityEndKind::Cancelled);
+
+			Pair.DeliverAll();
+			TestEqual(TEXT("client ended"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("cancel hook"), Client->CancelAbilityEventCount, 1);
+			TestEqual(TEXT("no end hook"), Client->EndAbilityEventCount, 0);
+		});
+
+		It("a client-only cancel cancels the server instance once the peer-end grace passed", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Client->CancelAbility();
+			Pair.Tick();
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true);
+			if (!TestNotNull(TEXT("one Ended to the server"), Ended)) { return; }
+			TestEqual(TEXT("id"), Ended->Value.AbilityID, IDFor(0));
+			TestEqual(TEXT("cancelled"), Ended->Value.EndKind, EGMASAbilityEndKind::Cancelled);
+
+			Pair.DeliverAll();
+			Pair.AncillaryTick();
+			TestEqual(TEXT("server keeps running inside the grace (its own moves may still end it)"),
+				Server->AbilityState, EAbilityState::Initialized);
+
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("server cancelled"), Server->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("server cancel hook"), Server->CancelAbilityEventCount, 1);
+			TestEqual(TEXT("server no end hook"), Server->EndAbilityEventCount, 0);
+
+			Pair.Tick();
+			Pair.AncillaryTick();
+			TestEqual(TEXT("the server does not echo a client end"), Pair.Outbox.Num(), 0);
+		});
+
+		It("both ending in-move: each side receives the other's Ended and changes nothing", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Client->EndAbility();
+			Server->EndAbility();
+			Pair.Tick();
+			TestEqual(TEXT("one Ended each way"), CountOutbox(EGMASAbilitySyncType::Ended, true) + CountOutbox(EGMASAbilitySyncType::Ended, false), 2);
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			Pair.Tick();
+
+			for (const UGMAS_TestAbility* Instance : { Client, Server })
+			{
+				TestEqual(TEXT("one end hook"), Instance->EndAbilityEventCount, 1);
+				TestEqual(TEXT("no cancel hook"), Instance->CancelAbilityEventCount, 0);
+			}
+			TestEqual(TEXT("nothing held"), Pair.Client->GetHeldSyncMessagesForTest().Num() + Pair.Server->GetHeldSyncMessagesForTest().Num(), 0);
+			TestEqual(TEXT("nothing further sent"), Pair.Outbox.Num(), 0);
+		});
+
+		It("a server end that arrives before the client instance exists is held and ends it on creation", [this]()
+		{
+			Pair.ActivateServerFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("server"), Server)) { return; }
+			Server->EndAbility();
+			Pair.Tick();
+			Pair.DeliverAll();   // the answer, then the end: both held
+			TestEqual(TEXT("held on the client"), Pair.Client->GetHeldSyncMessagesForTest().Num(), 2);
+
+			Pair.ActivateClientFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			UGMAS_TestAbility* Client = ClientA();
+			if (!TestNotNull(TEXT("client"), Client)) { return; }
+			TestEqual(TEXT("ended on creation"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("end hook"), Client->EndAbilityEventCount, 1);
+			TestEqual(TEXT("no cancel hook"), Client->CancelAbilityEventCount, 0);
+			TestEqual(TEXT("held consumed"), Pair.Client->GetHeldSyncMessagesForTest().Num(), 0);
+
+			Pair.Tick();
+			TestEqual(TEXT("no echo"), Pair.Outbox.Num(), 0);
+		});
+
+		It("a client end that arrives before the server ran the operation is held and ends the server instance", [this]()
+		{
+			Pair.ActivateClientFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			UGMAS_TestAbility* Client = ClientA();
+			if (!TestNotNull(TEXT("client"), Client)) { return; }
+			Client->CancelAbility();
+			Pair.Tick();
+			Pair.DeliverAll();
+			TestEqual(TEXT("held on the server"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 1);
+
+			Pair.ActivateServerFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("server"), Server)) { return; }
+			TestEqual(TEXT("held consumed"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 0);
+			Pair.DeliverAll();   // the answer: the client's instance already ended, nothing to do
+
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("server cancelled"), Server->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("server cancel hook"), Server->CancelAbilityEventCount, 1);
+			Pair.Tick();
+			TestEqual(TEXT("no echo"), Pair.Outbox.Num(), 0);
+		});
+
+		It("a server-only instance sends nothing and is never ended by sync", [this]()
+		{
+			TestTrue(TEXT("activated"), Pair.Server->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+			UGMAS_TestAbility* ServerOnly = nullptr;
+			for (const TPair<int, UGMCAbility*>& Entry : Pair.Server->GetActiveAbilities())
+			{
+				ServerOnly = Cast<UGMAS_TestAbility>(Entry.Value);
+			}
+			if (!TestNotNull(TEXT("server-only instance"), ServerOnly)) { return; }
+
+			FGMASAbilitySyncMessage Ended;
+			Ended.Type = EGMASAbilitySyncType::Ended;
+			Ended.AbilityID = ServerOnly->GetAbilityID();
+			Ended.EndKind = EGMASAbilityEndKind::Cancelled;
+			Pair.Server->ReceiveAbilitySyncForTest(Ended);
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("an end naming it changes nothing"), ServerOnly->AbilityState, EAbilityState::Initialized);
+			TestEqual(TEXT("not held either"), Pair.Server->GetHeldSyncMessagesForTest().Num(), 0);
+
+			ServerOnly->EndAbility();
+			Pair.Tick();
+			Pair.AncillaryTick();
+			TestEqual(TEXT("its end sends nothing"), Pair.Outbox.Num(), 0);
+		});
+
+		It("a confirm timeout reports the end exactly once", [this]()
+		{
+			AddExpectedErrorPlain(TEXT("[AbilityCut] Client cancelling unconfirmed ability"), EAutomationExpectedErrorFlags::Contains, 1);
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DropNext(EGMASAbilitySyncType::Answer);
+			Pair.AdvanceClocks(2.5);
+			Pair.Tick();
+			Pair.Tick();
+			Pair.AncillaryTick();
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true);
+			if (!TestNotNull(TEXT("exactly one Ended to the server"), Ended)) { return; }
+			TestEqual(TEXT("cancelled"), Ended->Value.EndKind, EGMASAbilityEndKind::Cancelled);
+			TestEqual(TEXT("id"), Ended->Value.AbilityID, IDFor(0));
+		});
+
+		It("a client end inside a replayed move is sent after the replay, once", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			if (!TestNotNull(TEXT("client"), Client)) { return; }
+
+			Pair.Client->bForceReplayingForTest = true;
+			Client->CancelAbility();
+			Pair.Client->CleanupStaleAbilitiesForTest();
+			TestEqual(TEXT("nothing sent during the replay"), Pair.Outbox.Num(), 0);
+			Pair.Client->bForceReplayingForTest = false;
+
+			Pair.Client->GenAncillaryTick(0.f, false);
+			Pair.Client->CleanupStaleAbilitiesForTest();
+			TestEqual(TEXT("sent once afterwards"), CountOutbox(EGMASAbilitySyncType::Ended, true), 1);
+		});
+
+		It("a candidate mismatch also reports the server's instance, which the server then cancels", [this]()
+		{
+			Pair.Server->AddActiveTag(BlockA());   // the server falls through to candidate 1
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			UGMCAbility* ServerB = FGMASAbilitySyncPairHarness::FindByID(Pair.Server, IDFor(1));
+			if (!TestNotNull(TEXT("server candidate 1"), ServerB)) { return; }
+			Pair.DeliverAll();
+			Pair.Tick();
+
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true);
+			if (!TestNotNull(TEXT("one Ended to the server"), Ended)) { return; }
+			TestEqual(TEXT("names the server's instance"), Ended->Value.AbilityID, IDFor(1));
+			TestEqual(TEXT("cancelled"), Ended->Value.EndKind, EGMASAbilityEndKind::Cancelled);
+
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("server instance cancelled"), ServerB->AbilityState, EAbilityState::Ended);
+		});
+
+		It("a Confirmed answer for an operation the client ran without an instance reports the server's instance", [this]()
+		{
+			Pair.Client->AddActiveTag(BlockA());
+			Pair.Client->AddActiveTag(BlockB());   // the client refuses every candidate
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			TestEqual(TEXT("no client instance"), Pair.Client->GetActiveAbilities().Num(), 0);
+			Pair.DeliverAll();
+			Pair.Tick();
+
+			const TPair<bool, FGMASAbilitySyncMessage>* Ended = OnlyOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true);
+			if (!TestNotNull(TEXT("one Ended to the server"), Ended)) { return; }
+			TestEqual(TEXT("names the server's instance"), Ended->Value.AbilityID, IDFor(0));
+			TestEqual(TEXT("nothing held"), Pair.Client->GetHeldSyncMessagesForTest().Num(), 0);
+		});
+	});
 }
 
 #endif

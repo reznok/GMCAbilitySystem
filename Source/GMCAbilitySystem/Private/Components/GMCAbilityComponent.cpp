@@ -404,6 +404,12 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Anc_TickAbilitySync)
+		// Server cleanup also runs here, not only in the prediction tick: a server whose client sends no
+		// moves still purges ended instances and sends their ends.
+		if (IsAuthorityForGMASLogic())
+		{
+			CleanupStaleAbilities();
+		}
 		TickAbilitySync();
 	}
 
@@ -760,11 +766,17 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	else if (SourceOperationID != 0 && !IsAuthorityForGMASLogic())
 	{
 		// Client: no candidate passed its gates, so no instance will ever claim an answer held for this
-		// operation. Drop it.
-		HeldSyncMessages.RemoveAll([SourceOperationID](const FGMASHeldSyncMessage& Held)
+		// operation. Drop it; a Confirmed one names a server instance without a twin here: report it.
+		for (int32 Index = HeldSyncMessages.Num() - 1; Index >= 0; --Index)
 		{
-			return Held.Message.Type == EGMASAbilitySyncType::Answer && Held.Message.OperationID == SourceOperationID;
-		});
+			const FGMASAbilitySyncMessage& Held = HeldSyncMessages[Index].Message;
+			if (Held.Type != EGMASAbilitySyncType::Answer || Held.OperationID != SourceOperationID) { continue; }
+			if (Held.Answer == EGMASAbilityAnswer::Confirmed && Held.AbilityID != 0)
+			{
+				QueueAbilityEndSync(Held.AbilityID, EGMASAbilityEndKind::Cancelled);
+			}
+			HeldSyncMessages.RemoveAt(Index);
+		}
 	}
 
 	return false;
@@ -1741,19 +1753,15 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
 			// Remember this ID so a still-in-flight client heartbeat for it reads as a benign
-			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning.
+			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning, and an Ended
+			// from the peer for it as already handled. The peer learns of the end through the
+			// ability-sync Ended queued when the instance ended (NoteAbilityEndedForSync).
 			NoteAbilityEnded(It.Value()->GetAbilityID());
-			// Raw HasAuthority() on purpose (not the test-aware IsAuthorityForGMASLogic): an
-			// ownerless component must not send an RPC. Without a movement component the pawn
-			// cannot be known to be locally controlled, so the client is told.
-			if (HasAuthority() && !(GMCMovementComponent && GMCMovementComponent->IsLocallyControlledServerPawn()))
-			{
-				// Fail safe to tell client server has ended the ability
-				RPCClientEndAbility(It.Value()->GetAbilityID());
-			};
 			It.RemoveCurrent();
 		}
 	}
+
+	FlushAbilityEndSyncs();
 }
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
@@ -2017,7 +2025,7 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	{
 		// Benign end-race: the server HAD this ability and already ended it (e.g. a short
 		// client-predicted weapon-raise whose client instance outlives the server twin by a
-		// tick, long enough to fire its one immediate heartbeat). The server's RPCClientEndAbility
+		// tick, long enough to fire its one immediate heartbeat). The server's ability-sync Ended
 		// is already on its way back. Not a divergence — keep it quiet. Mirrors the TaskID-level
 		// benign-end-race branch in UGMCAbility::HandleTaskHeartbeat.
 		UE_LOG(LogGMCAbilitySystem, Verbose,
@@ -2041,25 +2049,6 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 		UE_LOG(LogGMCAbilitySystem, Warning,
 			TEXT("[TaskDiag] Heartbeat for unknown AbilityID=%d (TaskID=%d, %s) — client ability alive but server has no such instance. Server live abilities: %s"),
 			AbilityID, TaskID, *DescribeSourceOperation(AbilityID), *LiveIDs);
-	}
-}
-
-void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int AbilityID)
-{
-	if (ActiveAbilities.Contains(AbilityID))
-	{
-		// [AbilityCut] probe: the server force-ends an ability that is still ACTIVE on this
-		// client — the player-visible "it cut by itself" moment (e.g. server watchdog kill).
-		// An RPC for an already-Ended local instance is routine cleanup and stays quiet.
-		UGMCAbility* LocalAbility = ActiveAbilities[AbilityID];
-		if (LocalAbility && LocalAbility->AbilityState != EAbilityState::Ended)
-		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
-				TEXT("[AbilityCut] Server force-ended an ability that was still active locally; cancelled. %s"),
-				*LocalAbility->GetAbilityCutDiagnostics());
-		}
-		ActiveAbilities[AbilityID]->CancelAbility();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server cancelled ability: %d"), AbilityID);
 	}
 }
 
@@ -2108,6 +2097,9 @@ void UGMC_AbilitySystemComponent::HandleAbilitySync(const FGMASAbilitySyncMessag
 			HandleAbilityAnswer(Message);
 		}
 		break;
+	case EGMASAbilitySyncType::Ended:
+		HandleAbilityEnded(Message);
+		break;
 	default:
 		break;
 	}
@@ -2148,7 +2140,16 @@ void UGMC_AbilitySystemComponent::HandleAbilityAnswer(const FGMASAbilitySyncMess
 		if (WasActivationOperationConsumed(Message.OperationID))
 		{
 			// The client already ran this operation: its instance ended (that end reaches the server on
-			// its own), or no candidate passed its gates here.
+			// its own), or no candidate passed its gates here. A Confirmed instance the client never had
+			// (no local instance under that ID, live or recently ended) has no twin: report it.
+			const bool bKnownHere = ActiveAbilities.Contains(Message.AbilityID) || WasAbilityRecentlyEnded(Message.AbilityID);
+			if (Message.Answer == EGMASAbilityAnswer::Confirmed && !bKnownHere)
+			{
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] answer op=%d confirmed server instance %d that has no twin here; reporting it ended."),
+					Message.OperationID, Message.AbilityID);
+				QueueAbilityEndSync(Message.AbilityID, EGMASAbilityEndKind::Cancelled);
+				return;
+			}
 			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] answer op=%d id=%d for an operation already run here with no live instance; dropped."),
 				Message.OperationID, Message.AbilityID);
 			return;
@@ -2193,14 +2194,27 @@ void UGMC_AbilitySystemComponent::ApplyAbilitySyncAction(UGMCAbility* Ability, E
 		Ability->ServerConfirm();
 		break;
 	case EGMASSyncAction::EndNatural:
-		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (natural) %d %s"), Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()));
-		Ability->EndAbility();
-		break;
 	case EGMASSyncAction::EndCancelled:
-		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (cancelled) %d %s by type=%d op=%d id=%d"),
+	{
+		const EGMASAbilityEndKind Kind = Action == EGMASSyncAction::EndNatural ? EGMASAbilityEndKind::Natural : EGMASAbilityEndKind::Cancelled;
+		if (IsAuthorityForGMASLogic())
+		{
+			SchedulePeerEnd(Ability, Kind);
+			break;
+		}
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (%s) %d %s by type=%d op=%d id=%d"),
+			Kind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
 			Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()), static_cast<int32>(Message.Type), Message.OperationID, Message.AbilityID);
-		Ability->CancelAbility();
+		// A Confirmed answer naming another instance: the server ran a different candidate for this
+		// operation. Its instance has no twin here, so it is reported ended as well.
+		if (Message.Type == EGMASAbilitySyncType::Answer && Message.Answer == EGMASAbilityAnswer::Confirmed
+			&& Message.AbilityID != 0 && Message.AbilityID != Ability->GetAbilityID())
+		{
+			QueueAbilityEndSync(Message.AbilityID, EGMASAbilityEndKind::Cancelled);
+		}
+		EndAbilityFromPeer(Ability, Kind);
 		break;
+	}
 	case EGMASSyncAction::Hold:
 		HoldAbilitySyncMessage(Message);
 		break;
@@ -2245,6 +2259,131 @@ void UGMC_AbilitySystemComponent::TickAbilitySync()
 		{
 			ApplyHeldSyncMessages(Ability);
 		}
+	}
+
+	if (IsAuthorityForGMASLogic())
+	{
+		TickPeerEnds();
+	}
+	FlushAbilityEndSyncs();
+}
+
+void UGMC_AbilitySystemComponent::NoteAbilityEndedForSync(UGMCAbility* Ability)
+{
+	if (!Ability || !Ability->IsCovered() || Ability->bEndSyncNoted) { return; }
+	Ability->bEndSyncNoted = true;   // at most once, whatever is decided below
+
+	// The peer caused this end (its Ended, or an answer): it already knows.
+	if (Ability->bEndedByPeer || !HasRemoteAbilityTwin()) { return; }
+	// A server activation refused in PreBeginAbility was answered Rejected; that answer ends the twin.
+	if (IsAuthorityForGMASLogic() && !Ability->HasPassedActivationGates()) { return; }
+
+	QueueAbilityEndSync(Ability->GetAbilityID(), Ability->GetEndKind());
+}
+
+void UGMC_AbilitySystemComponent::QueueAbilityEndSync(int AbilityID, EGMASAbilityEndKind Kind)
+{
+	FGMASAbilitySyncMessage& Ended = PendingEndSyncs.AddDefaulted_GetRef();
+	Ended.Type = EGMASAbilitySyncType::Ended;
+	Ended.AbilityID = AbilityID;
+	Ended.EndKind = Kind;
+}
+
+void UGMC_AbilitySystemComponent::FlushAbilityEndSyncs()
+{
+	// An end that happened inside a replayed move waits for the next live tick or ancillary tick.
+	if (PendingEndSyncs.Num() == 0 || IsReplayingForGMASLogic()) { return; }
+
+	const bool bToServer = !IsAuthorityForGMASLogic();
+	TArray<FGMASAbilitySyncMessage> ToSend = MoveTemp(PendingEndSyncs);
+	PendingEndSyncs.Reset();
+	for (const FGMASAbilitySyncMessage& Ended : ToSend)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end %d (%s) sent to the %s from %s"),
+			Ended.AbilityID, Ended.EndKind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+			bToServer ? TEXT("server") : TEXT("client"), *GetNameSafe(GetOwner()));
+		SendAbilitySync(Ended, bToServer);
+	}
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilityEnded(const FGMASAbilitySyncMessage& Message)
+{
+	UGMCAbility* Local = ActiveAbilities.FindRef(Message.AbilityID);
+	if (Local && !Local->IsCovered())
+	{
+		// An id collision with an instance that has no twin (server-only): never ended by sync.
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end %d names an instance that is not synced (%s); ignored."),
+			Message.AbilityID, *GetNameSafe(Local->GetClass()));
+		return;
+	}
+
+	const bool bLive = Local && Local->AbilityState != EAbilityState::Ended;
+	const bool bRecentlyEnded = (Local && !bLive) || WasAbilityRecentlyEnded(Message.AbilityID);
+	const EGMASSyncAction Action = GMASAbilitySyncRules::OnEnded(bLive, bRecentlyEnded, Message.EndKind);
+
+	// [AbilityCut] probe: the server cancelled an ability that is still active on this client, the
+	// player-visible "it cut by itself" moment. A natural end, or an end for an instance that already
+	// ended here, is routine and stays quiet.
+	if (bLive && Action == EGMASSyncAction::EndCancelled && !IsAuthorityForGMASLogic())
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityCut] Server cancelled an ability that was still active locally; cancelled. %s"),
+			*Local->GetAbilityCutDiagnostics());
+	}
+
+	if (Action == EGMASSyncAction::Hold)
+	{
+		HoldAbilitySyncMessage(Message);
+		return;
+	}
+	ApplyAbilitySyncAction(Local, Action, Message);
+}
+
+void UGMC_AbilitySystemComponent::EndAbilityFromPeer(UGMCAbility* Ability, EGMASAbilityEndKind Kind)
+{
+	if (!Ability || Ability->AbilityState == EAbilityState::Ended) { return; }
+	Ability->bEndedByPeer = true;
+	if (Kind == EGMASAbilityEndKind::Natural)
+	{
+		Ability->EndAbility();
+	}
+	else
+	{
+		Ability->CancelAbility();
+	}
+}
+
+void UGMC_AbilitySystemComponent::SchedulePeerEnd(UGMCAbility* Ability, EGMASAbilityEndKind Kind)
+{
+	if (!Ability || Ability->AbilityState == EAbilityState::Ended || Ability->PeerEndAt > 0.0) { return; }
+	Ability->PeerEndKind = Kind;
+	Ability->PeerEndAt = GetConfirmClock() + GetDefault<UGMASNetworkTimingSettings>()->ServerOperationGraceSeconds;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] client reported %d %s ended (%s); applied in %.2fs unless it ends here first"),
+		Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()),
+		Kind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+		GetDefault<UGMASNetworkTimingSettings>()->ServerOperationGraceSeconds);
+}
+
+void UGMC_AbilitySystemComponent::TickPeerEnds()
+{
+	TArray<UGMCAbility*, TInlineAllocator<4>> Due;
+	double Now = -1.0;
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		UGMCAbility* Ability = Pair.Value;
+		if (!Ability || Ability->PeerEndAt <= 0.0 || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		if (Now < 0.0) { Now = GetConfirmClock(); }
+		if (Now >= Ability->PeerEndAt)
+		{
+			Due.Add(Ability);
+		}
+	}
+	for (UGMCAbility* Ability : Due)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (%s) %d %s applied from the client's report"),
+			Ability->PeerEndKind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+			Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()));
+		EndAbilityFromPeer(Ability, Ability->PeerEndKind);
 	}
 }
 

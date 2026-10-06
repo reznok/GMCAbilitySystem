@@ -93,6 +93,10 @@ struct FGMASAbilitySyncPairHarness
 		// The client caches its own operation's payload when it queues it.
 		Client->GetBoundQueueV2ForTest().CacheOperationPayload(OperationID, Data);
 		Client->ProcessOperationForTest(Data, bFromMovementTick);
+		// An orphan stub reports NM_Standalone, where the bound queue's ancillary state check treats any
+		// cached client-made payload as a server-side leak (a real client, NM_Client, keeps it until the
+		// move is acknowledged). The payload has served its purpose here: drop it.
+		Client->GetBoundQueueV2ForTest().RemovePayloadByID(OperationID);
 	}
 
 	void ActivateServerFromOperation(const FGameplayTag& Tag, int32 OperationID, bool bFromMovementTick = true)
@@ -156,6 +160,16 @@ struct FGMASAbilitySyncPairHarness
 		{
 			Side->TickActiveAbilitiesForTest(DeltaTime);
 			Side->CleanupStaleAbilitiesForTest();
+		}
+	}
+
+	// One ancillary tick on both sides (held-message expiry, pending end sends, the server's deferred
+	// peer ends and its cleanup).
+	void AncillaryTick(float DeltaTime = 1.f / 30.f)
+	{
+		for (UGMC_AbilitySystemComponent* Side : { Client, Server })
+		{
+			Side->GenAncillaryTick(DeltaTime, false);
 		}
 	}
 

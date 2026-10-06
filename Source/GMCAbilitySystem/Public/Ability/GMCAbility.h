@@ -370,6 +370,9 @@ public:
 	// True once the activation passed every gate of PreBeginAbility and its activation broadcast, i.e. the
 	// ability began (it may have ended since). False for an activation refused there.
 	bool HasPassedActivationGates() const { return bPassedActivationGates; }
+	// How the ability ended: Natural (EndAbility) or Cancelled (CancelAbility, a refused activation
+	// included). Meaningful once AbilityState is Ended; the peer mirrors the end with this kind.
+	EGMASAbilityEndKind GetEndKind() const { return EndKind; }
 
 protected:
 
@@ -424,6 +427,20 @@ private:
 	// Set in PreBeginAbility right before BeginAbility: the server answers Confirmed for an instance
 	// that began, Rejected for one refused at activation.
 	bool bPassedActivationGates = false;
+
+	// Set with the end latch by EndAbility (Natural) or CancelAbility (Cancelled).
+	EGMASAbilityEndKind EndKind = EGMASAbilityEndKind::Natural;
+
+	// Ability sync end bookkeeping, owned by the component: the end was reported to the peer (or
+	// deliberately not), so it is reported at most once; the end was caused by the peer's own end or
+	// answer, so it is not echoed back.
+	bool bEndSyncNoted = false;
+	bool bEndedByPeer = false;
+
+	// Server: the owning client reported this instance ended. Applied with PeerEndKind once the confirm
+	// clock reaches PeerEndAt, unless the server's own moves end it first (0 = none pending).
+	double PeerEndAt = 0.0;
+	EGMASAbilityEndKind PeerEndKind = EGMASAbilityEndKind::Cancelled;
 
 	friend class UGMC_AbilitySystemComponent;
 

@@ -644,8 +644,8 @@ void UGMCAbility::FinishEndAbility() {
 	// fingerprint of an abnormal cut (watchdog kill, confirm timeout, cancel-by-other,
 	// gameplay guard, forced server end). Normal completions end with every task already
 	// completed/finished. Logged on BOTH sides: the side that dies FIRST is the root cause —
-	// the other side follows seconds later (client stops heartbeating -> server watchdog,
-	// or server RPCClientEndAbility -> client). Compare timestamps across the two logs.
+	// the other side follows later (client stops heartbeating -> server watchdog, or the
+	// ability-sync Ended message -> the twin). Compare timestamps across the two logs.
 	int32 UnfinishedTasks = 0;
 	for (const TPair<int, UGMCAbilityTaskBase*>& Task : RunningTasks)
 	{
@@ -745,6 +745,13 @@ void UGMCAbility::FinishEndAbility() {
 	}
 
 	AbilityState = EAbilityState::Ended;
+
+	// Ability sync: a covered instance's end is mirrored to its twin on the other machine (queued and
+	// sent outside any replayed move, at most once).
+	if (OwnerAbilityComponent)
+	{
+		OwnerAbilityComponent->NoteAbilityEndedForSync(this);
+	}
 }
 
 
@@ -922,6 +929,7 @@ void UGMCAbility::EndAbility()
 	// state alone cannot tell; the latch is set before anything below can reach a listener.
 	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
 	bEndRequested = true;
+	EndKind = EGMASAbilityEndKind::Natural;
 
 	// Chain: grant the next stage's window on NATURAL end only —
 	// CancelAbility skips this on purpose (interrupted swings don't
@@ -959,6 +967,7 @@ void UGMCAbility::CancelAbility() {
 	// Same entry latch as EndAbility: the first end wins, one unwind, one hook set.
 	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
 	bEndRequested = true;
+	EndKind = EGMASAbilityEndKind::Cancelled;
 
 	// An activation refused in PreBeginAbility (cooldown, PreExecuteCheck, blocked) is not an
 	// interruption: the ability never began, so the cancel hooks stay silent for it.
