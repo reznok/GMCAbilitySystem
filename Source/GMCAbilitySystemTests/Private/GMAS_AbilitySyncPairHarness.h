@@ -118,6 +118,19 @@ struct FGMASAbilitySyncPairHarness
 		return Delivered;
 	}
 
+	// Delivers only the oldest queued message; returns whether there was one.
+	bool DeliverNext()
+	{
+		if (Outbox.Num() == 0)
+		{
+			return false;
+		}
+		const TPair<bool, FGMASAbilitySyncMessage> Entry = Outbox[0];
+		Outbox.RemoveAt(0);
+		(Entry.Key ? Server : Client)->ReceiveAbilitySyncForTest(Entry.Value);
+		return true;
+	}
+
 	// Drops the oldest queued message of Type; returns whether one was dropped.
 	bool DropNext(EGMASAbilitySyncType Type)
 	{

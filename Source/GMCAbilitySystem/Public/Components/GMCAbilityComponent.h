@@ -1147,6 +1147,10 @@ private:
 	// classification in UGMCAbility::HandleTaskHeartbeat.
 	static constexpr int32 RecentlyEndedAbilityIDsCapacity = 64;
 	TArray<int> RecentlyEndedAbilityIDs;
+	// Confirm clock at which each RecentlyEndedAbilityIDs entry was noted (same index). The client's digest
+	// check only spares instances that ended within the last AbilityDigestInterval (their Ended may still
+	// be in flight); an older end the server still lists was lost and is reported again.
+	TArray<double> RecentlyEndedAbilityTimes;
 	void NoteAbilityEnded(int AbilityID);
 	bool WasAbilityRecentlyEnded(int AbilityID) const { return RecentlyEndedAbilityIDs.Contains(AbilityID); }
 
@@ -1358,6 +1362,21 @@ private:
 
 	// Server, ancillary tick: applies the scheduled peer ends that are due.
 	void TickPeerEnds();
+
+	// Ancillary tick, remote twin only. Server: a digest every AbilityDigestInterval while a covered
+	// instance is AbilityReconcileMinAge old. Client: a digest request when none arrived for two intervals.
+	void TickAbilityDigest();
+
+	// Server: sends a Digest listing every live covered instance that is not already ending from a
+	// client report (those are reported; listing them would only invite a repeated Ended).
+	void SendAbilityDigest();
+
+	// Client: a digest arrived. Reports server instances it has no twin for and cancels its own
+	// instances the server no longer lists ([AbilityReconcile]).
+	void HandleAbilityDigest(const FGMASAbilitySyncMessage& Message);
+
+	// The live (not ended) covered instances; bSkipPeerEnding leaves out those with a scheduled peer end.
+	void GatherLiveCoveredAbilities(TArray<UGMCAbility*>& OutAbilities, bool bSkipPeerEnding) const;
 
 	// Ends waiting for FlushAbilityEndSyncs, oldest first.
 	TArray<FGMASAbilitySyncMessage> PendingEndSyncs;

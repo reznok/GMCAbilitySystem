@@ -1700,11 +1700,18 @@ void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
 void UGMC_AbilitySystemComponent::NoteAbilityEnded(int AbilityID)
 {
 	// Bounded FIFO: drop the oldest once at capacity so this never grows unbounded over a match.
-	RecentlyEndedAbilityIDs.Remove(AbilityID);
+	const int32 Existing = RecentlyEndedAbilityIDs.IndexOfByKey(AbilityID);
+	if (Existing != INDEX_NONE)
+	{
+		RecentlyEndedAbilityIDs.RemoveAt(Existing, 1, EAllowShrinking::No);
+		RecentlyEndedAbilityTimes.RemoveAt(Existing, 1, EAllowShrinking::No);
+	}
 	RecentlyEndedAbilityIDs.Add(AbilityID);
+	RecentlyEndedAbilityTimes.Add(GetConfirmClock());
 	if (RecentlyEndedAbilityIDs.Num() > RecentlyEndedAbilityIDsCapacity)
 	{
 		RecentlyEndedAbilityIDs.RemoveAt(0, 1, EAllowShrinking::No);
+		RecentlyEndedAbilityTimes.RemoveAt(0, 1, EAllowShrinking::No);
 	}
 }
 
@@ -2100,6 +2107,18 @@ void UGMC_AbilitySystemComponent::HandleAbilitySync(const FGMASAbilitySyncMessag
 	case EGMASAbilitySyncType::Ended:
 		HandleAbilityEnded(Message);
 		break;
+	case EGMASAbilitySyncType::Digest:
+		if (!bServerSide && HasRemoteAbilityTwin())
+		{
+			HandleAbilityDigest(Message);
+		}
+		break;
+	case EGMASAbilitySyncType::RequestDigest:
+		if (bServerSide && HasRemoteAbilityTwin())
+		{
+			SendAbilityDigest();
+		}
+		break;
 	default:
 		break;
 	}
@@ -2266,6 +2285,12 @@ void UGMC_AbilitySystemComponent::TickAbilitySync()
 		TickPeerEnds();
 	}
 	FlushAbilityEndSyncs();
+
+	// After the ends went out: a digest never overtakes an end of the same instance.
+	if (HasRemoteAbilityTwin())
+	{
+		TickAbilityDigest();
+	}
 }
 
 void UGMC_AbilitySystemComponent::NoteAbilityEndedForSync(UGMCAbility* Ability)
@@ -2385,6 +2410,136 @@ void UGMC_AbilitySystemComponent::TickPeerEnds()
 			Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()));
 		EndAbilityFromPeer(Ability, Ability->PeerEndKind);
 	}
+}
+
+void UGMC_AbilitySystemComponent::GatherLiveCoveredAbilities(TArray<UGMCAbility*>& OutAbilities, bool bSkipPeerEnding) const
+{
+	OutAbilities.Reset();
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		const UGMCAbility* Ability = Pair.Value;
+		if (!Ability || !Ability->IsCovered() || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		if (bSkipPeerEnding && Ability->PeerEndAt > 0.0) { continue; }
+		OutAbilities.Add(Pair.Value);
+	}
+}
+
+void UGMC_AbilitySystemComponent::TickAbilityDigest()
+{
+	const UGMASNetworkTimingSettings* Settings = GetDefault<UGMASNetworkTimingSettings>();
+	const double Now = GetConfirmClock();
+
+	TArray<UGMCAbility*> Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/IsAuthorityForGMASLogic());
+	TArray<FGMASCoveredAbility> Covered;
+	Covered.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Covered.Add(DescribeCoveredAbility(*Ability));
+	}
+
+	if (IsAuthorityForGMASLogic())
+	{
+		if (Now - LastDigestSentAt >= Settings->AbilityDigestInterval
+			&& GMASAbilitySyncRules::ShouldServerSendDigest(Covered, Now, Settings->AbilityReconcileMinAge))
+		{
+			SendAbilityDigest();
+		}
+		return;
+	}
+
+	if (GMASAbilitySyncRules::ShouldClientRequestDigest(Covered, Now, LastDigestReceivedAt, LastDigestRequestedAt,
+		Settings->AbilityReconcileMinAge, Settings->AbilityDigestInterval))
+	{
+		LastDigestRequestedAt = Now;
+		FGMASAbilitySyncMessage Request;
+		Request.Type = EGMASAbilitySyncType::RequestDigest;
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] digest requested by %s (none for %.2fs)"),
+			*GetNameSafe(GetOwner()), Now - LastDigestReceivedAt);
+		SendAbilitySync(Request, /*bToServer=*/true);
+	}
+}
+
+void UGMC_AbilitySystemComponent::SendAbilityDigest()
+{
+	// Ends first, so the client never sees a digest that predates an end already decided here.
+	FlushAbilityEndSyncs();
+
+	TArray<UGMCAbility*> Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/true);
+	FGMASAbilitySyncMessage Digest;
+	Digest.Type = EGMASAbilitySyncType::Digest;
+	Digest.DigestIDs.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Digest.DigestIDs.Add(Ability->GetAbilityID());
+	}
+	LastDigestSentAt = GetConfirmClock();
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] digest of %d instance(s) sent from %s"),
+		Digest.DigestIDs.Num(), *GetNameSafe(GetOwner()));
+	SendAbilitySync(Digest, /*bToServer=*/false);
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilityDigest(const FGMASAbilitySyncMessage& Message)
+{
+	const UGMASNetworkTimingSettings* Settings = GetDefault<UGMASNetworkTimingSettings>();
+	const double Now = GetConfirmClock();
+	LastDigestReceivedAt = Now;
+
+	TArray<UGMCAbility*> Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
+	TArray<FGMASCoveredAbility> Covered;
+	Covered.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Covered.Add(DescribeCoveredAbility(*Ability));
+	}
+
+	// Ended here and not yet reported, or reported within the last interval (that Ended may still be in
+	// flight, crossing this digest). An older end the server still lists was lost: report it again.
+	TArray<int32> RecentlyEnded;
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		if (Pair.Value && Pair.Value->AbilityState == EAbilityState::Ended) { RecentlyEnded.Add(Pair.Key); }
+	}
+	for (const FGMASAbilitySyncMessage& Pending : PendingEndSyncs) { RecentlyEnded.Add(Pending.AbilityID); }
+	for (int32 Index = 0; Index < RecentlyEndedAbilityIDs.Num(); ++Index)
+	{
+		if (Now - RecentlyEndedAbilityTimes[Index] < Settings->AbilityDigestInterval)
+		{
+			RecentlyEnded.Add(RecentlyEndedAbilityIDs[Index]);
+		}
+	}
+
+	// Instances whose answer or end is held arrive later; the held message settles them.
+	TArray<int32> HeldIDs;
+	for (const FGMASHeldSyncMessage& Held : HeldSyncMessages)
+	{
+		if (Held.Message.AbilityID != 0) { HeldIDs.Add(Held.Message.AbilityID); }
+	}
+
+	const FGMASDigestActions Actions = GMASAbilitySyncRules::OnDigest(Covered, Message.DigestIDs, RecentlyEnded, HeldIDs,
+		Now, Settings->AbilityReconcileMinAge, Settings->AbilityDigestInterval);
+
+	for (const int32 ServerOnlyID : Actions.ReportServerOnly)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityReconcile] server-only %d: the server runs it, %s has no instance; reported ended so the server cancels it."),
+			ServerOnlyID, *GetNameSafe(GetOwner()));
+		QueueAbilityEndSync(ServerOnlyID, EGMASAbilityEndKind::Cancelled);
+	}
+
+	for (const int32 ClientOnlyID : Actions.EndClientOnly)
+	{
+		UGMCAbility* Ability = ActiveAbilities.FindRef(ClientOnlyID);
+		if (!Ability || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityReconcile] client-only %d %s: the server no longer runs it; cancelled here. %s"),
+			ClientOnlyID, *GetNameSafe(Ability->GetClass()), *Ability->GetAbilityCutDiagnostics());
+		Ability->CancelAbility();   // reported to the server through NoteAbilityEndedForSync
+	}
+
+	FlushAbilityEndSyncs();
 }
 
 UGMCAbility* UGMC_AbilitySystemComponent::FindLiveCoveredAbilityByOperation(int OperationID) const

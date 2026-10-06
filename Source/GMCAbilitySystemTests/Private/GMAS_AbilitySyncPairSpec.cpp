@@ -122,6 +122,7 @@ void FGMASAbilitySyncPairSpec::Define()
 			CDO->CooldownTime = 0.f;
 		}
 		GetMutableDefault<UGMAS_TestAbility>()->bEndOnBegin = false;
+		GetMutableDefault<UGMAS_TestAbility>()->bActivateOnMovementTick = true;
 	});
 
 	Describe("Harness", [this]()
@@ -173,7 +174,7 @@ void FGMASAbilitySyncPairSpec::Define()
 			Pair.Client->SendAbilitySyncForTest(Message, /*bToServer=*/true);
 			TestEqual(TEXT("queued"), Pair.CountOutbox(EGMASAbilitySyncType::RequestDigest), 1);
 			TestTrue(TEXT("to server"), Pair.Outbox.Num() == 1 && Pair.Outbox[0].Key);
-			TestEqual(TEXT("delivered"), Pair.DeliverAll(), 1);
+			TestEqual(TEXT("delivered: the request, then the server's digest reply"), Pair.DeliverAll(), 2);
 			TestEqual(TEXT("outbox drained"), Pair.Outbox.Num(), 0);
 		});
 	});
@@ -602,6 +603,204 @@ void FGMASAbilitySyncPairSpec::Define()
 			if (!TestNotNull(TEXT("one Ended to the server"), Ended)) { return; }
 			TestEqual(TEXT("names the server's instance"), Ended->Value.AbilityID, IDFor(0));
 			TestEqual(TEXT("nothing held"), Pair.Client->GetHeldSyncMessagesForTest().Num(), 0);
+		});
+	});
+
+	Describe("Digest", [this]()
+	{
+		// Defaults: AbilityReconcileMinAge 1 s, AbilityDigestInterval 1 s, ServerOperationGraceSeconds 1 s.
+		constexpr double PastMinAge = 1.1;
+		constexpr double PastPeerEndGrace = 1.1;
+
+		It("catches a server-only orphan: the digest goes out, the client reports it, the server cancels it", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("[AbilityReconcile] server-only"),
+				ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Client->CancelAbility();
+			Pair.Tick();
+			TestTrue(TEXT("the client's Ended is lost"), Pair.DropNext(EGMASAbilitySyncType::Ended));
+			TestEqual(TEXT("server still running"), Server->AbilityState, EAbilityState::Initialized);
+
+			Pair.AdvanceClocks(PastMinAge);
+			Pair.AncillaryTick();
+			const TPair<bool, FGMASAbilitySyncMessage>* Digest = OnlyOutbox(EGMASAbilitySyncType::Digest);
+			if (!TestNotNull(TEXT("one digest to the client"), Digest)) { return; }
+			TestTrue(TEXT("lists the server's instance"), Digest->Value.DigestIDs.Num() == 1 && Digest->Value.DigestIDs[0] == IDFor(0));
+
+			Pair.DeliverNext();   // only the digest
+			const TPair<bool, FGMASAbilitySyncMessage>* Report = OnlyOutbox(EGMASAbilitySyncType::Ended, /*bToServer=*/true);
+			if (!TestNotNull(TEXT("the client reports it ended"), Report)) { return; }
+			TestEqual(TEXT("id"), Report->Value.AbilityID, IDFor(0));
+			TestEqual(TEXT("cancelled"), Report->Value.EndKind, EGMASAbilityEndKind::Cancelled);
+
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastPeerEndGrace);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("server cancelled"), Server->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("server cancel hook"), Server->CancelAbilityEventCount, 1);
+			Pair.DeliverAll();
+			TestEqual(TEXT("nothing further reported"), CountOutbox(EGMASAbilitySyncType::Ended, true), 0);
+		});
+
+		It("does not report an instance the client ended moments ago (its Ended may still be in flight)", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			if (!TestNotNull(TEXT("client"), Client)) { return; }
+			Pair.AdvanceClocks(PastMinAge);
+			Client->CancelAbility();
+			Pair.Tick();
+			Pair.DropNext(EGMASAbilitySyncType::Ended);   // stands in for an Ended still in flight
+
+			FGMASAbilitySyncMessage Digest;
+			Digest.Type = EGMASAbilitySyncType::Digest;
+			Digest.DigestIDs = { IDFor(0) };
+			Pair.Client->ReceiveAbilitySyncForTest(Digest);
+			TestEqual(TEXT("no report"), Pair.Outbox.Num(), 0);
+		});
+
+		It("ends a client-only orphan once it is MinAge + Interval old, not before", [this]()
+		{
+			AddExpectedMessagePlain(TEXT("[AbilityReconcile] client-only"),
+				ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			UGMAS_TestAbility* Client = ClientA();
+			UGMAS_TestAbility* Server = ServerA();
+			if (!TestNotNull(TEXT("client"), Client) || !TestNotNull(TEXT("server"), Server)) { return; }
+
+			Server->EndAbility();
+			Pair.Tick();
+			TestTrue(TEXT("the server's Ended is lost"), Pair.DropNext(EGMASAbilitySyncType::Ended));
+
+			// A digest without the instance while it is younger than MinAge + Interval: kept (margin for latency).
+			Pair.AdvanceClocks(1.5);
+			FGMASAbilitySyncMessage Empty;
+			Empty.Type = EGMASAbilitySyncType::Digest;
+			Pair.Client->ReceiveAbilitySyncForTest(Empty);
+			TestEqual(TEXT("kept before 2 s"), Client->AbilityState, EAbilityState::Initialized);
+
+			// The server has nothing old to digest; the client asks, the server answers with an empty digest.
+			Pair.AdvanceClocks(0.6);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("no request right after a digest"), CountOutbox(EGMASAbilitySyncType::RequestDigest, true), 0);
+			Pair.AdvanceClocks(1.5);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("request sent"), CountOutbox(EGMASAbilitySyncType::RequestDigest, true), 1);
+			Pair.DeliverAll();
+			TestEqual(TEXT("cancelled once 2 s old and missing from the digest"), Client->AbilityState, EAbilityState::Ended);
+			TestEqual(TEXT("cancel hook"), Client->CancelAbilityEventCount, 1);
+			TestEqual(TEXT("no end hook"), Client->EndAbilityEventCount, 0);
+		});
+
+		It("sends no digest while no covered instance is MinAge old (server-only instances never count)", [this]()
+		{
+			TestTrue(TEXT("server-only"), Pair.Server->TryActivateAbility(UGMAS_TestAbilityB::StaticClass()));
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(0.5);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("nothing sent at 0.5 s"), Pair.Outbox.Num(), 0);
+
+			ClientA()->CancelAbility();
+			ServerA()->CancelAbility();
+			Pair.Tick();
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastMinAge + PastPeerEndGrace);
+			Pair.AncillaryTick();
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastMinAge);
+			Pair.AncillaryTick();
+			TestEqual(TEXT("no digest for a server-only instance"), CountOutbox(EGMASAbilitySyncType::Digest, false), 0);
+		});
+
+		It("sends one digest per interval, listing every covered live instance", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+			Pair.AdvanceClocks(PastMinAge);
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID - 1);   // young
+			Pair.DeliverAll();
+			Pair.Server->GenAncillaryTick(0.f, false);
+			Pair.Server->GenAncillaryTick(0.f, false);
+			const TPair<bool, FGMASAbilitySyncMessage>* Digest = OnlyOutbox(EGMASAbilitySyncType::Digest);
+			if (!TestNotNull(TEXT("one digest in the interval"), Digest)) { return; }
+			TestEqual(TEXT("both instances, any age"), Digest->Value.DigestIDs.Num(), 2);
+			Pair.DeliverAll();
+			TestEqual(TEXT("both still running on the client"), Pair.Client->GetActiveAbilities().Num(), 2);
+			TestEqual(TEXT("nothing reported"), Pair.Outbox.Num(), 0);
+
+			Pair.AdvanceClocks(1.05);
+			Pair.Server->GenAncillaryTick(0.f, false);
+			TestEqual(TEXT("next interval: next digest"), CountOutbox(EGMASAbilitySyncType::Digest, false), 1);
+		});
+
+		It("requests a digest after 2 intervals without one; the server replies at once", [this]()
+		{
+			Pair.ActivateBothFromOperation(FGMASAbilitySyncPairHarness::InputTag(), OpID);
+			Pair.DeliverAll();
+
+			Pair.AdvanceClocks(PastMinAge);
+			Pair.Client->GenAncillaryTick(0.f, false);
+			TestEqual(TEXT("no request before 2 intervals"), Pair.Outbox.Num(), 0);
+
+			Pair.AdvanceClocks(1.0);
+			Pair.Client->GenAncillaryTick(0.f, false);
+			Pair.Client->GenAncillaryTick(0.f, false);
+			TestEqual(TEXT("one request"), CountOutbox(EGMASAbilitySyncType::RequestDigest, true), 1);
+			Pair.DeliverAll();   // the server replies; the client consumes the reply
+			TestEqual(TEXT("reply delivered, nothing left"), Pair.Outbox.Num(), 0);
+			TestNotNull(TEXT("client instance kept"), ClientA());
+			TestEqual(TEXT("client running"), ClientA() ? ClientA()->AbilityState : EAbilityState::Ended, EAbilityState::Initialized);
+
+			Pair.AdvanceClocks(1.0);
+			Pair.Client->GenAncillaryTick(0.f, false);
+			TestEqual(TEXT("no request right after a digest"), Pair.Outbox.Num(), 0);
+		});
+
+		It("leaves a client-authorized instance running for 5 s (no timeout, no digest end)", [this]()
+		{
+			GetMutableDefault<UGMAS_TestAbility>()->bActivateOnMovementTick = false;
+			for (UGMC_AbilitySystemComponent* Side : { Pair.Client, Pair.Server })
+			{
+				Side->ClientAuthorizedAbilities.Add(UGMAS_TestAbility::StaticClass());
+			}
+			TestTrue(TEXT("client activated"), Pair.Client->TryActivateClientAuthAbilityForTest(
+				UGMAS_TestAbility::StaticClass(), FGMASAbilitySyncPairHarness::InputTag(), nullptr));
+			UGMCAbility* Client = nullptr;
+			for (const TPair<int, UGMCAbility*>& Entry : Pair.Client->GetActiveAbilities()) { Client = Entry.Value; }
+			if (!TestNotNull(TEXT("client instance"), Client)) { return; }
+			const int32 ClientAuthOp = Client->GetSourceOperationID();
+			// The orphan stub reports NM_Standalone: drop the queued client operation as a sent move would.
+			Pair.Client->GetBoundQueueV2ForTest().RemovePayloadByID(ClientAuthOp);
+			Pair.Client->GetBoundQueueV2ForTest().ClientQueuedOperations.Reset();
+
+			FGMASBoundQueueV2ClientAuthAbilityActivationOperation Op;
+			Op.OperationID = ClientAuthOp;
+			Op.AbilityClass = UGMAS_TestAbility::StaticClass();
+			Op.InputTag = FGMASAbilitySyncPairHarness::InputTag();
+			Pair.Server->ServerProcessOperationForTest(FInstancedStruct::Make(Op), false);
+			UGMCAbility* Server = FGMASAbilitySyncPairHarness::FindByID(Pair.Server, Client->GetAbilityID());
+			if (!TestNotNull(TEXT("server twin"), Server)) { return; }
+			TestTrue(TEXT("the answer is lost"), Pair.DropNext(EGMASAbilitySyncType::Answer));
+
+			for (int32 Second = 0; Second < 5; ++Second)
+			{
+				Pair.AdvanceClocks(1.0);
+				Pair.AncillaryTick();
+				Pair.DeliverAll();
+				Pair.Tick();
+			}
+			TestEqual(TEXT("client running"), Client->AbilityState, EAbilityState::Initialized);
+			TestEqual(TEXT("server running"), Server->AbilityState, EAbilityState::Initialized);
+			TestEqual(TEXT("nothing pending"), Pair.Outbox.Num(), 0);
 		});
 	});
 }
