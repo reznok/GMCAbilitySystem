@@ -4,6 +4,8 @@
 #include "Components/GMCAbilityComponent.h"
 
 #include "GMCAbilitySystem.h"
+#include "CoreGlobals.h"
+#include "HAL/PlatformTime.h"
 #include "GMCOrganicMovementComponent.h"
 #include "GMCPlayerController.h"
 #include "NiagaraComponent.h"
@@ -39,6 +41,31 @@ namespace GMASApplyTrace {
 		TEXT("Substring matched against the effect class name for GMAS.LogApplyTrace. Empty = every effect."),
 		ECVF_Default);
 }
+
+#if !UE_BUILD_SHIPPING
+namespace GMASAbilitySyncDebug {
+	// Fault injection for networked tests of the ability-sync convergence; applied by SendAbilitySync on the sender.
+	static TAutoConsoleVariable<int32> CVarDropAbilityAnswers(
+		TEXT("GMAS.Debug.DropAbilityAnswers"),
+		0,
+		TEXT("1: the server drops every ability answer (Confirmed / Rejected) it would send. Client instances then ")
+		TEXT("converge through the confirm timeout and their reported end."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDropAbilityEnds(
+		TEXT("GMAS.Debug.DropAbilityEnds"),
+		0,
+		TEXT("1: both sides drop every ability Ended message they would send. Orphans are then ended by the digest."),
+		ECVF_Default);
+
+	static TAutoConsoleVariable<int32> CVarDelayAbilityMessagesMs(
+		TEXT("GMAS.Debug.DelayAbilityMessagesMs"),
+		0,
+		TEXT("Holds every ability-sync message on the sender for this many milliseconds of confirm clock ")
+		TEXT("(released in order from the ancillary tick). 0 = off."),
+		ECVF_Default);
+}
+#endif
 
 
 
@@ -400,6 +427,17 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		ClearAbilityAndTaskData();
 	}
 
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Anc_TickAbilitySync)
+		// Server cleanup also runs here, not only in the prediction tick: a server whose client sends no
+		// moves still purges ended instances and sends their ends.
+		if (IsAuthorityForGMASLogic())
+		{
+			CleanupStaleAbilities();
+		}
+		TickAbilitySync();
+	}
+
 	// Replay-burst diagnostic — consume the sticky flag set by any GenPredictionTick
 	// invocations during this frame's replay loop. AncillaryTick runs once per real
 	// frame, so this collapses N replayed-move ticks into a single observation.
@@ -673,6 +711,14 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	if (GrantedAbilities.Num() == 0)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("No Abilities Granted for InputTag: %s"), *InputTag.ToString());
+		// Ability sync: the client may hold the grant and have predicted an instance. Answer Rejected on the
+		// operation's first consumption, so that instance ends within one round trip, not at its timeout.
+		if (SourceOperationID != 0 && IsAuthorityForGMASLogic() && HasRemoteAbilityTwin()
+			&& !WasActivationOperationConsumed(SourceOperationID))
+		{
+			NoteActivationOperationConsumed(SourceOperationID);
+			SendAbilityAnswer(SourceOperationID, INDEX_NONE);
+		}
 		return false;
 	}
 	bool bFirstAbilityActivatesDuringMovementTick = GrantedAbilities[0]->GetDefaultObject<UGMCAbility>()->bActivateOnMovementTick;
@@ -700,9 +746,14 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 	// bForce is exempt from the refusal on purpose. It is the grace-timeout safety net
 	// (OnServerOperationForced), it never runs during a replay, and blocking it would remove the
 	// last retry an operation gets.
+	// Ability sync: the server answers each covered activation operation exactly once, on its first
+	// consumption. A redelivery returns below without an answer, and a forced re-entry of an operation
+	// already consumed (and so already answered) sends none either.
+	bool bAnswerOperation = false;
 	if (SourceOperationID != 0)
 	{
-		if (!bForce && WasActivationOperationConsumed(SourceOperationID))
+		const bool bAlreadyConsumed = WasActivationOperationConsumed(SourceOperationID);
+		if (!bForce && bAlreadyConsumed)
 		{
 			UE_LOG(LogGMCAbilitySystem, Verbose,
 				TEXT("Activation operation %d already consumed on this side (redelivery/replay) — skipped."), SourceOperationID);
@@ -711,6 +762,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 			return true;
 		}
 		NoteActivationOperationConsumed(SourceOperationID);
+		bAnswerOperation = !bAlreadyConsumed && IsAuthorityForGMASLogic() && HasRemoteAbilityTwin();
 	}
 
 	// Operation-derived AbilityIDs: both sides iterate the same granted list (bound
@@ -729,16 +781,42 @@ bool UGMC_AbilitySystemComponent::TryActivateAbilitiesByInputTag(const FGameplay
 		const int ForcedAbilityID = SourceOperationID != 0
 			? DeriveAbilityIDFromOperation(SourceOperationID, ActivationIndex)
 			: 0;
-		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID))
+		if (TryActivateAbility(GrantedAbilities[ActivationIndex], InputAction, InputTag, false, ForcedAbilityID,
+			SourceOperationID, ActivationIndex))
 		{
+			if (bAnswerOperation)
+			{
+				SendAbilityAnswer(SourceOperationID, ActivationIndex);
+			}
 			return true;
+		}
+	}
+
+	if (bAnswerOperation)
+	{
+		SendAbilityAnswer(SourceOperationID, INDEX_NONE);
+	}
+	else if (SourceOperationID != 0 && !IsAuthorityForGMASLogic())
+	{
+		// Client: no candidate passed its gates, so no instance will ever claim an answer held for this
+		// operation. Drop it; a Confirmed one names a server instance without a twin here: report it.
+		for (int32 Index = HeldSyncMessages.Num() - 1; Index >= 0; --Index)
+		{
+			const FGMASAbilitySyncMessage& Held = HeldSyncMessages[Index].Message;
+			if (Held.Type != EGMASAbilitySyncType::Answer || Held.OperationID != SourceOperationID) { continue; }
+			if (Held.Answer == EGMASAbilityAnswer::Confirmed && Held.AbilityID != 0)
+			{
+				QueueAbilityEndSync(Held.AbilityID, EGMASAbilityEndKind::Cancelled);
+			}
+			HeldSyncMessages.RemoveAt(Index);
 		}
 	}
 
 	return false;
 }
 
-bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID)
+bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbility> ActivatedAbility, const UInputAction* InputAction, const FGameplayTag ActivationTag, const bool bSkipActivationTagsCheck, const int ForcedAbilityID,
+	const int SourceOperationID, const int SourceCandidateIndex, const bool bClientAuthorized)
 {
 
 	if (ActivatedAbility == nullptr) return false;
@@ -790,7 +868,7 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 					break;
 				}
 			}
-			const double BlockerAge = Blocker ? ActionTimer - Blocker->GetClientStartTime() : 0.0;
+			const double BlockerAge = Blocker ? GetConfirmClock() - Blocker->GetClientConfirmStartTime() : 0.0;
 			if (Blocker && BlockerAge > SuspiciousBlockerAge)
 			{
 				UE_LOG(LogGMCAbilitySystem, Warning,
@@ -833,22 +911,23 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	Ability->AbilityData = AbilityData;
 	Ability->AbilityData.InputTag = ActivationTag;
 
+	// Ability sync source, before Execute so every hook (and an end inside PreBeginAbility) sees it. An
+	// authority activation without an operation has no client twin: server-only, never synced.
+	Ability->SourceOperationID = SourceOperationID;
+	Ability->SourceCandidateIndex = SourceCandidateIndex;
+	Ability->bClientAuthorized = bClientAuthorized;
+	Ability->bServerOnly = SourceOperationID == 0 && IsAuthorityForGMASLogic();
+
 	Ability->Execute(this, AbilityID, InputAction);
 	ActiveAbilities.Add(AbilityID, Ability);
 
-	// Only signal "confirmed" to the client if the server-side Execute did NOT bail out
-	// during PreBeginAbility (cooldown, unaffordable AbilityCost, PreExecuteCheck, blocked-by-ability,
-	// blocked-by-tag, an OnAbilityActivated listener that cancelled the ability it was handed).
-	// CancelAbility sets AbilityState = Ended *before* BeginAbility runs. Without this
-	// gate the client receives RPCConfirmAbilityActivation for an ability the server
-	// just cancelled, sets bServerConfirmed=true, and the Tick-time
-	// `ClientStartTime + ServerConfirmTimeout < ActionTimer` check never fires —
-	// the predicted ability runs indefinitely on the client.
-	// Skip the confirm RPC when the activation came from the client-auth path
-	// (the client never expects confirmation for trust-based activations).
-	if (HasAuthority() && Ability->AbilityState != EAbilityState::Ended && !bSkipActivationTagsCheck)
+	// Ability sync: an answer (client) or an end (either side) may have arrived before this covered
+	// instance existed. The answer itself is sent by the caller that owns the operation
+	// (TryActivateAbilitiesByInputTag, the client-auth server path), once per operation. Inside a
+	// replayed move nothing is applied; the ancillary tick picks the held messages up instead.
+	if (Ability->IsCovered() && HasRemoteAbilityTwin() && !IsReplayingForGMASLogic())
 	{
-		RPCConfirmAbilityActivation(AbilityID);
+		ApplyHeldSyncMessages(Ability);
 	}
 
 	return true;
@@ -1160,6 +1239,22 @@ void UGMC_AbilitySystemComponent::MatchTagToBool(const FGameplayTag& InTag, bool
 	else{
 		RemoveActiveTag(InTag);
 	}
+}
+
+double UGMC_AbilitySystemComponent::GetConfirmClock()
+{
+	const uint64 Frame = GFrameCounter;
+	if (Frame != LastConfirmFrame)
+	{
+		const double RealNow = FPlatformTime::Seconds();
+		if (LastConfirmFrame != static_cast<uint64>(-1))
+		{
+			ConfirmClock += FMath::Clamp(RealNow - LastConfirmRealTime, 0.0, MaxConfirmClockStep);
+		}
+		LastConfirmRealTime = RealNow;
+		LastConfirmFrame = Frame;
+	}
+	return ConfirmClock;
 }
 
 bool UGMC_AbilitySystemComponent::IsServerOnly() const
@@ -1638,11 +1733,18 @@ void UGMC_AbilitySystemComponent::CheckAttributeChanged() {
 void UGMC_AbilitySystemComponent::NoteAbilityEnded(int AbilityID)
 {
 	// Bounded FIFO: drop the oldest once at capacity so this never grows unbounded over a match.
-	RecentlyEndedAbilityIDs.Remove(AbilityID);
+	const int32 Existing = RecentlyEndedAbilityIDs.IndexOfByKey(AbilityID);
+	if (Existing != INDEX_NONE)
+	{
+		RecentlyEndedAbilityIDs.RemoveAt(Existing, 1, EAllowShrinking::No);
+		RecentlyEndedAbilityTimes.RemoveAt(Existing, 1, EAllowShrinking::No);
+	}
 	RecentlyEndedAbilityIDs.Add(AbilityID);
+	RecentlyEndedAbilityTimes.Add(GetConfirmClock());
 	if (RecentlyEndedAbilityIDs.Num() > RecentlyEndedAbilityIDsCapacity)
 	{
 		RecentlyEndedAbilityIDs.RemoveAt(0, 1, EAllowShrinking::No);
+		RecentlyEndedAbilityTimes.RemoveAt(0, 1, EAllowShrinking::No);
 	}
 }
 
@@ -1691,19 +1793,15 @@ void UGMC_AbilitySystemComponent::CleanupStaleAbilities()
 		if (It.Value()->AbilityState == EAbilityState::Ended)
 		{
 			// Remember this ID so a still-in-flight client heartbeat for it reads as a benign
-			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning.
+			// end-race (Verbose) in RPCTaskHeartbeat, not a phantom-divergence Warning, and an Ended
+			// from the peer for it as already handled. The peer learns of the end through the
+			// ability-sync Ended queued when the instance ended (NoteAbilityEndedForSync).
 			NoteAbilityEnded(It.Value()->GetAbilityID());
-			// Raw HasAuthority() on purpose (not the test-aware IsAuthorityForGMASLogic): an
-			// ownerless component must not send an RPC. Without a movement component the pawn
-			// cannot be known to be locally controlled, so the client is told.
-			if (HasAuthority() && !(GMCMovementComponent && GMCMovementComponent->IsLocallyControlledServerPawn()))
-			{
-				// Fail safe to tell client server has ended the ability
-				RPCClientEndAbility(It.Value()->GetAbilityID());
-			};
 			It.RemoveCurrent();
 		}
 	}
+
+	FlushAbilityEndSyncs();
 }
 
 void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
@@ -1810,7 +1908,7 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			!EffectValue->EffectData.bServerAuth
 			&& ProcessedEffectIDs.Contains(Key)
 			&& ProcessedEffectIDs[Key] == EGMCEffectAnswerState::Pending
-			&& EffectValue->ClientEffectApplicationTime + ClientEffectApplicationTimeout < ActionTimer)
+			&& EffectValue->ClientConfirmStartTime + ClientEffectApplicationTimeout < GetConfirmClock())
 		{
 			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);
@@ -1967,7 +2065,7 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	{
 		// Benign end-race: the server HAD this ability and already ended it (e.g. a short
 		// client-predicted weapon-raise whose client instance outlives the server twin by a
-		// tick, long enough to fire its one immediate heartbeat). The server's RPCClientEndAbility
+		// tick, long enough to fire its one immediate heartbeat). The server's ability-sync Ended
 		// is already on its way back. Not a divergence — keep it quiet. Mirrors the TaskID-level
 		// benign-end-race branch in UGMCAbility::HandleTaskHeartbeat.
 		UE_LOG(LogGMCAbilitySystem, Verbose,
@@ -1994,32 +2092,628 @@ void UGMC_AbilitySystemComponent::RPCTaskHeartbeat_Implementation(int AbilityID,
 	}
 }
 
-void UGMC_AbilitySystemComponent::RPCClientEndAbility_Implementation(int AbilityID)
+void UGMC_AbilitySystemComponent::ClientAbilitySync_Implementation(const FGMASAbilitySyncMessage& Message)
 {
-	if (ActiveAbilities.Contains(AbilityID))
+	HandleAbilitySync(Message);
+}
+
+void UGMC_AbilitySystemComponent::ServerAbilitySync_Implementation(const FGMASAbilitySyncMessage& Message)
+{
+	HandleAbilitySync(Message);
+}
+
+void UGMC_AbilitySystemComponent::SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer)
+{
+#if !UE_BUILD_SHIPPING
+	if (Message.Type == EGMASAbilitySyncType::Answer && GMASAbilitySyncDebug::CVarDropAbilityAnswers.GetValueOnGameThread() != 0)
 	{
-		// [AbilityCut] probe: the server force-ends an ability that is still ACTIVE on this
-		// client — the player-visible "it cut by itself" moment (e.g. server watchdog kill).
-		// An RPC for an already-Ended local instance is routine cleanup and stays quiet.
-		UGMCAbility* LocalAbility = ActiveAbilities[AbilityID];
-		if (LocalAbility && LocalAbility->AbilityState != EAbilityState::Ended)
-		{
-			UE_LOG(LogGMCAbilitySystem, Warning,
-				TEXT("[AbilityCut] Server force-ended an ability that was still active locally; cancelled. %s"),
-				*LocalAbility->GetAbilityCutDiagnostics());
-		}
-		ActiveAbilities[AbilityID]->CancelAbility();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server cancelled ability: %d"), AbilityID);
+		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] answer op=%d dropped by GMAS.Debug.DropAbilityAnswers on %s"),
+			Message.OperationID, *GetNameSafe(GetOwner()));
+		return;
+	}
+	if (Message.Type == EGMASAbilitySyncType::Ended && GMASAbilitySyncDebug::CVarDropAbilityEnds.GetValueOnGameThread() != 0)
+	{
+		UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] end %d dropped by GMAS.Debug.DropAbilityEnds on %s"),
+			Message.AbilityID, *GetNameSafe(GetOwner()));
+		return;
+	}
+	const int32 DelayMs = FMath::Max(0, GMASAbilitySyncDebug::CVarDelayAbilityMessagesMs.GetValueOnGameThread());
+	// While earlier sends are held, later ones queue behind them even with the delay back at 0: order is kept.
+	if (DelayMs > 0 || DelayedAbilitySyncs.Num() > 0)
+	{
+		FDelayedAbilitySync& Delayed = DelayedAbilitySyncs.AddDefaulted_GetRef();
+		Delayed.Message = Message;
+		Delayed.bToServer = bToServer;
+		Delayed.ReleaseAt = GetConfirmClock() + DelayMs / 1000.0;
+		return;
+	}
+#endif
+	DispatchAbilitySync(Message, bToServer);
+}
+
+void UGMC_AbilitySystemComponent::FlushDelayedAbilitySyncs()
+{
+	if (DelayedAbilitySyncs.Num() == 0) { return; }
+	const double Now = GetConfirmClock();
+	int32 Due = 0;
+	while (Due < DelayedAbilitySyncs.Num() && DelayedAbilitySyncs[Due].ReleaseAt <= Now)
+	{
+		++Due;
+	}
+	if (Due == 0) { return; }
+	TArray<FDelayedAbilitySync> ToSend(DelayedAbilitySyncs.GetData(), Due);
+	DelayedAbilitySyncs.RemoveAt(0, Due);
+	for (const FDelayedAbilitySync& Delayed : ToSend)
+	{
+		DispatchAbilitySync(Delayed.Message, Delayed.bToServer);
 	}
 }
 
-void UGMC_AbilitySystemComponent::RPCConfirmAbilityActivation_Implementation(int AbilityID)
+void UGMC_AbilitySystemComponent::DispatchAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer)
 {
-	if (ActiveAbilities.Contains(AbilityID))
+#if WITH_AUTOMATION_WORKER
+	if (SyncSendHookForTest)
 	{
-		ActiveAbilities[AbilityID]->ServerConfirm();
-		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Confirmed Long-Running Ability Activation: %d"), AbilityID);
+		SyncSendHookForTest(Message, bToServer);
+		return;
 	}
+#endif
+	if (bToServer)
+	{
+		ServerAbilitySync(Message);
+	}
+	else
+	{
+		ClientAbilitySync(Message);
+	}
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilitySync(const FGMASAbilitySyncMessage& Message)
+{
+	// Runs in the RPC handlers (or a test delivery), never inside a GMC move: nothing here is replayed.
+	const bool bServerSide = IsAuthorityForGMASLogic();
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] received type=%d op=%d idx=%d id=%d on %s (authority=%d)"),
+		static_cast<int32>(Message.Type), Message.OperationID, Message.CandidateIndex, Message.AbilityID,
+		*GetNameSafe(GetOwner()), bServerSide ? 1 : 0);
+
+	switch (Message.Type)
+	{
+	case EGMASAbilitySyncType::Answer:
+		if (!bServerSide)
+		{
+			HandleAbilityAnswer(Message);
+		}
+		break;
+	case EGMASAbilitySyncType::Ended:
+		HandleAbilityEnded(Message);
+		break;
+	case EGMASAbilitySyncType::Digest:
+		if (!bServerSide && HasRemoteAbilityTwin())
+		{
+			HandleAbilityDigest(Message);
+		}
+		break;
+	case EGMASAbilitySyncType::RequestDigest:
+		if (bServerSide && HasRemoteAbilityTwin())
+		{
+			SendAbilityDigest();
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+void UGMC_AbilitySystemComponent::SendAbilityAnswer(int OperationID, int ActivatedIndex)
+{
+	FGMASAbilitySyncMessage Answer;
+	Answer.Type = EGMASAbilitySyncType::Answer;
+	Answer.OperationID = OperationID;
+	Answer.Answer = EGMASAbilityAnswer::Rejected;
+
+	if (ActivatedIndex != INDEX_NONE)
+	{
+		const int AbilityID = DeriveAbilityIDFromOperation(OperationID, ActivatedIndex);
+		const UGMCAbility* Activated = ActiveAbilities.FindRef(AbilityID);
+		// Began (it may have ended inside its own activation since, a one-shot): Confirmed, and its end
+		// follows as an Ended. Refused in PreBeginAbility: Rejected, so the client's twin ends now.
+		if (Activated && Activated->GetSourceOperationID() == OperationID && Activated->HasPassedActivationGates())
+		{
+			Answer.Answer = EGMASAbilityAnswer::Confirmed;
+			Answer.CandidateIndex = ActivatedIndex;
+			Answer.AbilityID = AbilityID;
+		}
+	}
+
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] answer op=%d idx=%d id=%d %s on %s"),
+		OperationID, Answer.CandidateIndex, Answer.AbilityID,
+		Answer.Answer == EGMASAbilityAnswer::Confirmed ? TEXT("Confirmed") : TEXT("Rejected"), *GetNameSafe(GetOwner()));
+	SendAbilitySync(Answer, /*bToServer=*/false);
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilityAnswer(const FGMASAbilitySyncMessage& Message)
+{
+	UGMCAbility* Local = FindLiveCoveredAbilityByOperation(Message.OperationID);
+	if (!Local)
+	{
+		if (WasActivationOperationConsumed(Message.OperationID))
+		{
+			// The client already ran this operation: its instance ended (that end reaches the server on
+			// its own), or no candidate passed its gates here. A Confirmed instance the client never had
+			// (no local instance under that ID, live or recently ended) has no twin: report it.
+			const bool bKnownHere = ActiveAbilities.Contains(Message.AbilityID) || WasAbilityRecentlyEnded(Message.AbilityID);
+			if (Message.Answer == EGMASAbilityAnswer::Confirmed && !bKnownHere)
+			{
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] answer op=%d confirmed server instance %d that has no twin here; reporting it ended."),
+					Message.OperationID, Message.AbilityID);
+				QueueAbilityEndSync(Message.AbilityID, EGMASAbilityEndKind::Cancelled);
+				return;
+			}
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] answer op=%d id=%d for an operation already run here with no live instance; dropped."),
+				Message.OperationID, Message.AbilityID);
+			return;
+		}
+		HoldAbilitySyncMessage(Message);
+		return;
+	}
+
+	const FGMASCoveredAbility Covered = DescribeCoveredAbility(*Local);
+	ApplyAbilitySyncAction(Local, GMASAbilitySyncRules::OnAnswer(&Covered, Message), Message);
+}
+
+void UGMC_AbilitySystemComponent::ApplyHeldSyncMessages(UGMCAbility* Created)
+{
+	if (!Created || HeldSyncMessages.Num() == 0) { return; }
+
+	const FGMASCoveredAbility Covered = DescribeCoveredAbility(*Created);
+	for (int32 Index = 0; Index < HeldSyncMessages.Num(); )
+	{
+		const FGMASAbilitySyncMessage Held = HeldSyncMessages[Index].Message;
+		const bool bNamesCreated =
+			(Held.Type == EGMASAbilitySyncType::Answer && Held.OperationID == Covered.OperationID)
+			|| (Held.Type == EGMASAbilitySyncType::Ended && Held.AbilityID == Covered.AbilityID);
+		if (!bNamesCreated)
+		{
+			++Index;
+			continue;
+		}
+		HeldSyncMessages.RemoveAt(Index);
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] held type=%d op=%d id=%d applied to new instance %d"),
+			static_cast<int32>(Held.Type), Held.OperationID, Held.AbilityID, Covered.AbilityID);
+		ApplyAbilitySyncAction(Created, GMASAbilitySyncRules::OnCreatedWithHeld(Covered, Held), Held);
+	}
+}
+
+void UGMC_AbilitySystemComponent::ApplyAbilitySyncAction(UGMCAbility* Ability, EGMASSyncAction Action, const FGMASAbilitySyncMessage& Message)
+{
+	if (!Ability) { return; }
+	switch (Action)
+	{
+	case EGMASSyncAction::MarkConfirmed:
+		Ability->ServerConfirm();
+		break;
+	case EGMASSyncAction::EndNatural:
+	case EGMASSyncAction::EndCancelled:
+	{
+		const EGMASAbilityEndKind Kind = Action == EGMASSyncAction::EndNatural ? EGMASAbilityEndKind::Natural : EGMASAbilityEndKind::Cancelled;
+		if (IsAuthorityForGMASLogic())
+		{
+			SchedulePeerEnd(Ability, Kind);
+			break;
+		}
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (%s) %d %s by type=%d op=%d id=%d"),
+			Kind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+			Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()), static_cast<int32>(Message.Type), Message.OperationID, Message.AbilityID);
+		// A Confirmed answer naming another instance: the server ran a different candidate for this
+		// operation. Its instance has no twin here, so it is reported ended as well.
+		if (Message.Type == EGMASAbilitySyncType::Answer && Message.Answer == EGMASAbilityAnswer::Confirmed
+			&& Message.AbilityID != 0 && Message.AbilityID != Ability->GetAbilityID())
+		{
+			QueueAbilityEndSync(Message.AbilityID, EGMASAbilityEndKind::Cancelled);
+		}
+		EndAbilityFromPeer(Ability, Kind);
+		break;
+	}
+	case EGMASSyncAction::Hold:
+		HoldAbilitySyncMessage(Message);
+		break;
+	case EGMASSyncAction::None:
+	default:
+		break;
+	}
+}
+
+void UGMC_AbilitySystemComponent::HoldAbilitySyncMessage(const FGMASAbilitySyncMessage& Message)
+{
+	FGMASHeldSyncMessage& Held = HeldSyncMessages.AddDefaulted_GetRef();
+	Held.Message = Message;
+	Held.ExpiresAt = GetConfirmClock() + GetDefault<UGMASNetworkTimingSettings>()->AbilityAnswerHoldTime;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] held type=%d op=%d id=%d on %s (%d held)"),
+		static_cast<int32>(Message.Type), Message.OperationID, Message.AbilityID, *GetNameSafe(GetOwner()), HeldSyncMessages.Num());
+}
+
+void UGMC_AbilitySystemComponent::TickAbilitySync()
+{
+	if (HeldSyncMessages.Num() > 0)
+	{
+		const int32 Dropped = GMASAbilitySyncRules::PruneHeld(HeldSyncMessages, GetConfirmClock());
+		if (Dropped > 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] %d held message(s) expired on %s"), Dropped, *GetNameSafe(GetOwner()));
+		}
+	}
+
+	// A covered instance created inside a replayed move skipped its held messages; apply them here.
+	if (HeldSyncMessages.Num() > 0)
+	{
+		FGMASLiveAbilities Live;
+		for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+		{
+			if (Pair.Value && Pair.Value->IsCovered() && Pair.Value->AbilityState != EAbilityState::Ended)
+			{
+				Live.Add(Pair.Value);
+			}
+		}
+		for (UGMCAbility* Ability : Live)
+		{
+			ApplyHeldSyncMessages(Ability);
+		}
+	}
+
+	if (IsAuthorityForGMASLogic())
+	{
+		TickPeerEnds();
+	}
+	FlushAbilityEndSyncs();
+
+	// After the ends went out: a digest never overtakes an end of the same instance.
+	if (HasRemoteAbilityTwin())
+	{
+		TickAbilityDigest();
+	}
+
+	FlushDelayedAbilitySyncs();
+}
+
+void UGMC_AbilitySystemComponent::ResetAbilitySyncForNewConnection()
+{
+	FGMASLiveAbilities Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
+	for (UGMCAbility* Ability : Live)
+	{
+		Ability->bEndSyncNoted = true;   // the new connection never had it: nothing to report
+		Ability->PeerEndAt = 0.0;
+		Ability->CancelAbility();
+	}
+
+	// Drop the cancelled instances now, not at the next purge: the new client's operation ids restart and
+	// derive the same AbilityIDs, which must not meet an old instance (or the recently-ended ring).
+	for (auto It = ActiveAbilities.CreateIterator(); It; ++It)
+	{
+		if (It.Value() && It.Value()->IsCovered() && It.Value()->AbilityState == EAbilityState::Ended)
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	HeldSyncMessages.Reset();
+	PendingEndSyncs.Reset();
+	DelayedAbilitySyncs.Reset();
+	const double Now = GetConfirmClock();
+	LastDigestReceivedAt = Now;
+	LastDigestRequestedAt = Now;
+	LastDigestSentAt = Now;
+
+	UE_LOG(LogGMCAbilitySystem, Log, TEXT("[AbilitySync] connection reset on %s: %d covered instance(s) cancelled"),
+		*GetNameSafe(GetOwner()), Live.Num());
+}
+
+void UGMC_AbilitySystemComponent::NoteAbilityEndedForSync(UGMCAbility* Ability)
+{
+	if (!Ability || !Ability->IsCovered() || Ability->bEndSyncNoted) { return; }
+	Ability->bEndSyncNoted = true;   // at most once, whatever is decided below
+
+	// The peer caused this end (its Ended, or an answer): it already knows.
+	if (Ability->bEndedByPeer || !HasRemoteAbilityTwin()) { return; }
+	// A server activation refused in PreBeginAbility was answered Rejected; that answer ends the twin.
+	if (IsAuthorityForGMASLogic() && !Ability->HasPassedActivationGates()) { return; }
+
+	QueueAbilityEndSync(Ability->GetAbilityID(), Ability->GetEndKind());
+}
+
+void UGMC_AbilitySystemComponent::QueueAbilityEndSync(int AbilityID, EGMASAbilityEndKind Kind)
+{
+	FGMASAbilitySyncMessage& Ended = PendingEndSyncs.AddDefaulted_GetRef();
+	Ended.Type = EGMASAbilitySyncType::Ended;
+	Ended.AbilityID = AbilityID;
+	Ended.EndKind = Kind;
+}
+
+void UGMC_AbilitySystemComponent::FlushAbilityEndSyncs()
+{
+	// An end that happened inside a replayed move waits for the next live tick or ancillary tick.
+	if (PendingEndSyncs.Num() == 0 || IsReplayingForGMASLogic()) { return; }
+
+	const bool bToServer = !IsAuthorityForGMASLogic();
+	TArray<FGMASAbilitySyncMessage> ToSend = MoveTemp(PendingEndSyncs);
+	PendingEndSyncs.Reset();
+	for (const FGMASAbilitySyncMessage& Ended : ToSend)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end %d (%s) sent to the %s from %s"),
+			Ended.AbilityID, Ended.EndKind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+			bToServer ? TEXT("server") : TEXT("client"), *GetNameSafe(GetOwner()));
+		if (bToServer)
+		{
+			// Client: a report is no longer pending once sent, but a digest already in flight may still list
+			// the instance (a server instance with no twin here is never in the ring otherwise). The timed
+			// ring spares it for one digest interval; a later digest that still lists it means the report
+			// was lost, and it is reported again.
+			NoteAbilityEnded(Ended.AbilityID);
+		}
+		SendAbilitySync(Ended, bToServer);
+	}
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilityEnded(const FGMASAbilitySyncMessage& Message)
+{
+	UGMCAbility* Local = ActiveAbilities.FindRef(Message.AbilityID);
+	if (Local && !Local->IsCovered())
+	{
+		// An id collision with an instance that has no twin (server-only): never ended by sync.
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end %d names an instance that is not synced (%s); ignored."),
+			Message.AbilityID, *GetNameSafe(Local->GetClass()));
+		return;
+	}
+
+	const bool bLive = Local && Local->AbilityState != EAbilityState::Ended;
+	const bool bRecentlyEnded = (Local && !bLive) || WasAbilityRecentlyEnded(Message.AbilityID);
+	const EGMASSyncAction Action = GMASAbilitySyncRules::OnEnded(bLive, bRecentlyEnded, Message.EndKind);
+
+	// [AbilityCut] probe: the server cancelled an ability that is still active on this client, the
+	// player-visible "it cut by itself" moment. A natural end, or an end for an instance that already
+	// ended here, is routine and stays quiet.
+	if (bLive && Action == EGMASSyncAction::EndCancelled && !IsAuthorityForGMASLogic())
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityCut] Server cancelled an ability that was still active locally; cancelled. %s"),
+			*Local->GetAbilityCutDiagnostics());
+	}
+
+	if (Action == EGMASSyncAction::Hold)
+	{
+		HoldAbilitySyncMessage(Message);
+		return;
+	}
+	ApplyAbilitySyncAction(Local, Action, Message);
+}
+
+void UGMC_AbilitySystemComponent::EndAbilityFromPeer(UGMCAbility* Ability, EGMASAbilityEndKind Kind)
+{
+	if (!Ability || Ability->AbilityState == EAbilityState::Ended) { return; }
+	Ability->bEndedByPeer = true;
+	if (Kind == EGMASAbilityEndKind::Natural)
+	{
+		Ability->EndAbility();
+	}
+	else
+	{
+		Ability->CancelAbility();
+	}
+}
+
+void UGMC_AbilitySystemComponent::SchedulePeerEnd(UGMCAbility* Ability, EGMASAbilityEndKind Kind)
+{
+	if (!Ability || Ability->AbilityState == EAbilityState::Ended || Ability->PeerEndAt > 0.0) { return; }
+	Ability->PeerEndKind = Kind;
+	Ability->PeerEndAt = GetConfirmClock() + GetDefault<UGMASNetworkTimingSettings>()->ServerOperationGraceSeconds;
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] client reported %d %s ended (%s); applied in %.2fs unless it ends here first"),
+		Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()),
+		Kind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+		GetDefault<UGMASNetworkTimingSettings>()->ServerOperationGraceSeconds);
+}
+
+void UGMC_AbilitySystemComponent::TickPeerEnds()
+{
+	TArray<UGMCAbility*, TInlineAllocator<4>> Due;
+	double Now = -1.0;
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		UGMCAbility* Ability = Pair.Value;
+		if (!Ability || Ability->PeerEndAt <= 0.0 || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		if (Now < 0.0) { Now = GetConfirmClock(); }
+		if (Now >= Ability->PeerEndAt)
+		{
+			Due.Add(Ability);
+		}
+	}
+	for (UGMCAbility* Ability : Due)
+	{
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] end (%s) %d %s applied from the client's report"),
+			Ability->PeerEndKind == EGMASAbilityEndKind::Natural ? TEXT("natural") : TEXT("cancelled"),
+			Ability->GetAbilityID(), *GetNameSafe(Ability->GetClass()));
+		EndAbilityFromPeer(Ability, Ability->PeerEndKind);
+	}
+}
+
+void UGMC_AbilitySystemComponent::GatherLiveCoveredAbilities(FGMASLiveAbilities& OutAbilities, bool bSkipPeerEnding) const
+{
+	OutAbilities.Reset();
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		const UGMCAbility* Ability = Pair.Value;
+		if (!Ability || !Ability->IsCovered() || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		if (bSkipPeerEnding && Ability->PeerEndAt > 0.0) { continue; }
+		OutAbilities.Add(Pair.Value);
+	}
+}
+
+void UGMC_AbilitySystemComponent::TickAbilityDigest()
+{
+	const UGMASNetworkTimingSettings* Settings = GetDefault<UGMASNetworkTimingSettings>();
+	const double Now = GetConfirmClock();
+	const bool bServerSide = IsAuthorityForGMASLogic();
+
+	// Runs every ancillary tick: the cadence checks come first, and nothing is gathered between digests
+	// (server) or while digests keep arriving (client). These are the same conditions the rules unit
+	// applies below, checked before the covered set is built.
+	if (bServerSide)
+	{
+		if (Now - LastDigestSentAt < Settings->AbilityDigestInterval) { return; }
+	}
+	else if (Now - LastDigestReceivedAt < 2.0 * Settings->AbilityDigestInterval
+		|| Now - LastDigestRequestedAt < Settings->AbilityDigestInterval)
+	{
+		return;
+	}
+
+	FGMASLiveAbilities Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/bServerSide);
+	if (Live.Num() == 0) { return; }
+	TArray<FGMASCoveredAbility, TInlineAllocator<8>> Covered;
+	Covered.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Covered.Add(DescribeCoveredAbility(*Ability));
+	}
+
+	if (bServerSide)
+	{
+		if (GMASAbilitySyncRules::ShouldServerSendDigest(Covered, Now, Settings->AbilityReconcileMinAge))
+		{
+			SendAbilityDigest();
+		}
+		return;
+	}
+
+	if (GMASAbilitySyncRules::ShouldClientRequestDigest(Covered, Now, LastDigestReceivedAt, LastDigestRequestedAt,
+		Settings->AbilityReconcileMinAge, Settings->AbilityDigestInterval))
+	{
+		LastDigestRequestedAt = Now;
+		FGMASAbilitySyncMessage Request;
+		Request.Type = EGMASAbilitySyncType::RequestDigest;
+		UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] digest requested by %s (none for %.2fs)"),
+			*GetNameSafe(GetOwner()), Now - LastDigestReceivedAt);
+		SendAbilitySync(Request, /*bToServer=*/true);
+	}
+}
+
+void UGMC_AbilitySystemComponent::SendAbilityDigest()
+{
+	// Ends first, so the client never sees a digest that predates an end already decided here.
+	FlushAbilityEndSyncs();
+
+	FGMASLiveAbilities Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/true);
+	FGMASAbilitySyncMessage Digest;
+	Digest.Type = EGMASAbilitySyncType::Digest;
+	Digest.DigestIDs.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Digest.DigestIDs.Add(Ability->GetAbilityID());
+	}
+	LastDigestSentAt = GetConfirmClock();
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[AbilitySync] digest of %d instance(s) sent from %s"),
+		Digest.DigestIDs.Num(), *GetNameSafe(GetOwner()));
+	SendAbilitySync(Digest, /*bToServer=*/false);
+}
+
+void UGMC_AbilitySystemComponent::HandleAbilityDigest(const FGMASAbilitySyncMessage& Message)
+{
+	const UGMASNetworkTimingSettings* Settings = GetDefault<UGMASNetworkTimingSettings>();
+	const double Now = GetConfirmClock();
+	LastDigestReceivedAt = Now;
+
+	FGMASLiveAbilities Live;
+	GatherLiveCoveredAbilities(Live, /*bSkipPeerEnding=*/false);
+	TArray<FGMASCoveredAbility, TInlineAllocator<8>> Covered;
+	Covered.Reserve(Live.Num());
+	for (const UGMCAbility* Ability : Live)
+	{
+		Covered.Add(DescribeCoveredAbility(*Ability));
+	}
+
+	// Ended here and not yet reported, or reported within the last interval (that Ended may still be in
+	// flight, crossing this digest). An older end the server still lists was lost: report it again.
+	TArray<int32> RecentlyEnded;
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		if (Pair.Value && Pair.Value->AbilityState == EAbilityState::Ended) { RecentlyEnded.Add(Pair.Key); }
+	}
+	for (const FGMASAbilitySyncMessage& Pending : PendingEndSyncs) { RecentlyEnded.Add(Pending.AbilityID); }
+	for (int32 Index = 0; Index < RecentlyEndedAbilityIDs.Num(); ++Index)
+	{
+		if (Now - RecentlyEndedAbilityTimes[Index] < Settings->AbilityDigestInterval)
+		{
+			RecentlyEnded.Add(RecentlyEndedAbilityIDs[Index]);
+		}
+	}
+
+	// Instances whose answer or end is held arrive later; the held message settles them.
+	TArray<int32> HeldIDs;
+	for (const FGMASHeldSyncMessage& Held : HeldSyncMessages)
+	{
+		if (Held.Message.AbilityID != 0) { HeldIDs.Add(Held.Message.AbilityID); }
+	}
+
+	const FGMASDigestActions Actions = GMASAbilitySyncRules::OnDigest(Covered, Message.DigestIDs, RecentlyEnded, HeldIDs,
+		Now, Settings->AbilityReconcileMinAge, Settings->AbilityDigestInterval);
+
+	for (const int32 ServerOnlyID : Actions.ReportServerOnly)
+	{
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityReconcile] server-only %d: the server runs it, %s has no instance; reported ended so the server cancels it."),
+			ServerOnlyID, *GetNameSafe(GetOwner()));
+		QueueAbilityEndSync(ServerOnlyID, EGMASAbilityEndKind::Cancelled);
+	}
+
+	for (const int32 ClientOnlyID : Actions.EndClientOnly)
+	{
+		UGMCAbility* Ability = ActiveAbilities.FindRef(ClientOnlyID);
+		if (!Ability || Ability->AbilityState == EAbilityState::Ended) { continue; }
+		UE_LOG(LogGMCAbilitySystem, Warning,
+			TEXT("[AbilityReconcile] client-only %d %s: the server no longer runs it; cancelled here. %s"),
+			ClientOnlyID, *GetNameSafe(Ability->GetClass()), *Ability->GetAbilityCutDiagnostics());
+		Ability->CancelAbility();   // reported to the server through NoteAbilityEndedForSync
+	}
+
+	FlushAbilityEndSyncs();
+}
+
+UGMCAbility* UGMC_AbilitySystemComponent::FindLiveCoveredAbilityByOperation(int OperationID) const
+{
+	if (OperationID == 0) { return nullptr; }
+	for (const TPair<int, UGMCAbility*>& Pair : ActiveAbilities)
+	{
+		if (Pair.Value && Pair.Value->IsCovered() && Pair.Value->GetSourceOperationID() == OperationID
+			&& Pair.Value->AbilityState != EAbilityState::Ended)
+		{
+			return Pair.Value;
+		}
+	}
+	return nullptr;
+}
+
+FGMASCoveredAbility UGMC_AbilitySystemComponent::DescribeCoveredAbility(const UGMCAbility& Ability) const
+{
+	FGMASCoveredAbility Covered;
+	Covered.AbilityID = Ability.GetAbilityID();
+	Covered.OperationID = Ability.GetSourceOperationID();
+	Covered.CandidateIndex = Ability.GetSourceCandidateIndex();
+	Covered.StartConfirmClock = Ability.GetClientConfirmStartTime();
+	Covered.bConfirmed = Ability.IsServerConfirmed();
+	Covered.bClientAuthorized = Ability.IsClientAuthorized();
+	return Covered;
+}
+
+bool UGMC_AbilitySystemComponent::HasRemoteAbilityTwin() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceRemoteTwinForTest) { return true; }
+#endif
+	if (!GMCMovementComponent) { return false; }
+	// Server: a pawn controlled through a remote client connection (dedicated or listen). Client: its own
+	// autonomous proxy. Standalone, the listen host's own pawn and AI pawns have no twin to converge with.
+	return GMCMovementComponent->IsRemotelyControlledServerPawn() || GMCMovementComponent->IsAutonomousProxy();
 }
 
 
@@ -2122,8 +2816,17 @@ void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementa
 	// FGMASBoundQueueV2::NextOperationID at 0 and re-issues -1, -2, -3 ... Keeping the rings would
 	// make the server refuse every re-issued id as already consumed, permanently. The rings are
 	// valid for the lifetime of a CONNECTION, not of the component.
+	// On a reconnect, covered abilities end first (the new client starts with none); game logic
+	// re-activates. A pawn's first owning connection asks too, right after login: its covered instances
+	// already belong to that connection and are kept.
+	if (bAbilitySyncConnectionSeen)
+	{
+		ResetAbilitySyncForNewConnection();
+	}
+	bAbilitySyncConnectionSeen = true;
 	ConsumedActivationOperationIDs.Reset();
 	RecentlyEndedAbilityIDs.Reset();
+	RecentlyEndedAbilityTimes.Reset();
 	BoundQueueV2.ResetForNewConnection();   // the processed-op ring and the client's cached payloads
 
 	TArray<FGMCEffectSnapshot> Snapshots;
@@ -2433,13 +3136,14 @@ bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
 	if (HasAuthority())
 	{
 		return TryActivateAbility(AbilityClass, InputAction, InputTag,
-			/*bSkipActivationTagsCheck=*/true);
+			/*bSkipActivationTagsCheck=*/true, /*ForcedAbilityID=*/0,
+			/*SourceOperationID=*/0, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
 	}
 
 	// Build the operation FIRST so the local activation can use the operation-derived
 	// AbilityID — the server's handler derives the same ID from Op.OperationID, which is
-	// what pairs the two instances (heartbeats and task payloads address by AbilityID;
-	// client-auth has no RPCConfirmAbilityActivation to paper over a mismatch).
+	// what pairs the two instances (heartbeats and task payloads address by AbilityID,
+	// and so do the ability-sync answer and end messages).
 	FGMASBoundQueueV2ClientAuthAbilityActivationOperation Op;
 	Op.AbilityClass = AbilityClass;
 	Op.InputTag = InputTag;
@@ -2450,13 +3154,17 @@ bool UGMC_AbilitySystemComponent::TryActivateClientAuthAbility(
 	// CheckActivationTagsForClientAuth already enforced the reduced gate set.
 	const bool bActivated = TryActivateAbility(AbilityClass, InputAction, InputTag,
 		/*bSkipActivationTagsCheck=*/true,
-		DeriveAbilityIDFromOperation(OpID, 0));
+		DeriveAbilityIDFromOperation(OpID, 0),
+		OpID, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
 	if (!bActivated)
 	{
 		// Don't ship an operation whose local activation failed; drop its cached payload.
 		BoundQueueV2.RemovePayloadByID(OpID);
 		return false;
 	}
+	// Consumed here, at its only local run: an answer that arrives after the instance is gone is then
+	// recognised as late rather than held for an activation that will never come.
+	NoteActivationOperationConsumed(OpID);
 
 	BoundQueueV2.QueueClientOperation(OpID);
 	return true;
@@ -3157,14 +3865,16 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 		}
 
 		// Client-auth ability activation: the payload carries everything the server needs
-		// (AbilityClass, InputTag, InputAction). No RPCConfirmAbilityActivation is issued —
-		// the client already trusts the activation by construction.
+		// (AbilityClass, InputTag, InputAction). Answered like any covered activation (the operation
+		// is processed once, guarded above), so a refusal here ends the client's instance too.
 		if (OperationStruct == FGMASBoundQueueV2ClientAuthAbilityActivationOperation::StaticStruct())
 		{
 			const FGMASBoundQueueV2ClientAuthAbilityActivationOperation* Op =
 				OperationData.GetPtr<FGMASBoundQueueV2ClientAuthAbilityActivationOperation>();
+			const bool bAnswer = Op && HasRemoteAbilityTwin();
 			if (!Op || !Op->AbilityClass)
 			{
+				if (bAnswer) { SendAbilityAnswer(Op->OperationID, INDEX_NONE); }
 				return;
 			}
 
@@ -3174,6 +3884,7 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 				UE_LOG(LogGMCAbilitySystem, Warning,
 					TEXT("[ServerProcessOperation] Rejected ClientAuth ability %s -- not whitelisted (potential cheat attempt)."),
 					*Op->AbilityClass->GetName());
+				if (bAnswer) { SendAbilityAnswer(Op->OperationID, INDEX_NONE); }
 				return;
 			}
 
@@ -3181,16 +3892,18 @@ void UGMC_AbilitySystemComponent::ServerProcessOperation(const FInstancedStruct&
 			const UGMCAbility* CDO = Op->AbilityClass->GetDefaultObject<UGMCAbility>();
 			if (!CheckActivationTagsForClientAuth(CDO))
 			{
-				// Client already saw the same block; drop silently.
+				// The client saw the same block in the normal case; the answer covers a divergence.
+				if (bAnswer) { SendAbilityAnswer(Op->OperationID, INDEX_NONE); }
 				return;
 			}
 
 			// Operation-derived ID so the server instance pairs with the client's local
 			// activation (heartbeats and task payloads address abilities by this ID).
-			TryActivateAbility(Op->AbilityClass, Op->InputAction, Op->InputTag,
+			const bool bActivated = TryActivateAbility(Op->AbilityClass, Op->InputAction, Op->InputTag,
 				/*bSkipActivationTagsCheck=*/true,
-				DeriveAbilityIDFromOperation(Op->OperationID, 0));
-			// No RPCConfirmAbilityActivation -- client trusts the activation by construction.
+				DeriveAbilityIDFromOperation(Op->OperationID, 0),
+				Op->OperationID, /*SourceCandidateIndex=*/0, /*bClientAuthorized=*/true);
+			if (bAnswer) { SendAbilityAnswer(Op->OperationID, bActivated ? 0 : INDEX_NONE); }
 			return;
 		}
 

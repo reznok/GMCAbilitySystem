@@ -28,6 +28,9 @@ public:
 	// which receives every CDO property at activation.
 	UPROPERTY() bool bCommitCostOnBegin = false;
 
+	// End the ability naturally at the end of BeginAbilityEvent (a one-shot). Set on the CDO.
+	UPROPERTY() bool bEndOnBegin = false;
+
 	virtual void BeginAbilityEvent_Implementation() override;
 	virtual void EndAbilityEvent_Implementation() override;
 	virtual void CancelAbilityEvent_Implementation() override;

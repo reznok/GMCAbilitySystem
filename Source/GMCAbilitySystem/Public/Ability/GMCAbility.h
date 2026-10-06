@@ -354,6 +354,25 @@ public:
 	// Local activation time, in ActionTimer units. Diagnostics only: subtract it from the
 	// component's ActionTimer to age an instance that is holding a gate.
 	double GetClientStartTime() const { return ClientStartTime; }
+	double GetClientConfirmStartTime() const { return ClientConfirmStartTime; }
+
+	// Ability sync (client/server convergence). Set by the component when the instance is created.
+	// The bound-queue activation operation that created this instance (0 = none: a direct activation).
+	int32 GetSourceOperationID() const { return SourceOperationID; }
+	// Index of this ability's class among the input tag's granted candidates for that operation.
+	int32 GetSourceCandidateIndex() const { return SourceCandidateIndex; }
+	// Created on the authority without an operation: no client twin, never synced.
+	bool IsServerOnly() const { return bServerOnly; }
+	// Created through the client-authorized activation path: exempt from the client confirm timeout.
+	bool IsClientAuthorized() const { return bClientAuthorized; }
+	// Covered instances have a twin on the other side of an owning-client connection and converge with it.
+	bool IsCovered() const { return SourceOperationID != 0 && !bServerOnly; }
+	// True once the activation passed every gate of PreBeginAbility and its activation broadcast, i.e. the
+	// ability began (it may have ended since). False for an activation refused there.
+	bool HasPassedActivationGates() const { return bPassedActivationGates; }
+	// How the ability ended: Natural (EndAbility) or Cancelled (CancelAbility, a refused activation
+	// included). Meaningful once AbilityState is Ended; the peer mirrors the end with this kind.
+	EGMASAbilityEndKind GetEndKind() const { return EndKind; }
 
 protected:
 
@@ -393,7 +412,38 @@ private:
 	TSet<int> WarnedDivergentTaskIDs;
 
 	double ClientStartTime = 0.0;
-	
+
+	// Start stamp for the unconfirmed-activation timeout, taken from the component's confirm clock
+	// (UGMC_AbilitySystemComponent::GetConfirmClock), never from ActionTimer, which re-bases to the
+	// server clock when a client joins.
+	double ClientConfirmStartTime = 0.0;
+
+	// Ability sync source, written by UGMC_AbilitySystemComponent::TryActivateAbility before Execute.
+	int32 SourceOperationID = 0;
+	int32 SourceCandidateIndex = 0;
+	bool bServerOnly = false;
+	bool bClientAuthorized = false;
+
+	// Set in PreBeginAbility right before BeginAbility: the server answers Confirmed for an instance
+	// that began, Rejected for one refused at activation.
+	bool bPassedActivationGates = false;
+
+	// Set with the end latch by EndAbility (Natural) or CancelAbility (Cancelled).
+	EGMASAbilityEndKind EndKind = EGMASAbilityEndKind::Natural;
+
+	// Ability sync end bookkeeping, owned by the component: the end was reported to the peer (or
+	// deliberately not), so it is reported at most once; the end was caused by the peer's own end or
+	// answer, so it is not echoed back.
+	bool bEndSyncNoted = false;
+	bool bEndedByPeer = false;
+
+	// Server: the owning client reported this instance ended. Applied with PeerEndKind once the confirm
+	// clock reaches PeerEndAt, unless the server's own moves end it first (0 = none pending).
+	double PeerEndAt = 0.0;
+	EGMASAbilityEndKind PeerEndKind = EGMASAbilityEndKind::Cancelled;
+
+	friend class UGMC_AbilitySystemComponent;
+
 
 
 	/** List of currently active tasks, do not modify directly */

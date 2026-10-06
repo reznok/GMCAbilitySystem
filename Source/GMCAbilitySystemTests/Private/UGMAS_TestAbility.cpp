@@ -7,6 +7,10 @@ void UGMAS_TestAbility::BeginAbilityEvent_Implementation()
 	{
 		CommitAbilityCost();
 	}
+	if (bEndOnBegin)
+	{
+		EndAbility();
+	}
 }
 
 void UGMAS_TestAbility::EndAbilityEvent_Implementation()

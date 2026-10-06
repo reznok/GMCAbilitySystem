@@ -1190,6 +1190,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->GetProcessedEffectIDsForTest().Add(Applied2->EffectData.EffectID, EGMCEffectAnswerState::Pending);
 			AbilityComp->BoundActiveEffectIDs_Remove(Applied2->EffectData.EffectID);
 			AbilityComp->SetActionTimerForTest(5.0);
+			AbilityComp->AdvanceConfirmClockForTest(5.0);   // the confirmation timeout runs on the confirm clock
 
 			// Force the replay gate active. Both the polling and the reap branch should skip.
 			AbilityComp->bForceReplayingForTest = true;
@@ -1264,6 +1265,7 @@ void FGMASBugFixSpec::Define()
 			// arrival of the verdict. The clock goes past the confirmation timeout (apply at 1.0 +
 			// 0.5 s) but short of A's deferred end at 2.0 so the reap fires while A is still due.
 			AbilityComp->BoundActiveEffectIDs_Remove(AppliedB->EffectData.EffectID);
+			AbilityComp->AdvanceConfirmClockForTest(0.75);   // confirm clock past apply + 0.5 s, while ActionTimer stays short of A's end
 			AbilityComp->SetActionTimerForTest(1.75);
 			AbilityComp->TickActiveEffects(0.f);
 
@@ -1623,6 +1625,7 @@ void FGMASBugFixSpec::Define()
 			// is 0.5 (project settings); effect's
 			// ClientEffectApplicationTime was set to 1.0 in InitializeEffect.
 			AbilityComp->SetActionTimerForTest(5.0);
+			AbilityComp->AdvanceConfirmClockForTest(5.0);   // the confirmation timeout runs on the confirm clock
 			RunPollingOnce();
 			AbilityComp->TickActiveEffects(0.f);
 
@@ -1718,6 +1721,7 @@ void FGMASBugFixSpec::Define()
 
 			// Polling promotes IdOK; advance past timeout to reap IdDrop.
 			AbilityComp->SetActionTimerForTest(5.0);
+			AbilityComp->AdvanceConfirmClockForTest(5.0);   // the confirmation timeout runs on the confirm clock
 			RunPollingOnce();
 			AbilityComp->TickActiveEffects(0.f);
 

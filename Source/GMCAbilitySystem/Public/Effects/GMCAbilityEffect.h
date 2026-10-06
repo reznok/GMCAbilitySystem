@@ -370,6 +370,10 @@ public:
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.
 	double ClientEffectApplicationTime = 0.0;
+
+	// Same moment on the component's confirm clock; the confirmation timeout compares against this,
+	// because ActionTimer re-bases to the server clock when a client joins.
+	double ClientConfirmStartTime = 0.0;
 	
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	void GetOwnerActor(AActor*& OwnerActor) const;

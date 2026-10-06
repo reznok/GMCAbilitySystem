@@ -10,6 +10,7 @@
 #include "Ability/Tasks/GMCAbilityTaskData.h"
 #include "Effects/GMCAbilityEffect.h"
 #include "Components/ActorComponent.h"
+#include "Utility/GMASAbilitySyncRules.h"
 #include "Utility/GMASBoundQueueV2.h"
 #include "Utility/GMASNiagaraParams.h"
 #include "Utility/GMASSyncedEvent.h"
@@ -220,6 +221,23 @@ public:
 	// Is this a server-only pawn (not player-controlled)?
 	bool IsServerOnly() const;
 
+	/**
+	 * Client-side "confirm clock": a monotonic local clock, in seconds, for timeouts that wait on a
+	 * network answer (server confirmation of a predicted ability or effect).
+	 *
+	 * ActionTimer cannot serve: it is the GMC move timestamp, which re-bases to the server's clock
+	 * once a joining client's first moves are acknowledged (near 0, then thousands of seconds on a
+	 * long-running server). A start stamp taken before the jump compared with ActionTimer after it
+	 * reads as an age of thousands of seconds and cancels a perfectly healthy prediction.
+	 *
+	 * The clock advances by real frame time, at most once per engine frame (replays and combined
+	 * moves inside one frame see one value), and each step is capped at MaxConfirmClockStep so a
+	 * loading hitch does not count as waiting for the server. It is independent of ActionTimer.
+	 */
+	double GetConfirmClock();
+
+	static constexpr double MaxConfirmClockStep = 0.25;
+
 	// Draw to log the attribute
 	void DrawDebugAttribute(const FGameplayTag& AttributeTag) const;
 	
@@ -429,11 +447,18 @@ public:
 	// client-auth path; default false preserves all existing call sites.
 	// ForcedAbilityID: operation-derived ID shared by client and server (0 = generate
 	// locally from ActionTimer — only safe for activations with no remote twin, e.g. AI).
+	// SourceOperationID / SourceCandidateIndex / bClientAuthorized: the activation operation that created
+	// this instance, the candidate's index among the input tag's granted abilities, and whether it came
+	// through the client-authorized path. Recorded on the instance for ability sync (UGMCAbility::IsCovered);
+	// an authority activation without an operation is server-only and never synced.
 	bool TryActivateAbility(TSubclassOf<UGMCAbility> ActivatedAbility,
 	                        const UInputAction* InputAction = nullptr,
 	                        const FGameplayTag ActivationTag = FGameplayTag::EmptyTag,
 	                        bool bSkipActivationTagsCheck = false,
-	                        const int ForcedAbilityID = 0);
+	                        const int ForcedAbilityID = 0,
+	                        const int SourceOperationID = 0,
+	                        const int SourceCandidateIndex = 0,
+	                        const bool bClientAuthorized = false);
 
 
 	/**
@@ -1122,6 +1147,10 @@ private:
 	// classification in UGMCAbility::HandleTaskHeartbeat.
 	static constexpr int32 RecentlyEndedAbilityIDsCapacity = 64;
 	TArray<int> RecentlyEndedAbilityIDs;
+	// Confirm clock at which each RecentlyEndedAbilityIDs entry was noted (same index). The client's digest
+	// check only spares instances that ended within the last AbilityDigestInterval (their Ended may still
+	// be in flight); an older end the server still lists was lost and is reported again.
+	TArray<double> RecentlyEndedAbilityTimes;
 	void NoteAbilityEnded(int AbilityID);
 	bool WasAbilityRecentlyEnded(int AbilityID) const { return RecentlyEndedAbilityIDs.Contains(AbilityID); }
 
@@ -1252,22 +1281,139 @@ private:
 	// for safety — entries naturally expire if the effect UObject is GC'd.
 	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
 
-	// Let the client know that the server has activated this ability as well
-	// Needed for the client to cancel mis-predicted abilities
-	UFUNCTION(Client, Reliable)
-	void RPCConfirmAbilityActivation(int AbilityID);
-
-	// Let the client know that the server has ended an ability
-	// In most cases, the client should have predicted this already,
-	// this is just for redundancy
-	UFUNCTION(Client, Reliable)
-	void RPCClientEndAbility(int AbilityID);
-	
 	// Let the client know that the server has ended an effect
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
 	UFUNCTION(Client, Reliable)
 	void RPCClientEndEffect(int EffectID);
+
+	// Ability sync (client/server convergence of covered ability instances). One message struct, one
+	// reliable RPC per direction; GMASAbilitySyncRules decides what each side does with it.
+	UFUNCTION(Client, Reliable)
+	void ClientAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	UFUNCTION(Server, Reliable)
+	void ServerAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	// Sends one ability-sync message to the peer (bToServer: client -> server, else server -> client).
+	// Non-shipping builds apply the fault-injection console variables first (GMAS.Debug.DropAbilityAnswers,
+	// GMAS.Debug.DropAbilityEnds, GMAS.Debug.DelayAbilityMessagesMs); then DispatchAbilitySync.
+	void SendAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer);
+
+	// The wire: the RPC, or SyncSendHookForTest when an automation build has it bound.
+	void DispatchAbilitySync(const FGMASAbilitySyncMessage& Message, bool bToServer);
+
+	// A send held back by GMAS.Debug.DelayAbilityMessagesMs, released in order from the ancillary tick.
+	struct FDelayedAbilitySync
+	{
+		FGMASAbilitySyncMessage Message;
+		bool bToServer = false;
+		double ReleaseAt = 0.0;   // confirm clock
+	};
+	TArray<FDelayedAbilitySync> DelayedAbilitySyncs;
+
+	// Dispatches the delayed sends that are due, oldest first; a later one never overtakes an earlier one.
+	void FlushDelayedAbilitySyncs();
+
+	// Server, connection reset (a new owning connection took the pawn): cancels every covered instance
+	// without telling the new client (its ids restart and could meet them), drops them at once, and clears
+	// the held, pending and delayed messages and the digest cadence.
+	void ResetAbilitySyncForNewConnection();
+
+	// Server: an owning connection already requested its snapshot, so the next request is a reconnect.
+	bool bAbilitySyncConnectionSeen = false;
+
+	// Receives one ability-sync message; the role decides the client or server behaviour.
+	void HandleAbilitySync(const FGMASAbilitySyncMessage& Message);
+
+	// True when this pawn's covered abilities have a twin on the other side of an owning-client
+	// connection: on the server, a pawn controlled by a remote client; on a client, its autonomous proxy.
+	// Standalone, the listen host's own pawn and AI have none, and are never synced.
+	bool HasRemoteAbilityTwin() const;
+
+	// Server: answers the covered activation operation OperationID once, after its candidate loop.
+	// ActivatedIndex is the candidate whose TryActivateAbility succeeded (INDEX_NONE: none passed its gates).
+	// Confirmed when that instance began, Rejected otherwise (gates refused, or PreBeginAbility refused it).
+	void SendAbilityAnswer(int OperationID, int ActivatedIndex);
+
+	// Client: an answer for one of its activation operations arrived.
+	void HandleAbilityAnswer(const FGMASAbilitySyncMessage& Message);
+
+	// Applies the held messages naming a covered instance that was just created (its operation's answer,
+	// an end for its AbilityID) and removes them from the held table.
+	void ApplyHeldSyncMessages(UGMCAbility* Created);
+
+	// Carries out a GMASAbilitySyncRules decision on a local covered instance.
+	void ApplyAbilitySyncAction(UGMCAbility* Ability, EGMASSyncAction Action, const FGMASAbilitySyncMessage& Message);
+
+	// Holds a message for an operation or AbilityID this side does not have yet (AbilityAnswerHoldTime).
+	void HoldAbilitySyncMessage(const FGMASAbilitySyncMessage& Message);
+
+	// Ancillary tick: drops expired held messages and applies held ones to covered instances created
+	// where they could not be applied at once (inside a replayed move).
+	void TickAbilitySync();
+
+	// The live (not ended) covered instance created from OperationID, or null.
+	UGMCAbility* FindLiveCoveredAbilityByOperation(int OperationID) const;
+
+	// The rules unit's view of a covered instance.
+	FGMASCoveredAbility DescribeCoveredAbility(const UGMCAbility& Ability) const;
+
+	// Called by UGMCAbility once its end finished (both end paths). Queues an Ended for the peer when the
+	// instance is covered, has a remote twin, did not end because of the peer, and (server) began: a
+	// refused server activation was already answered Rejected. At most once per instance.
+	void NoteAbilityEndedForSync(UGMCAbility* Ability);
+	friend class UGMCAbility;
+
+	// Queues an Ended{AbilityID, Kind} for the peer (also for an instance this side never had: the
+	// client's report of a server instance with no twin).
+	void QueueAbilityEndSync(int AbilityID, EGMASAbilityEndKind Kind);
+
+	// Sends the queued ends, never inside a replayed move. Runs at the end of CleanupStaleAbilities and
+	// in the ancillary tick.
+	void FlushAbilityEndSyncs();
+
+	// Either side: the peer's twin of AbilityID ended.
+	void HandleAbilityEnded(const FGMASAbilitySyncMessage& Message);
+
+	// Ends a covered instance because its peer ended or refused it; it is not echoed back.
+	void EndAbilityFromPeer(UGMCAbility* Ability, EGMASAbilityEndKind Kind);
+
+	// Server: a client end is applied after ServerOperationGraceSeconds of confirm clock, so the client
+	// moves that precede it (and usually end the instance in-move, at the same move as on the client)
+	// run first. A reliable end overtakes the unreliable moves it follows.
+	void SchedulePeerEnd(UGMCAbility* Ability, EGMASAbilityEndKind Kind);
+
+	// Server, ancillary tick: applies the scheduled peer ends that are due.
+	void TickPeerEnds();
+
+	// Ancillary tick, remote twin only. Server: a digest every AbilityDigestInterval while a covered
+	// instance is AbilityReconcileMinAge old. Client: a digest request when none arrived for two intervals.
+	void TickAbilityDigest();
+
+	// Server: sends a Digest listing every live covered instance that is not already ending from a
+	// client report (those are reported; listing them would only invite a repeated Ended).
+	void SendAbilityDigest();
+
+	// Client: a digest arrived. Reports server instances it has no twin for and cancels its own
+	// instances the server no longer lists ([AbilityReconcile]).
+	void HandleAbilityDigest(const FGMASAbilitySyncMessage& Message);
+
+	// The live (not ended) covered instances; bSkipPeerEnding leaves out those with a scheduled peer end.
+	// Inline storage: gathered from the ancillary tick, where a pawn holds a handful of instances at most.
+	using FGMASLiveAbilities = TArray<UGMCAbility*, TInlineAllocator<8>>;
+	void GatherLiveCoveredAbilities(FGMASLiveAbilities& OutAbilities, bool bSkipPeerEnding) const;
+
+	// Ends waiting for FlushAbilityEndSyncs, oldest first.
+	TArray<FGMASAbilitySyncMessage> PendingEndSyncs;
+
+	// Messages that arrived for an operation or AbilityID this side does not have yet.
+	TArray<FGMASHeldSyncMessage> HeldSyncMessages;
+
+	// Confirm-clock stamps of the digest cadence (client: last digest received / requested; server: last sent).
+	double LastDigestReceivedAt = 0.0;
+	double LastDigestRequestedAt = 0.0;
+	double LastDigestSentAt = 0.0;
 
 	// Set in GenPredictionTick (re-entrant during replay), consumed once in GenAncillaryTick.
 	bool bReplayObservedThisFrame = false;
@@ -1286,6 +1432,9 @@ private:
 
 #if WITH_AUTOMATION_WORKER
 public:
+	// Test seam: moves the confirm clock forward by an exact amount, bypassing the real-time cap.
+	void AdvanceConfirmClockForTest(double Seconds) { GetConfirmClock(); ConfirmClock += Seconds; }
+
 	// Test-only accessors — compiled away in non-editor/non-test builds.
 	TMap<int, EGMCEffectAnswerState>&      GetProcessedEffectIDsForTest()  { return ProcessedEffectIDs; }
 	// Test seam: inject entries (e.g. a null value) to exercise query guards.
@@ -1406,8 +1555,30 @@ public:
 	{
 		return CheckActivationTagsForClientAuth(Ability);
 	}
+
+	// Ability-sync seams. A bound hook receives every outgoing message instead of the RPC, so a pair
+	// harness can deliver, drop or reorder them; ReceiveAbilitySyncForTest delivers one to this side.
+	TFunction<void(const FGMASAbilitySyncMessage& /*Message*/, bool /*bToServer*/)> SyncSendHookForTest;
+	void ReceiveAbilitySyncForTest(const FGMASAbilitySyncMessage& Message) { HandleAbilitySync(Message); }
+
+	// Orphan components have no owning connection; this makes HasRemoteAbilityTwin() answer true.
+	bool bForceRemoteTwinForTest = false;
+
+	TConstArrayView<FGMASHeldSyncMessage> GetHeldSyncMessagesForTest() const { return HeldSyncMessages; }
+	void SendAbilitySyncForTest(const FGMASAbilitySyncMessage& Message, bool bToServer) { SendAbilitySync(Message, bToServer); }
+	bool HasRemoteAbilityTwinForTest() const { return HasRemoteAbilityTwin(); }
+	static int DeriveAbilityIDFromOperationForTest(int OperationID, int ActivationIndex)
+	{
+		return DeriveAbilityIDFromOperation(OperationID, ActivationIndex);
+	}
 private:
 #endif
+
+private:
+	// State of GetConfirmClock(). Never bound or replicated: purely local.
+	double ConfirmClock = 0.0;
+	double LastConfirmRealTime = 0.0;
+	uint64 LastConfirmFrame = static_cast<uint64>(-1);
 
 public:
 	// Centralized "are we currently inside a GMC replay?" check used by GMAS-side

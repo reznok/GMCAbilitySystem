@@ -28,12 +28,13 @@ FString UGMCAbility::GetAbilityCutDiagnostics() const
 	const bool bAuthority = OwnerAbilityComponent && OwnerAbilityComponent->HasAuthority();
 	const bool bReplaying = OwnerAbilityComponent && OwnerAbilityComponent->IsReplayingForGMASLogic();
 	const double Timer = OwnerAbilityComponent ? OwnerAbilityComponent->ActionTimer : -1.0;
+	const double ConfirmNow = OwnerAbilityComponent ? OwnerAbilityComponent->GetConfirmClock() : -1.0;
 
 	FString Out = FString::Printf(
-		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f Tasks=%d"),
+		TEXT("Ability=%s Tag=%s AbilityID=%d State=%s ServerConfirmed=%d MovementTick=%d Authority=%d Replaying=%d ActionTimer=%.3f ClientStartTime=%.3f Age=%.3f ConfirmClock=%.3f ConfirmAge=%.3f Tasks=%d"),
 		*GetName(), *AbilityTag.ToString(), AbilityID, *EnumToString(AbilityState),
 		bServerConfirmed ? 1 : 0, bActivateOnMovementTick ? 1 : 0, bAuthority ? 1 : 0, bReplaying ? 1 : 0,
-		Timer, ClientStartTime, Timer - ClientStartTime, RunningTasks.Num());
+		Timer, ClientStartTime, Timer - ClientStartTime, ConfirmNow, ConfirmNow - ClientConfirmStartTime, RunningTasks.Num());
 
 	for (const TPair<int, UGMCAbilityTaskBase*>& TaskPair : RunningTasks)
 	{
@@ -105,14 +106,23 @@ void UGMCAbility::Tick(float DeltaTime)
 
 	if (!OwnerAbilityComponent->IsAuthorityForGMASLogic())
 	{
-		if (!bServerConfirmed && ClientStartTime + ServerConfirmTimeout < OwnerAbilityComponent->ActionTimer)
+		// Timed on the confirm clock, not ActionTimer: ActionTimer is the move timestamp and jumps to
+		// the server's clock when a joining client's first moves are acknowledged, which would read
+		// as an age of thousands of seconds and cancel a healthy prediction.
+		// The last resort of ability sync: the server answers every covered activation (Confirmed or
+		// Rejected), so only an activation the server never processed (a lost operation) reaches this.
+		// Client-authorized instances are never answered by a confirm and never time out.
+		FGMASCoveredAbility Covered;
+		Covered.bConfirmed = bServerConfirmed;
+		Covered.bClientAuthorized = bClientAuthorized;
+		Covered.StartConfirmClock = ClientConfirmStartTime;
+		if (GMASAbilitySyncRules::ShouldTimeOut(Covered, OwnerAbilityComponent->GetConfirmClock(), ServerConfirmTimeout))
 		{
-			// [AbilityCut] probe: the server never confirmed this AbilityID within the timeout.
-			// Either the server rejected/never ran the activation, or client/server generated
-			// diverging AbilityIDs and the confirm RPC targeted an instance we don't have.
-			// Full task dump so the log shows what the prediction was doing when it died.
+			// [AbilityCut] probe: no answer for this activation within the timeout. The server never
+			// ran the activation (its operation was lost), or the answer was lost. Full task dump so
+			// the log shows what the prediction was doing when it died.
 			UE_LOG(LogGMCAbilitySystem, Error,
-				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no RPCConfirmAbilityActivation received). %s"),
+				TEXT("[AbilityCut] Client cancelling unconfirmed ability after %.2fs (no ability answer received). %s"),
 				ServerConfirmTimeout, *GetAbilityCutDiagnostics());
 			CancelAbility();
 			return;
@@ -230,6 +240,7 @@ void UGMCAbility::Execute(UGMC_AbilitySystemComponent* InAbilityComponent, int I
 	this->AbilityID = InAbilityID;
 	this->OwnerAbilityComponent = InAbilityComponent;
 	this->ClientStartTime = InAbilityComponent->ActionTimer;
+	this->ClientConfirmStartTime = InAbilityComponent->GetConfirmClock();
 	PreBeginAbility();
 }
 
@@ -633,8 +644,8 @@ void UGMCAbility::FinishEndAbility() {
 	// fingerprint of an abnormal cut (watchdog kill, confirm timeout, cancel-by-other,
 	// gameplay guard, forced server end). Normal completions end with every task already
 	// completed/finished. Logged on BOTH sides: the side that dies FIRST is the root cause —
-	// the other side follows seconds later (client stops heartbeating -> server watchdog,
-	// or server RPCClientEndAbility -> client). Compare timestamps across the two logs.
+	// the other side follows later (client stops heartbeating -> server watchdog, or the
+	// ability-sync Ended message -> the twin). Compare timestamps across the two logs.
 	int32 UnfinishedTasks = 0;
 	for (const TPair<int, UGMCAbilityTaskBase*>& Task : RunningTasks)
 	{
@@ -734,6 +745,13 @@ void UGMCAbility::FinishEndAbility() {
 	}
 
 	AbilityState = EAbilityState::Ended;
+
+	// Ability sync: a covered instance's end is mirrored to its twin on the other machine (queued and
+	// sent outside any replayed move, at most once).
+	if (OwnerAbilityComponent)
+	{
+		OwnerAbilityComponent->NoteAbilityEndedForSync(this);
+	}
 }
 
 
@@ -837,6 +855,7 @@ bool UGMCAbility::PreBeginAbility()
 		return false;
 	}
 
+	bPassedActivationGates = true;
 	BeginAbility();
 
 	return true;
@@ -910,6 +929,7 @@ void UGMCAbility::EndAbility()
 	// state alone cannot tell; the latch is set before anything below can reach a listener.
 	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
 	bEndRequested = true;
+	EndKind = EGMASAbilityEndKind::Natural;
 
 	// Chain: grant the next stage's window on NATURAL end only —
 	// CancelAbility skips this on purpose (interrupted swings don't
@@ -947,6 +967,7 @@ void UGMCAbility::CancelAbility() {
 	// Same entry latch as EndAbility: the first end wins, one unwind, one hook set.
 	if (AbilityState == EAbilityState::Ended || bEndRequested) { return; }
 	bEndRequested = true;
+	EndKind = EGMASAbilityEndKind::Cancelled;
 
 	// An activation refused in PreBeginAbility (cooldown, PreExecuteCheck, blocked) is not an
 	// interruption: the ability never began, so the cancel hooks stay silent for it.
