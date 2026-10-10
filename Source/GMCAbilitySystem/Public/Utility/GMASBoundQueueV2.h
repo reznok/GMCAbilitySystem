@@ -13,18 +13,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnServerOperationForced, FInstanced
 
 
 USTRUCT()
-struct FOperationDataCacheExpiration
-{
-	GENERATED_BODY()
-	
-	// Operation ID
-	int OperationID = -1;
-
-	// The GMC move # (GMCMoveCounter) when this operation was added
-	int64 ModeAddedAt = -1;
-};
-
-USTRUCT()
 struct  FGMASBoundQueueV2
 {
 	GENERATED_BODY()
@@ -35,10 +23,12 @@ struct  FGMASBoundQueueV2
 	UPROPERTY()
 	UGMC_MovementUtilityCmp* GMCMovementComponent = nullptr;
 
-	// Every time a GMC move is processed, this counter is incremented
-	// Used to expire stale operation data
+	// Incremented each ancillary tick, on the server and on the client. Used to expire stale operation data.
 	int64 GMCMoveCounter = 0;
-	TArray<FOperationDataCacheExpiration> OperationDataCacheExpiration;
+
+	// OperationID -> GMCMoveCounter when its payload was cached. Every payload removal goes through
+	// RemovePayloadByID, so an entry never outlives its payload. A re-cache refreshes the entry.
+	TMap<int32, int64> OperationDataCacheExpiration;
 
 	void ClearStaleOperationData();
 	
@@ -65,10 +55,8 @@ public:
 	
 	void RemovePayloadByID(const int OperationID)
 	{
-		if (OperationPayloads.Contains(OperationID))
-		{
-			OperationPayloads.Remove(OperationID);
-		}
+		OperationPayloads.Remove(OperationID);
+		OperationDataCacheExpiration.Remove(OperationID);
 	}
 
 	// Make a GetOperationByID
