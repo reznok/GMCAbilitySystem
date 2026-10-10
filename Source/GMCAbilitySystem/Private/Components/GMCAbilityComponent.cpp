@@ -1219,7 +1219,7 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
 {
-	UE_LOG(LogTemp, Warning, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
 	BoundQueueV2.CacheOperationPayload(OperationID, Operation);
 	BoundQueueV2.ClientQueuedOperations.Add(OperationID);
 }

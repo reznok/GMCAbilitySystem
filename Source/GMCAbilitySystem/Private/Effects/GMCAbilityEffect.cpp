@@ -511,9 +511,12 @@ void UGMCAbilityEffect::RemoveTagsFromOwner(bool bPreserveOnMultipleInstances)
 				return;
 			}
 		}
-		else
+		else if (!EffectData.GrantedTags.IsEmpty())
 		{
-			UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Tag is not valid with PreserveMultipleInstances in UGMCAbilityEffect::RemoveTagsFromOwner"));
+			// Only an effect that grants tags has something to preserve: the default flag is true on every effect.
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("Effect Tag is not valid with PreserveMultipleInstances in UGMCAbilityEffect::RemoveTagsFromOwner (%s: give it an EffectTag, or this instance removes the tags of the others)"),
+				*GetClass()->GetName());
 		}
 	}
 

@@ -565,7 +565,8 @@ void UGMCAbility::FinishEndAbility() {
 			}
 			else
 			{
-				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("Effect Handle %d already ended for ability %s"), EfData.Key, *AbilityTag.ToString());
+				// A short effect (one per shot, for example) normally ends before its ability.
+				UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("Effect Handle %d already ended for ability %s"), EfData.Key, *AbilityTag.ToString());
 			}
 		}
 		else if (const FGameplayTag* DeclaredTag = DeclaredEffectTags.Find(EfData.Key))
