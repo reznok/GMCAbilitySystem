@@ -282,8 +282,9 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		//   so the call was a no-op there.
 		// - Listen server local pawn: empty queue → was setting OperationData to
 		//   empty base, destroying the deferred ability payload (the bug).
-		// - Server-side ClientQueuedOperations cannot be populated (all 4 callers
-		//   gated by !HasAuthority(), and RPCOnServerOperationAdded is Client-RPC).
+		// - Server-side ClientQueuedOperations is populated only for a pawn with no remote
+		//   owner (AI, listen-server host, standalone): RPCOnServerOperationAdded then runs
+		//   locally, and the pawn's own PreLocalMoveExecution drains it.
 		//   CheckValidState (line 178 of GMASBoundQueueV2.cpp) already logs an
 		//   Error if it ever happens -- the drain was idempotent defensive code.
 		//
@@ -2313,6 +2314,13 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 		{
 			if (!BoundQueueV2.HasPayloadByID(SubID))
 			{
+				// A server pawn with no remote owner fills this slot itself and processes it twice per frame
+				// (movement tick, then ancillary tick): the first pass consumed the payload. Nothing is lost.
+				if (HasAuthority() && GMCMovementComponent && GMCMovementComponent->IsLocallyControlledServerPawn())
+				{
+					continue;
+				}
+
 				// A sub-operation whose payload is missing from the cache (expired, never
 				// delivered) cannot be applied on this side. This used to be a SILENT skip:
 				// the batch still reported success, the op landed on the other side only,

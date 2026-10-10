@@ -234,8 +234,9 @@ void FGMASBoundQueueV2::CheckValidState() const
 	// Server Logic
 	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
-		// Check Client Queued Operations is empty
-		if (ClientQueuedOperations.Num() > 0)
+		// Check Client Queued Operations is empty. A pawn with no remote owner (AI, listen-server host) queues
+		// to itself through the local RPCOnServerOperationAdded: its next move drains it.
+		if (ClientQueuedOperations.Num() > 0 && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("ClientQueuedOperations has %d pending operations on server"), ClientQueuedOperations.Num());
 		}
