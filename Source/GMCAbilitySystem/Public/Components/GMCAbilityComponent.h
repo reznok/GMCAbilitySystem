@@ -239,7 +239,7 @@ public:
 
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
-	double ActionTimer;
+	double ActionTimer = 0.0;
 
 	// Is this a server-only pawn (not player-controlled)?
 	bool IsServerOnly() const;
@@ -988,6 +988,17 @@ private:
 	// GenPredictionTick and GenAncillaryTick.
 	void DrainPendingPredictedOperations();
 
+	// Requests made during BeginPlay wait for the first valid GMC prediction timestamp.
+	UPROPERTY(Transient)
+	TArray<FInstancedStruct> StartupAbilityRequests;
+	TMap<FGameplayTag, bool> StartupConcurrencyChecks;
+	// Reconnect effect snapshots received before that timestamp wait for it too.
+	UPROPERTY(Transient)
+	TArray<FGMCEffectSnapshot> StartupEffectSnapshots;
+	bool bStartupPredictionClockReady = false;
+	bool ShouldWaitForStartupClock() const;
+	void UpdateStartupPredictionClock(double Timestamp);
+
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
 	virtual void ProcessEffectApplicationFromOperation(const FGMASBoundQueueV2ApplyEffectOperation& Data);
@@ -1220,6 +1231,8 @@ public:
 	// override its behaviour through inheritance. Setting this flag forces
 	// IsReplayingForGMASLogic() to return true, exercising the production code
 	// path that skips polling/timeout reaping during replay.
+	void UpdateStartupPredictionClockForTest(double Timestamp) { UpdateStartupPredictionClock(Timestamp); }
+	int32 GetStartupAbilityRequestCountForTest() const { return StartupAbilityRequests.Num(); }
 	bool bForceReplayingForTest = false;
 
 	// Test seam for ServerProcessOperation. The function is private so tests cannot

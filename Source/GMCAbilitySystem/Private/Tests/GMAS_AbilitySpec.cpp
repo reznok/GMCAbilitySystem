@@ -14,6 +14,10 @@
 //     because the stub has no owner → HasAuthority() = false).
 
 #include "Misc/AutomationTest.h"
+#include <limits>
+#include "Engine/World.h"
+#include "GameFramework/Actor.h"
+#include "Misc/ScopeExit.h"
 #include "NativeGameplayTags.h"
 #include "Ability/GMCAbility.h"
 #include "Components/GMCAbilityComponent.h"
@@ -212,6 +216,56 @@ void FGMASAbilitySpec::Define()
 		});
 	});
 
+	Describe("Spawn clock readiness", [this]()
+	{
+		It("early held input waits without allocating an operation and drains once", [this]()
+		{
+			UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+			if (!TestNotNull("startup world", World)) return;
+			ON_SCOPE_EXIT { World->DestroyWorld(false); };
+			AActor* Owner = World->SpawnActor<AActor>();
+			if (!TestNotNull("startup owner", Owner)) return;
+			AbilityComp->RemoveFromRoot();
+			AbilityComp = NewObject<UGMC_AbilitySystemComponent>(Owner);
+			AbilityComp->AddToRoot();
+			AbilityComp->GMCMovementComponent = MoveCmp;
+			AbilityComp->BindReplicationData();
+			AbilityComp->UpdateStartupPredictionClockForTest(0.0);
+			AbilityComp->QueueAbility(AbilityTag, nullptr, true);
+			AbilityComp->QueueAbility(AbilityTag, nullptr, true);
+			TestEqual("held input coalesced", AbilityComp->GetStartupAbilityRequestCountForTest(), 1);
+			TestTrue("no payload allocated before the clock is ready", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount() == 0);
+			TestFalse("direct activation safely refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+			TestEqual("no live ability can hold the gate", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 0);
+			AbilityComp->UpdateStartupPredictionClockForTest(10.0);
+			TestEqual("startup requests drained", AbilityComp->GetStartupAbilityRequestCountForTest(), 0);
+			TestEqual("one operation allocated", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
+			AbilityComp->UpdateStartupPredictionClockForTest(11.0);
+			TestEqual("no second dispatch", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
+			TestTrue("activation works after initialization", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+		});
+		It("non-finite and negative spawn clocks cannot activate an ability", [this]()
+		{
+			UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+			if (!TestNotNull("startup world", World)) return;
+			ON_SCOPE_EXIT { World->DestroyWorld(false); };
+			AActor* Owner = World->SpawnActor<AActor>();
+			if (!TestNotNull("startup owner", Owner)) return;
+			AbilityComp->RemoveFromRoot();
+			AbilityComp = NewObject<UGMC_AbilitySystemComponent>(Owner);
+			AbilityComp->AddToRoot();
+			AbilityComp->GMCMovementComponent = MoveCmp;
+			AbilityComp->BindReplicationData();
+			for (double Timestamp : { -1.0, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity() })
+			{
+				AbilityComp->UpdateStartupPredictionClockForTest(Timestamp);
+				TestFalse("invalid clock refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+			}
+			AbilityComp->UpdateStartupPredictionClockForTest(2.0);
+			TestTrue("valid clock releases the gate", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+		});
+	});
+
 	// ── Cooldown ──────────────────────────────────────────────────────────────
 	Describe("Cooldown", [this]()
 	{
@@ -226,18 +280,39 @@ void FGMASAbilitySpec::Define()
 			TestEqual("cooldown stored as 5", AbilityComp->GetCooldownForAbility(AbilityTag), 5.f);
 		});
 
-		It("GenAncillaryTick decrements the cooldown by DeltaTime", [this]()
+		// ⚠ Cooldowns are ABSOLUTE EXPIRY TIMES in ActionTimer units, not remaining durations.
+		// SetCooldownForAbility stores ActionTimer + Duration; GetCooldownForAbility returns
+		// Expiry - ActionTimer floored at 0; TickActiveCooldowns is a garbage-collection pass that
+		// deliberately ignores its DeltaTime (GMC re-executes combined moves, and a
+		// decrement-per-tick model drifted 2-2.6x faster than wall clock on a laggy client).
+		//
+		// So time is advanced by moving ActionTimer, NOT by passing DeltaTime to the tick.
+		It("replayed ancillary ticks at the same prediction time do not shorten cooldown", [this]()
 		{
 			AbilityComp->SetCooldownForAbility(AbilityTag, 5.f);
-			AbilityComp->GenAncillaryTick(3.f, false); // TickActiveCooldowns subtracts 3
+			AbilityComp->GenAncillaryTick(3.f, false);
+			AbilityComp->GenAncillaryTick(3.f, false);
+			TestEqual("unchanged prediction time keeps all five seconds", AbilityComp->GetCooldownForAbility(AbilityTag), 5.f);
+			AbilityComp->ActionTimer += 3.0;
+			AbilityComp->GenAncillaryTick(3.f, false);
+			AbilityComp->GenAncillaryTick(3.f, false);
+			TestNearlyEqual("advancing three seconds consumes time exactly once", AbilityComp->GetCooldownForAbility(AbilityTag), 2.f, KINDA_SMALL_NUMBER);
+		});
+		It("the remaining cooldown falls as ActionTimer advances", [this]()
+		{
+			AbilityComp->SetCooldownForAbility(AbilityTag, 5.f); // expiry = ActionTimer + 5
+			AbilityComp->ActionTimer += 3.0;
 			TestNearlyEqual("5 - 3 = 2 remaining",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 2.f, KINDA_SMALL_NUMBER);
 		});
 
-		It("cooldown expires and is removed after sufficient DeltaTime", [this]()
+		It("cooldown reads as expired once ActionTimer passes its expiry", [this]()
 		{
 			AbilityComp->SetCooldownForAbility(AbilityTag, 2.f);
-			AbilityComp->GenAncillaryTick(3.f, false); // exceeds cooldown → entry removed
+			AbilityComp->ActionTimer += 3.0;             // past expiry
+			AbilityComp->GenAncillaryTick(0.f, false);   // GC pass drops the stale entry
+			// Note: removal itself is not observable through the public API -- Get already floors
+			// a passed expiry to 0 -- so this asserts the reported value, not the map state.
 			TestEqual("expired cooldown returns 0",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 0.f);
 		});
@@ -262,7 +337,8 @@ void FGMASAbilitySpec::Define()
 
 			// After cooldown expires, a fresh activation succeeds normally.
 			AbilityComp->EndAbilitiesByTag(AbilityTag); // end the running first ability
-			AbilityComp->GenAncillaryTick(6.f, false); // tick cooldown to 0
+			AbilityComp->ActionTimer += 6.0;           // advance past the 5s expiry
+			AbilityComp->GenAncillaryTick(0.f, false); // GC pass drops the expired cooldown
 			AbilityComp->GenPredictionTick(0.f);       // cleanup stale Ended abilities
 			TestEqual("cooldown expired",
 				AbilityComp->GetCooldownForAbility(AbilityTag), 0.f);
