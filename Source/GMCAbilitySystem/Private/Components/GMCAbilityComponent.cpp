@@ -305,10 +305,15 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		// An empty slot and a client-direction batch wrapper both carry OperationID 0, so both are
 		// skipped quietly: the batch is server-direction only, and its ack reaches us through the
 		// OutputState path above.
+		//
+		// Only a negative id is client-made. A positive id is one of our own server operations: the
+		// client echoes its payload in the InputState of the move that applies it, and GMC runs this
+		// tick before the OutputState lands. Its ack already came through the OutputState path, so
+		// the echo is skipped quietly too. Validating it logged "not allowed by server as client input".
 		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			const FGMASBoundQueueV2OperationBaseData* LiveOperation = BoundQueueV2.OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
-			if (LiveOperation && LiveOperation->OperationID != 0
+			if (LiveOperation && LiveOperation->OperationID < 0
 				&& BoundQueueV2.IsValidClientOperation(BoundQueueV2.OperationData))
 			{
 				ProcessOperation(BoundQueueV2.OperationData, false);
