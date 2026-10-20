@@ -197,6 +197,37 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
+
+	// TaskData resend (same settings as TaskData). Client and server must bind the same layout.
+	TaskDataSeqBindIndex = GMCMovementComponent->BindInt(TaskDataSeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(TaskDataResendA,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	TaskDataResendASeqBindIndex = GMCMovementComponent->BindInt(TaskDataResendASeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(TaskDataResendB,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	TaskDataResendBSeqBindIndex = GMCMovementComponent->BindInt(TaskDataResendBSeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
 }
 
 void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Add(int EffectID)
@@ -1279,8 +1310,112 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 		// failure in HandleTaskData (TaskID lookup miss).
 		TaskData = QueuedTaskData[0];
 		QueuedTaskData.RemoveAt(0);
+
+		if (!HasAuthority() && TaskData.GetPtr<FGMCAbilityTaskData>())
+		{
+			// Random start: a client that reconnects to the same pawn must not reuse numbers the server already dispatched.
+			if (LastIssuedTaskDataSeq == 0)
+			{
+				LastIssuedTaskDataSeq = FMath::RandRange(1, 1 << 30);
+			}
+			TaskDataSeq = ++LastIssuedTaskDataSeq;
+			UnackedTaskData.Add({TaskData, TaskDataSeq, FPlatformTime::Seconds()});
+		}
+	}
+
+	if (!HasAuthority())
+	{
+		FillTaskDataResendSlots();
 	}
 	BoundQueueV2.GenPreLocalMoveExecution();
+}
+
+void UGMC_AbilitySystemComponent::FillTaskDataResendSlots()
+{
+	TaskDataResendA.Reset();
+	TaskDataResendASeq = 0;
+	TaskDataResendB.Reset();
+	TaskDataResendBSeq = 0;
+
+	if (UnackedTaskData.IsEmpty())
+	{
+		return;
+	}
+
+	// The acknowledgement reads the move history, which only a predicting client keeps.
+	if (!GMCMovementComponent || !GMCMovementComponent->IsUsingClientPrediction())
+	{
+		UnackedTaskData.Reset();
+		return;
+	}
+
+	// The task heartbeat watchdog owns a payload that is still not acknowledged after this delay.
+	constexpr double MaxResendSeconds = 2.0;
+	constexpr int32 MaxUnackedTaskData = 16;
+	const double Now = FPlatformTime::Seconds();
+	for (int32 Index = UnackedTaskData.Num() - 1; Index >= 0; --Index)
+	{
+		const FUnackedTaskData& Entry = UnackedTaskData[Index];
+		if (Now - Entry.QueuedRealTime > MaxResendSeconds || Index < UnackedTaskData.Num() - MaxUnackedTaskData)
+		{
+			const FGMCAbilityTaskData* Header = Entry.Payload.GetPtr<FGMCAbilityTaskData>();
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[TaskResend] Payload seq=%d (AbilityID=%d TaskID=%d) not acknowledged after %.2f s, resend stopped (%d pending)."),
+				Entry.Seq, Header ? Header->AbilityID : -1, Header ? Header->TaskID : -1, Now - Entry.QueuedRealTime, UnackedTaskData.Num());
+			UnackedTaskData.RemoveAt(Index);
+		}
+	}
+
+	// Oldest first: the server dispatches in sequence order, so the oldest copy must not wait behind a newer one.
+	for (const FUnackedTaskData& Entry : UnackedTaskData)
+	{
+		if (Entry.Seq == TaskDataSeq)
+		{
+			continue;
+		}
+		if (TaskDataResendASeq == 0)
+		{
+			TaskDataResendA = Entry.Payload;
+			TaskDataResendASeq = Entry.Seq;
+		}
+		else
+		{
+			TaskDataResendB = Entry.Payload;
+			TaskDataResendBSeq = Entry.Seq;
+			break;
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::CL_OnAPMoveReceived(double APMoveTimestamp)
+{
+	if (UnackedTaskData.IsEmpty() || !GMCMovementComponent || TaskDataSeqBindIndex < 0)
+	{
+		return;
+	}
+
+	// Exact timestamp match only: the server executed that move, so it read every payload the move carried. An APMove
+	// timestamp that matches no move here (proxy move, move discarded before it was sent) acknowledges nothing.
+	const FGMC_MoveHistory& History = GMCMovementComponent->MoveHistory;
+	for (int32 Index = History.Num() - 1; Index >= 0; --Index)
+	{
+		const FGMC_Move& Move = History[Index];
+		if (Move.MetaData.Timestamp > APMoveTimestamp)
+		{
+			continue;
+		}
+		if (Move.MetaData.Timestamp == APMoveTimestamp)
+		{
+			const int32 SeqA = GMCMovementComponent->GetBoundInt(TaskDataSeqBindIndex, Move.InputState);
+			const int32 SeqB = GMCMovementComponent->GetBoundInt(TaskDataResendASeqBindIndex, Move.InputState);
+			const int32 SeqC = GMCMovementComponent->GetBoundInt(TaskDataResendBSeqBindIndex, Move.InputState);
+			UnackedTaskData.RemoveAll([SeqA, SeqB, SeqC](const FUnackedTaskData& Entry)
+			{
+				return Entry.Seq == SeqA || Entry.Seq == SeqB || Entry.Seq == SeqC;
+			});
+		}
+		return;
+	}
 }
 
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
@@ -2069,13 +2204,150 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 	AbilityData = FGMCAbilityData{};
 	// QueuedAbilityOperations.ClearCurrentOperation();
+
+	if (bMoveTaskDataBuilt)
+	{
+		for (const FMoveTaskData& Item : MoveTaskData)
+		{
+			if (Item.Seq > 0)
+			{
+				MarkTaskDataSeqDispatched(Item.Seq);
+			}
+		}
+		MoveTaskData.Reset();
+		bMoveTaskDataBuilt = false;
+	}
+
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
+	TaskDataSeq = 0;
+	TaskDataResendA.Reset();
+	TaskDataResendASeq = 0;
+	TaskDataResendB.Reset();
+	TaskDataResendBSeq = 0;
+}
+
+
+bool UGMC_AbilitySystemComponent::IsRemoteClientPawnOnServer() const
+{
+	return HasAuthority() && GMCMovementComponent && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn();
+}
+
+
+bool UGMC_AbilitySystemComponent::IsTaskDataSeqDispatched(int32 Seq) const
+{
+	if (Seq > DispatchedTaskDataSeqHigh)
+	{
+		return false;
+	}
+	// Copies trail the newest payload by a few numbers only. A number this far behind is a restarted client sequence.
+	const int32 Age = DispatchedTaskDataSeqHigh - Seq;
+	return Age < 64 && (DispatchedTaskDataSeqMask & (1ull << Age)) != 0;
+}
+
+
+void UGMC_AbilitySystemComponent::MarkTaskDataSeqDispatched(int32 Seq)
+{
+	if (DispatchedTaskDataSeqHigh - Seq >= 64)
+	{
+		DispatchedTaskDataSeqHigh = Seq;
+		DispatchedTaskDataSeqMask = 0;
+	}
+	else if (Seq > DispatchedTaskDataSeqHigh)
+	{
+		const int32 Shift = Seq - DispatchedTaskDataSeqHigh;
+		DispatchedTaskDataSeqMask = Shift >= 64 ? 0 : DispatchedTaskDataSeqMask << Shift;
+		DispatchedTaskDataSeqHigh = Seq;
+	}
+	DispatchedTaskDataSeqMask |= 1ull << (DispatchedTaskDataSeqHigh - Seq);
+}
+
+
+#if !UE_BUILD_SHIPPING
+namespace GMASTaskResendDebug {
+	static int32 DropServerTaskPayloads = 0;
+	static FAutoConsoleVariableRef CVarDropServerTaskPayloads(
+		TEXT("GMAS.Debug.DropServerTaskPayloads"),
+		DropServerTaskPayloads,
+		TEXT("Server: ignore the next N task payloads in the move that first carries them, as if that move was lost. ")
+		TEXT("Each one must then arrive through a resend copy."),
+		ECVF_Cheat);
+}
+#endif
+
+
+void UGMC_AbilitySystemComponent::BuildMoveTaskData()
+{
+	bMoveTaskDataBuilt = true;
+	MoveTaskData.Reset();
+
+	auto AddSlot = [this](const FInstancedStruct& Slot, int32 Seq, bool bResendSlot)
+	{
+		const FGMCAbilityTaskData* Header = Slot.GetPtr<FGMCAbilityTaskData>();
+		if (!Header || *Header == FGMCAbilityTaskData{})
+		{
+			return;
+		}
+		if (Seq <= 0)
+		{
+			// Unsequenced payload: dispatched as before the resend existed.
+			if (!bResendSlot)
+			{
+				MoveTaskData.Add({0, &Slot});
+			}
+			return;
+		}
+		if (IsTaskDataSeqDispatched(Seq) || MoveTaskData.ContainsByPredicate([Seq](const FMoveTaskData& Item) { return Item.Seq == Seq; }))
+		{
+			return;
+		}
+#if !UE_BUILD_SHIPPING
+		if (!bResendSlot && GMASTaskResendDebug::DropServerTaskPayloads > 0)
+		{
+			--GMASTaskResendDebug::DropServerTaskPayloads;
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[TaskResend] Debug drop of payload seq=%d (AbilityID=%d TaskID=%d), %d drop(s) left."),
+				Seq, Header->AbilityID, Header->TaskID, GMASTaskResendDebug::DropServerTaskPayloads);
+			return;
+		}
+#endif
+		if (bResendSlot)
+		{
+			// The move that first carried this payload never ran here: lost, discarded by the client, or audited out.
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[TaskResend] Payload seq=%d (AbilityID=%d TaskID=%d) recovered from a resend copy at ActionTimer=%.4f."),
+				Seq, Header->AbilityID, Header->TaskID, ActionTimer);
+		}
+		MoveTaskData.Add({Seq, &Slot});
+	};
+
+	AddSlot(TaskDataResendA, TaskDataResendASeq, true);
+	AddSlot(TaskDataResendB, TaskDataResendBSeq, true);
+	AddSlot(TaskData, TaskDataSeq, false);
+
+	MoveTaskData.StableSort([](const FMoveTaskData& Lhs, const FMoveTaskData& Rhs) { return Lhs.Seq < Rhs.Seq; });
 }
 
 
 void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
 
-	const FGMCAbilityTaskData TaskDataFromInstance = TaskData.IsValid() ? TaskData.Get<FGMCAbilityTaskData>() : FGMCAbilityTaskData{};
+	if (!IsRemoteClientPawnOnServer())
+	{
+		DispatchTaskData(TaskData, bFromMovement);
+		return;
+	}
+
+	if (!bMoveTaskDataBuilt)
+	{
+		BuildMoveTaskData();
+	}
+	for (const FMoveTaskData& Item : MoveTaskData)
+	{
+		DispatchTaskData(*Item.Payload, bFromMovement);
+	}
+}
+
+
+void UGMC_AbilitySystemComponent::DispatchTaskData(const FInstancedStruct& Payload, bool bFromMovement) {
+
+	const FGMCAbilityTaskData TaskDataFromInstance = Payload.IsValid() ? Payload.Get<FGMCAbilityTaskData>() : FGMCAbilityTaskData{};
 	if (TaskDataFromInstance != FGMCAbilityTaskData{} && /*safety check*/ TaskDataFromInstance.TaskID >= 0)
 	{
 		// Recorded before any branch: the watchdog needs the id the sender addressed even when
@@ -2109,7 +2381,7 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 						TaskDataFromInstance.TaskID, TaskDataFromInstance.AbilityID);
 				}
 			}
-			TargetAbility->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+			TargetAbility->HandleTaskData(TaskDataFromInstance.TaskID, Payload);
 		}
 		else if (!ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
 		{

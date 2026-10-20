@@ -1895,6 +1895,46 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetBoundQueueV2ForTest().ClientQueuedOperations.Num(), 1);
 		});
 	});
+
+	// TaskData resend: the server dispatches each client sequence number once, whatever slot carries it.
+	Describe("TaskData resend sequence window", [this]()
+	{
+		It("A number is dispatched once, a copy of it is not", [this]()
+		{
+			TestFalse("Seq 1 is new", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			TestTrue("Copy of seq 1 is a duplicate", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			TestFalse("Seq 2 is new", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+		});
+
+		It("A lost number stays new after later numbers are dispatched", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(3);
+			TestFalse("Seq 2, skipped, is still new", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+			TestTrue("Seq 1 stays dispatched after the window moved", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(2);
+			TestTrue("Seq 2 dispatched late", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+			TestTrue("Seq 3 still dispatched", AbilityComp->IsTaskDataSeqDispatchedForTest(3));
+		});
+
+		It("A large jump forward clears the window", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(5);
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(200);
+			TestTrue("Seq 200 dispatched", AbilityComp->IsTaskDataSeqDispatchedForTest(200));
+			TestFalse("Seq 199 new", AbilityComp->IsTaskDataSeqDispatchedForTest(199));
+		});
+
+		It("A restarted client sequence is accepted", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(500);
+			TestFalse("Seq 1 far behind the window is new", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			TestTrue("Seq 1 dispatched after the restart", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			TestFalse("Seq 2 new after the restart", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+		});
+	});
 }
 
 #endif // WITH_AUTOMATION_WORKER

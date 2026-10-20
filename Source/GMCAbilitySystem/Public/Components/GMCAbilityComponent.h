@@ -824,8 +824,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
-	
-	
+
+	// Client only. Call from the movement component's CL_OnAPMoveReceived, with the APMove timestamp:
+	// the payloads that the acknowledged move carried stop being resent.
+	UFUNCTION(BlueprintCallable, Category="GMAS")
+	virtual void CL_OnAPMoveReceived(double APMoveTimestamp);
+
+
 #pragma endregion GMC
 
 #pragma region ToStringHelpers
@@ -898,9 +903,23 @@ protected:
 	
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
+	// A move carries one payload, and is sent once. Each later move also carries copies of the payloads that the
+	// server did not acknowledge yet, so a lost move delays a payload instead of losing it. Read by the server only.
+	// Empty = invalid struct: 1 bit when GMC sends it in full, and no allocation per move.
+	FInstancedStruct TaskDataResendA;
+	FInstancedStruct TaskDataResendB;
+
+	// Client-issued sequence number of the payload in each slot, 0 when the slot is empty. The server dispatches each
+	// number once, so a copy never runs a payload twice.
+	int32 TaskDataSeq = 0;
+	int32 TaskDataResendASeq = 0;
+	int32 TaskDataResendBSeq = 0;
+
 	void ClearAbilityAndTaskData();
 
 	void SendTaskDataToActiveAbility(bool bFromMovement);
+
+	void DispatchTaskData(const FInstancedStruct& Payload, bool bFromMovement);
 
 private:
 
@@ -977,7 +996,46 @@ private:
 	void InitializeStartingAbilities();
 	
 	TArray<FInstancedStruct> QueuedTaskData;
-	
+
+	struct FUnackedTaskData
+	{
+		FInstancedStruct Payload;
+		int32 Seq = 0;
+		double QueuedRealTime = 0.0;
+	};
+
+	// Client: payloads sent and not acknowledged yet, oldest first.
+	TArray<FUnackedTaskData> UnackedTaskData;
+
+	int32 LastIssuedTaskDataSeq = 0;
+
+	int32 TaskDataSeqBindIndex = -1;
+	int32 TaskDataResendASeqBindIndex = -1;
+	int32 TaskDataResendBSeqBindIndex = -1;
+
+	// Client: writes the resend slots of the move about to be saved.
+	void FillTaskDataResendSlots();
+
+	struct FMoveTaskData
+	{
+		int32 Seq = 0;
+		const FInstancedStruct* Payload = nullptr;
+	};
+
+	// Server, remote client pawn: the payloads of the move being executed, oldest first. Built on the first dispatch
+	// of the move, so both dispatch passes see the same list. Marked as dispatched when the move ends.
+	TArray<FMoveTaskData, TInlineAllocator<3>> MoveTaskData;
+	bool bMoveTaskDataBuilt = false;
+
+	// Server: highest sequence number dispatched, and bit N set when number (High - N) was dispatched.
+	int32 DispatchedTaskDataSeqHigh = 0;
+	uint64 DispatchedTaskDataSeqMask = 0;
+
+	bool IsRemoteClientPawnOnServer() const;
+	void BuildMoveTaskData();
+	bool IsTaskDataSeqDispatched(int32 Seq) const;
+	void MarkTaskDataSeqDispatched(int32 Seq);
+
 	FGMASBoundQueueV2 BoundQueueV2 = {};
 
 	// Local buffer for PredictedQueued operations called outside of a movement tick.
@@ -1280,6 +1338,9 @@ public:
 	{
 		return CheckActivationTagsForClientAuth(Ability);
 	}
+
+	bool IsTaskDataSeqDispatchedForTest(int32 Seq) const { return IsTaskDataSeqDispatched(Seq); }
+	void MarkTaskDataSeqDispatchedForTest(int32 Seq) { MarkTaskDataSeqDispatched(Seq); }
 private:
 #endif
 
