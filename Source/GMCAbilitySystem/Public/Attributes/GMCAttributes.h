@@ -96,6 +96,13 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// Used to purge "future modifiers" during replay
 	void PurgeTemporalModifier(double CurrentActionTimer);
+
+	// Client replay journal: copies the temporal entries of one effect, and puts one back when it is missing.
+	void GetTemporalModifiersOf(const UGMCAbilityEffect* InstigatorEffect, TArray<FAttributeTemporaryModifier>& OutModifiers) const;
+	void RestoreTemporalModifier(const FAttributeTemporaryModifier& Modifier) const;
+
+	// Forces the next CalculateValue. A replayed transition must recalculate even when its entry is already in place.
+	void MarkDirty() const { bIsDirty = true; }
 	
 
 	UPROPERTY(BlueprintAssignable)

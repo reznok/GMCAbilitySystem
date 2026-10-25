@@ -119,9 +119,8 @@ struct FGMCAbilityEffectData
 	//
 	// Sentinel semantics: 0 means "use the project-wide default" from
 	// `UGMASNetworkTimingSettings::DefaultClientGraceTime` (Project Settings → GMC Ability System →
-	// Network Timing, default 0.5s — sized for typical RTT + jitter + one server tick at 30 Hz).
-	// Set this to >0 only when an individual effect needs a different window (e.g. a slow drain
-	// that needs more time for client/server convergence).
+	// Network Timing, default 0: the effect ends at the next move).
+	// Set this to >0 only when an individual effect needs a longer window.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem", AdvancedDisplay)
 	float ClientGraceTime = 0.f;
 
@@ -142,14 +141,8 @@ struct FGMCAbilityEffectData
 	// Opt-in single-instance protection by EffectTag (exact match). New Apply is
 	// rejected if a same-tag effect is functionally active; if the match is in its
 	// bilateral PredictedEnd defer window, the new Apply succeeds and the old is
-	// replaced — server force-ends immediately, client suspends-then-finalizes-or-
-	// revives based on the successor's server verdict (Validated vs Timeout).
+	// replaced — both sides end the old one at once.
 	// Empty EffectTag disables the check.
-	//
-	// Drain-rate symmetry between client and server during the recovery window is
-	// exact for Ticking modifiers (continuous flow). Periodic/Persistent effects
-	// can produce a bounded drift up to one modifier-worth — prefer Ticking, or
-	// accept the bounded mismatch.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "GMCAbilitySystem")
 	bool bUniqueByEffectTag = false;
 
@@ -242,6 +235,59 @@ struct FGMCAbilityEffectData
  * 
  */
 class UGMC_AbilitySystemComponent;
+
+// Part of a GMC prediction tick where an effect transition ran. A client replay re-runs the transition
+// at the same move and part, because the replay rewinds bound tags and attributes but not the effects.
+enum class EGMASReplayPhase : uint8
+{
+	None,           // outside a prediction tick
+	PreTick,        // before the move: an out-of-tick transition, stamped by the next local move
+	BeforeEffects,  // queued operations, the move operation, starting effects
+	Abilities,      // task data and TickActiveAbilities
+	InEffects,      // TickActiveEffects
+	AfterEffects,   // attribute processing and ability cleanup
+	PostTick        // the ancillary tick: after the prediction tick, before GMC saves the move output
+};
+
+// Move and position of one effect transition (start or end) in the client timeline.
+struct FGMASEffectReplayStamp
+{
+	double Time = 0.0;
+	int32 Seq = 0;
+	// Replay pass that recorded it; 0 = a local move. A pass never re-runs its own transitions.
+	int32 PassId = 0;
+	// Value of the pass counter when the transition ran. Tells if a replay ran before a pending stamp resolved.
+	int32 PassCountAtRecord = 0;
+	// Last replay pass that re-ran it. Sub-stepped moves tick several times with the same move time.
+	int32 ReplayedInPass = 0;
+	EGMASReplayPhase Phase = EGMASReplayPhase::None;
+	bool bSet = false;
+	bool bPending = false;
+
+	// True when the stamp is at or before the given point of the replayed timeline.
+	bool IsAtOrBefore(double MoveTime, EGMASReplayPhase InPhase) const
+	{
+		return bSet && (Time < MoveTime || (Time == MoveTime && Phase <= InPhase));
+	}
+};
+
+// One temporal attribute entry of an effect, kept for the client replay journal.
+struct FGMASReplayTemporalEntry
+{
+	FGameplayTag AttributeTag;
+	int32 ApplicationIndex = 0;
+	float Value = 0.f;
+	double ActionTimer = 0.0;
+	uint8 Kind = 0;
+};
+
+// One write to the bound list of active effect IDs, kept for the client replay journal.
+struct FGMASReplayBoundEffectIDWrite
+{
+	FGMASEffectReplayStamp Stamp;
+	int32 EffectID = -1;
+	bool bAdd = false;
+};
 
 UCLASS(Blueprintable, BlueprintType)
 class GMCABILITYSYSTEM_API UGMCAbilityEffect : public UObject
@@ -352,19 +398,49 @@ public:
 	// Bilateral defer absolute timestamp for Predicted Remove on Ticking/Periodic effects.
 	// Both sides arm `ActionTimer + ClientGraceTime` at the same logical move tick so they
 	// end on the same logical tick regardless of DeltaTime / framerate / replay count.
-	// -1.0 = not armed; >= 0 = armed, end when ActionTimer reaches the value.
+	// -1.0 = not armed; >= 0 = armed, end at the first move with ActionTimer strictly above the value.
 	double EndAtActionTimer { -1.0 };
 
-	// Set on the OLD instance during a client-side bUniqueByEffectTag REPLACE. Tick early-
-	// returns (no modifier application) but tags / abilities / EndAtActionTimer survive.
-	// Cleared by the polling block in TickActiveEffects when the successor reaches
-	// Validated (real EndEffect runs) or Timeout (OLD is revived).
-	bool bPendingDeathBySuccessor = false;
+	// Remove made between moves: the arm waits for the next local move, where the other side runs the Remove.
+	// Holds the grace to arm with; -1.0 = none.
+	double PendingEndGrace { -1.0 };
 
 	// Time that the client applied this Effect. Used for when a client predicts an effect, if the server has not
 	// confirmed this effect within a time range, the effect will be cancelled.
 	float ClientEffectApplicationTime;
-	
+
+	// --- Client replay journal ---
+	// A replay rewinds bound tags and attributes, but this instance survives it and its activation operation
+	// is skipped as consumed. The stamps let the replay re-run its bound writes at the move that made them.
+	FGMASEffectReplayStamp ReplayCreatedStamp;
+	FGMASEffectReplayStamp ReplayStartStamp;
+	FGMASEffectReplayStamp ReplayEndStamp;
+
+	// Last move whose tick applied Ticking, Periodic or re-evaluated modifiers.
+	double ReplayLastModifierTickTime = 0.0;
+	bool bHasReplayLastModifierTick = false;
+
+	bool HasAppliedEffect() const { return bHasAppliedEffect; }
+
+	// True while the replayed point precedes the creation or the start of this effect: its tick must not run yet.
+	bool IsReplayedBeforeStart(double MoveTime, EGMASReplayPhase Phase) const;
+
+	// Bound writes of StartEffect / EndEffect only: no events, ability changes, chained effects or broadcasts.
+	void ReplayStartWrites();
+	void ReplayEndWrites();
+
+	// Ended effect still active at a replayed move: re-applies that move's tick modifiers.
+	void ReplayGhostTick(float DeltaTime);
+
+	// Ended effect: puts back the temporal entries it held at the replay source move.
+	void RestoreGhostTemporalModifiersUpTo(double MaxActionTimer);
+
+	// Removes every temporal entry of this effect. A released ghost must leave no entry behind.
+	void RemoveAllTemporalModifiers();
+
+	// Moves the entries of a start that ran outside a prediction tick to the move that stamped it.
+	void RestampStartTemporalModifiers(double NewTime);
+
 	UFUNCTION(BlueprintPure, Category = "GMCAbilitySystem")
 	void GetOwnerActor(AActor*& OwnerActor) const;
 
@@ -387,7 +463,25 @@ protected:
 private:
 	bool bHasStarted;
 	bool bHasAppliedEffect;
-	
+
+	// Bound tags that StartEffect added and EndEffect removed, so a replay repeats the same decision.
+	TArray<FGameplayTag> ReplayAddedTags;
+	TArray<FGameplayTag> ReplayRemovedTags;
+	// Same for the granted abilities: GrantedAbilityTags is bound too.
+	TArray<FGameplayTag> ReplayGrantedAbilityTags;
+	TArray<FGameplayTag> ReplayRemovedAbilityTags;
+
+	// Temporal entries written by StartEffect, and all temporal entries held when EndEffect ran.
+	TArray<FGMASReplayTemporalEntry> ReplayStartTemporalModifiers;
+	TArray<FGMASReplayTemporalEntry> ReplayEndTemporalModifiers;
+
+	void CaptureTemporalModifiers(TArray<FGMASReplayTemporalEntry>& OutEntries) const;
+	void RestoreTemporalModifiers(const TArray<FGMASReplayTemporalEntry>& Entries, double MaxActionTimer, bool bInclusive) const;
+
+	// Ticking / Periodic / re-evaluated modifier application, shared by Tick and the replay of an ended effect.
+	// bLiveTick: fires the Blueprint events and records the tick for the replay journal.
+	void ApplyTickModifiers(float DeltaTime, bool bLiveTick);
+
 	void CheckState();
 
 	// Tags

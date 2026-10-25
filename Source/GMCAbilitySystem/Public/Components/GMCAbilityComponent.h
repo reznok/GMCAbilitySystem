@@ -66,6 +66,7 @@ struct FGMASActiveEffectIDsState
 {
 	GENERATED_BODY()
 
+	// Sorted ascending: GMC compares the list element by element.
 	UPROPERTY()
 	TArray<int> IDs;
 };
@@ -1230,18 +1231,6 @@ private:
 	UPROPERTY()
 	TMap<int /*ID*/, EGMCEffectAnswerState /*bServerConfirmed*/> ProcessedEffectIDs;
 
-	// Predict-replace recovery map (client-only). Key: SUCCESSOR effect's ID (the new
-	// instance applied via bUniqueByEffectTag REPLACE). Value: list of OLD instances
-	// that were marked bPendingDeathBySuccessor by that apply, awaiting server's verdict.
-	// On Pending → Validated: finalize each entry (real EndEffect on the OLD).
-	// On Pending → Timeout (server rejected): revive each entry (clear bPendingDeathBySuccessor).
-	// Server never populates this — server's force-end runs immediately at apply time.
-	//
-	// Not UPROPERTY: UHT rejects TMap with TArray-typed values (nested-container limit).
-	// TWeakObjectPtr handles its own GC staleness tracking so we don't need reflection
-	// for safety — entries naturally expire if the effect UObject is GC'd.
-	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
-
 	// Let the client know that the server has activated this ability as well
 	// Needed for the client to cancel mis-predicted abilities
 	UFUNCTION(Client, Reliable)
@@ -1256,8 +1245,9 @@ private:
 	// Let the client know that the server has ended an effect
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
+	// ServerActionTimer: the move in which the server ended it, so the client replay journal ends it there too.
 	UFUNCTION(Client, Reliable)
-	void RPCClientEndEffect(int EffectID);
+	void RPCClientEndEffect(int EffectID, double ServerActionTimer);
 
 	// Set in GenPredictionTick (re-entrant during replay), consumed once in GenAncillaryTick.
 	bool bReplayObservedThisFrame = false;
@@ -1271,6 +1261,58 @@ private:
 
 	void ProcessReplayBurstDiagnostic();
 	void TryShowReplayBurstWarningWidget();
+
+	// --- Client replay journal for effects ---
+	// A replay rewinds bound tags and attributes, but not ActiveEffects, and it skips consumed activation
+	// operations. Without a journal, a replay loses every effect start and end inside its window, the
+	// replayed history diverges again, and the corrections chain ([ReplayBurst]).
+	EGMASReplayPhase CurrentReplayPhase = EGMASReplayPhase::None;
+	int32 ReplayTransitionSeq = 0;
+	// Incremented at the first replayed move of each replay pass. 0 is reserved for local moves.
+	int32 ReplayPassCount = 0;
+	bool bLastPredictionTickWasReplay = false;
+	double LastPredictionTickTime = 0.0;
+	// Set by CL_OnPreReplay. Once the movement component forwards that hook, it alone opens a replay pass.
+	bool bReplayPreReplayHookSeen = false;
+	bool bReplayPassStartRequested = false;
+	// Latest server move received: a replay never starts before it, so older ghosts can go.
+	double LastReceivedAPMoveTimestamp = -TNumericLimits<double>::Max();
+
+	// The replayed move re-runs the transitions stamped in (ReplayWindowStart, ReplayWindowMoveTime]. A range,
+	// not an equality: a move combine moves the timestamp of the previous move forward.
+	double ReplayWindowStart = 0.0;
+	double ReplayWindowMoveTime = 0.0;
+
+	// Set while RPCClientEndEffect ends this effect: its end stamp takes the server move time. Other stamps keep
+	// the normal rules.
+	const UGMCAbilityEffect* ReplayStampOverrideEffect = nullptr;
+	double ReplayStampOverrideTime = 0.0;
+
+	// Effects with a transition that ran outside a prediction tick, stamped by the next local move.
+	TArray<TWeakObjectPtr<UGMCAbilityEffect>> PendingReplayStampEffects;
+
+	// Ended effects whose window can still be replayed.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UGMCAbilityEffect>> ReplayGhostEffects;
+
+	// Writes to ActiveEffectIDsBound, in record order. The server compares that list with the client value of each
+	// move, so a replay must rebuild it as the original run did.
+	TArray<FGMASReplayBoundEffectIDWrite> ReplayBoundEffectIDWrites;
+
+	// Sorted write to ActiveEffectIDsBound, without a journal record.
+	void WriteBoundActiveEffectID(int EffectID, bool bAdd);
+	void RecordReplayBoundEffectIDWrite(int EffectID, bool bAdd);
+	void PruneReplayBoundEffectIDWrites();
+
+	void BeginReplayPassIfNeeded(bool bReplaying);
+	void ResolvePendingReplayStamps();
+	void ReplayEffectTransitions(EGMASReplayPhase Phase);
+	void RestoreReplayGhostsAtPassStart();
+	void TickReplayGhosts(float DeltaTime);
+	// Ended effects, including those that still wait in ActiveEffects for the cleanup pass of TickActiveEffects.
+	void CollectReplayGhosts(TArray<UGMCAbilityEffect*>& OutGhosts) const;
+	void PruneReplayGhosts();
+	bool HasReplayGhostWithEffectID(int EffectID) const;
 
 	friend UGMCAbilityAnimInstance;
 
@@ -1341,6 +1383,28 @@ public:
 
 	bool IsTaskDataSeqDispatchedForTest(int32 Seq) const { return IsTaskDataSeqDispatched(Seq); }
 	void MarkTaskDataSeqDispatchedForTest(int32 Seq) { MarkTaskDataSeqDispatched(Seq); }
+
+	// Test seams for the replay journal: the headless harness has no owner pawn and no move timestamps.
+	bool bForceReplayJournalForTest = false;
+	bool bUseMoveTimestampOverrideForTest = false;
+	double MoveTimestampOverrideForTest = 0.0;
+	int32 GetReplayGhostCountForTest() const { return ReplayGhostEffects.Num(); }
+	void SetLastReceivedAPMoveTimestampForTest(double Timestamp) { LastReceivedAPMoveTimestamp = Timestamp; }
+	int32 GetReplayBoundEffectIDWriteCountForTest() const { return ReplayBoundEffectIDWrites.Num(); }
+	void RPCClientEndEffectForTest(int EffectID, double ServerActionTimer) { RPCClientEndEffect_Implementation(EffectID, ServerActionTimer); }
+	// GMC writes the server value of the list before it replays: no journal record.
+	void SetBoundActiveEffectIDsForTest(const TArray<int>& IDs)
+	{
+		if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+		{
+			State->IDs = IDs;
+		}
+	}
+	TArray<int> GetBoundActiveEffectIDsForTest() const
+	{
+		const FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetPtr<FGMASActiveEffectIDsState>();
+		return State ? State->IDs : TArray<int>();
+	}
 private:
 #endif
 
@@ -1350,6 +1414,22 @@ public:
 	// (polling promotion, Pending+timeout reap). Production wraps the GMC's own
 	// CL_IsReplaying(); test builds layer a per-component override on top.
 	bool IsReplayingForGMASLogic() const;
+
+	// The replay journal runs only on a predicting, locally controlled client: the only side that replays.
+	bool IsReplayJournalActive() const;
+
+	// Forward from the movement component's CL_PreReplay: opens a replay pass exactly once per replay.
+	// Without it, the pass start is guessed from the move times.
+	virtual void CL_OnPreReplay();
+
+	// Forward from CL_PostReplay: re-runs the transitions made after the last move, which no replayed move covers.
+	virtual void CL_OnPostReplay();
+
+	// Gives an effect transition its place in the move timeline (called by UGMCAbilityEffect).
+	void StampReplayTransition(UGMCAbilityEffect* Effect, FGMASEffectReplayStamp& Stamp);
+
+	// Arms the bilateral end of a Ticking/Periodic effect at the current move (called by UGMCAbilityEffect).
+	void ArmEffectEnd(UGMCAbilityEffect* Effect, double GraceTime);
 
 	// Centralized authority check for GMAS server-side dispatch. Production delegates to
 	// AActor::HasAuthority(); test builds layer bForceAuthorityForTest on top so that

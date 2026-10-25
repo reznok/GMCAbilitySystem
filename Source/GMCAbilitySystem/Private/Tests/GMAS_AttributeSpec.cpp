@@ -24,6 +24,9 @@ END_DEFINE_SPEC(FGMASAttributeSpec)
 FAttribute FGMASAttributeSpec::MakeAttr(float InitVal) const
 {
 	FAttribute Attr;
+	// No clamp. Both clamp flags default to true, and a default clamp pins the value to [0, 0].
+	Attr.Clamp.bClampMin = false;
+	Attr.Clamp.bClampMax = false;
 	Attr.InitialValue = InitVal;
 	Attr.Init();
 	return Attr;
@@ -61,6 +64,8 @@ void FGMASAttributeSpec::Define()
 		It("sets Value and RawValue to InitialValue when no clamp is configured", [this]()
 		{
 			FAttribute Attr;
+			Attr.Clamp.bClampMin = false;
+			Attr.Clamp.bClampMax = false;
 			Attr.InitialValue = 150.f;
 			Attr.Init();
 			TestEqual("Value == InitialValue after Init", Attr.Value, 150.f);
@@ -111,6 +116,8 @@ void FGMASAttributeSpec::Define()
 		It("respects the static clamp when adding modifiers", [this]()
 		{
 			FAttribute Attr = MakeAttr(90.f);
+			Attr.Clamp.bClampMin = true;
+			Attr.Clamp.bClampMax = true;
 			Attr.Clamp.Min = 0.f;
 			Attr.Clamp.Max = 100.f;
 			Attr.RawValue = 90.f; // Init clamps
@@ -186,6 +193,8 @@ void FGMASAttributeSpec::Define()
 			Effect->AddToRoot();
 
 			FAttribute Attr = MakeAttr(80.f);
+			Attr.Clamp.bClampMin = true;
+			Attr.Clamp.bClampMax = true;
 			Attr.Clamp.Min = 0.f;
 			Attr.Clamp.Max = 100.f;
 			Attr.RawValue = 80.f;
@@ -468,6 +477,8 @@ void FGMASAttributeSpec::Define()
 			Effect->AddToRoot();
 
 			FAttribute Attr = MakeAttr(50.f);
+			Attr.Clamp.bClampMin = true;
+			Attr.Clamp.bClampMax = true;
 			Attr.Clamp.Min = 0.f;
 			Attr.Clamp.Max = 100.f;
 			Attr.AddModifier(MakeSetMod(Effect, EModifierType::Set, 999.f, 1, 1.0));

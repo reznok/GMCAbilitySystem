@@ -26,6 +26,9 @@ END_DEFINE_SPEC(FGMASModifierMathSpec)
 FAttribute FGMASModifierMathSpec::MakeAttr(float InitVal) const
 {
 	FAttribute Attr;
+	// No clamp. Both clamp flags default to true, and a default clamp pins the value to [0, 0].
+	Attr.Clamp.bClampMin = false;
+	Attr.Clamp.bClampMax = false;
 	Attr.InitialValue = InitVal;
 	Attr.Init();
 	return Attr;

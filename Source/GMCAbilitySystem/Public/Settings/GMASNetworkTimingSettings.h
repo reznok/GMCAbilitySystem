@@ -12,8 +12,8 @@
  * Two parameters live here:
  *  - `ClientEffectApplicationTimeout`: how long the client holds a Predicted effect
  *    waiting for server confirmation before rolling it back.
- *  - `DefaultClientGraceTime`: the bilateral defer window used at Remove time for
- *    Ticking/Periodic effects so client and server end on the same logical move tick.
+ *  - `DefaultClientGraceTime`: the extra bilateral defer used at Remove time for
+ *    Ticking/Periodic effects. With 0, the effect ends at the next move on both sides.
  *    A per-effect `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default
  *    on a per-instance basis (designers can extend the window for slow drains).
  *
@@ -48,12 +48,15 @@ public:
 
 	/**
 	 * Default bilateral defer window (seconds) for Ticking/Periodic effect end. Both client
-	 * and server arm `EndAtActionTimer = ActionTimer + this` so each side fires the same
-	 * number of Tick / period-boundary applications before the effect actually ends.
+	 * and server arm `EndAtActionTimer = ActionTimer + this`, and the effect ends at the first
+	 * move strictly after it. So each side fires the same number of Tick / period-boundary
+	 * applications, whatever the phase of the Remove call in its move.
+	 *
+	 * 0 (default): the effect ends at the next move. The phase symmetry needs no longer window.
 	 *
 	 * Per-effect override: set `FGMCAbilityEffectData::ClientGraceTime > 0` on the effect
 	 * itself to use a different window for that effect only (sentinel 0 = use this default).
 	 */
-	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.05", UIMin="0.05", ForceUnits="s"))
-	float DefaultClientGraceTime = 0.5f;
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0", UIMin="0", ForceUnits="s"))
+	float DefaultClientGraceTime = 0.f;
 };

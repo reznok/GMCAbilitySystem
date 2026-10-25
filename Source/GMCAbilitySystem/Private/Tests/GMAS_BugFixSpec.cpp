@@ -549,7 +549,7 @@ void FGMASBugFixSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when ActionTimer reaches EndAtActionTimer exactly", [this]()
+		It("Tick keeps the defer at EndAtActionTimer exactly, then fires on the next move", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -559,13 +559,89 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
+			// Strict boundary: the move that armed the defer still ticks, whatever the phase of the Remove call.
 			AbilityComp->ActionTimer = 6.0;
-			Effect->EndAtActionTimer = 6.0;  // boundary: >= triggers
+			Effect->EndAtActionTimer = 6.0;
+			Effect->Tick(0.f);
+			TestFalse("Not completed on the arming move", Effect->bCompleted);
 
+			AbilityComp->ActionTimer = 6.033;
 			Effect->Tick(0.f);
 
 			TestTrue("Effect completed via EndEffect",  Effect->bCompleted);
 			TestEqual("EndAt latch reset to -1.0",      Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("RPCClientEndEffect ends an armed effect at once too", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// The RPC can only find the effect alive when the server ended it before the client armed it.
+			AbilityComp->ActionTimer = 6.0;
+			Effect->EndAtActionTimer = 6.0;
+			AbilityComp->RPCClientEndEffectForTest(Effect->EffectData.EffectID, 5.9);
+
+			TestTrue("Armed effect ended by the RPC", Effect->bCompleted);
+			TestEqual("Latch reset to -1.0",          Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("A Remove made between moves arms on the next local move only", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// Pending arm with the default grace. A replayed move is older than the Remove: no arm.
+			Effect->PendingEndGrace = 0.0;
+			AbilityComp->ActionTimer = 6.0;
+			AbilityComp->bForceReplayingForTest = true;
+			Effect->Tick(0.f);
+			AbilityComp->bForceReplayingForTest = false;
+			TestEqual("Replayed move: still pending", Effect->PendingEndGrace, 0.0);
+			TestEqual("Replayed move: not armed",     Effect->EndAtActionTimer, -1.0);
+
+			// The next local move arms at its own time and still ticks.
+			AbilityComp->ActionTimer = 6.033;
+			Effect->Tick(0.f);
+			TestEqual("Local move: armed at its time", Effect->EndAtActionTimer, 6.033);
+			TestFalse("Local move: not ended yet",     Effect->bCompleted);
+
+			AbilityComp->ActionTimer = 6.066;
+			Effect->Tick(0.f);
+			TestTrue("Next move: ended", Effect->bCompleted);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("RPCClientEndEffect ends an unarmed effect at once", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// Server-only end: the server already ended it, so no local defer.
+			AbilityComp->ActionTimer = 6.0;
+			AbilityComp->RPCClientEndEffectForTest(Effect->EffectData.EffectID, 5.9);
+
+			TestTrue("Unarmed effect ended by the RPC", Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
@@ -632,7 +708,7 @@ void FGMASBugFixSpec::Define()
 			TestFalse("Not yet completed (5.7 < 6.0)",  Effect->bCompleted);
 
 			AbilityComp->ActionTimer = 6.1;  Effect->Tick(0.4f);
-			TestTrue("Completed (6.1 >= 6.0)",          Effect->bCompleted);
+			TestTrue("Completed (6.1 > 6.0)",           Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
@@ -952,12 +1028,9 @@ void FGMASBugFixSpec::Define()
 			EffectHealth->RemoveFromRoot(); EffectMana->RemoveFromRoot();
 		});
 
-		It("Deferred match suspended client-side by re-Apply (server-accept path finalizes)", [this]()
+		It("Deferred match ended at once by re-Apply (both sides)", [this]()
 		{
-			// Client predict-apply: OLD is suspended (bPendingDeathBySuccessor) but
-			// not yet finalized. Tracking entry recorded in PendingReplacements.
-			// When the polling promotes the successor to Validated (server bound
-			// state confirms), the OLD is finalized via real EndEffect.
+			// The harness is standalone, so RemoveActiveAbilityEffect ends at once: the defer is armed by hand.
 			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffectA->AddToRoot(); EffectB->AddToRoot();
@@ -971,39 +1044,38 @@ void FGMASBugFixSpec::Define()
 
 			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
 			TestNotNull("First Apply succeeds", AppliedA);
+			AppliedA->EndAtActionTimer = AbilityComp->ActionTimer + 1.0;
 
-			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			TestTrue("EffectA still alive in ActiveEffects (defer armed or imminent end)",
-				AbilityComp->GetActiveEffects().Contains(AppliedA->EffectData.EffectID));
-
-			// Skip the test if the harness's standalone-network detection bypassed
-			// the bilateral defer arm and EndEffect-ed A directly; the assertion
-			// path then doesn't exercise the suspend logic.
-			if (AppliedA->bCompleted) { EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot(); return; }
-			TestTrue("EffectA's EndAtActionTimer is armed", AppliedA->EndAtActionTimer >= 0.0);
-
-			// Re-Apply: B succeeds, A is SUSPENDED (not finalized).
 			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
 			TestNotNull("Re-Apply succeeds during A's defer window", AppliedB);
+			TestTrue ("A ended at once",  AppliedA->bCompleted);
+			TestEqual("A latch reset",    AppliedA->EndAtActionTimer, -1.0);
+			TestFalse("B alive",          AppliedB->bCompleted);
 
-			// On the headless harness HasAuthority() is false (orphan component),
-			// so the client suspend path runs.
-			TestTrue ("EffectA suspended (bPendingDeathBySuccessor=true)",
-				AppliedA->bPendingDeathBySuccessor);
-			TestFalse("EffectA NOT yet finalized (bCompleted=false)",
-				AppliedA->bCompleted);
-			TestTrue ("EffectA's EndAtActionTimer still armed (preserved for revival path)",
-				AppliedA->EndAtActionTimer >= 0.0);
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
 
-			// Simulate server confirmation: bound state contains B's ID + polling
-			// promotes B to Validated, which finalizes A.
-			AbilityComp->BoundActiveEffectIDs_Add(AppliedB->EffectData.EffectID);
-			AbilityComp->TickActiveEffects(0.f);
+		It("Same-tag effect with a pending arm ended at once by re-Apply", [this]()
+		{
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
 
-			TestTrue ("EffectA finalized after B promoted to Validated (bCompleted=true)",
-				AppliedA->bCompleted);
-			TestEqual("EffectA's EndAtActionTimer cleared after finalization",
-				AppliedA->EndAtActionTimer, -1.0);
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Ticking;
+			Data.Duration           = 0.f;
+			Data.EffectTag          = HealthTag;
+			Data.bUniqueByEffectTag = true;
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			TestNotNull("First Apply succeeds", AppliedA);
+			// A Remove made between moves.
+			AppliedA->PendingEndGrace = 0.0;
+
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+			TestNotNull("Re-Apply succeeds while A waits for its arm", AppliedB);
+			TestTrue ("A ended at once",     AppliedA->bCompleted);
+			TestEqual("A pending arm reset", AppliedA->PendingEndGrace, -1.0);
 
 			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});
@@ -1075,49 +1147,6 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetActiveEffects().Contains(Applied2->EffectData.EffectID));
 
 			PendingEffect->RemoveFromRoot(); ReapableEffect->RemoveFromRoot();
-		});
-
-		It("Deferred match revived by re-Apply timeout (server-reject path)", [this]()
-		{
-			// Client predict-apply: OLD suspended, successor stamped Pending. The
-			// server's bound state never confirms (= rejection). After the timeout
-			// window, the successor is reaped and the suspended OLD is REVIVED:
-			// bPendingDeathBySuccessor cleared, OLD resumes ticking modifiers.
-			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			EffectA->AddToRoot(); EffectB->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType         = EGMASEffectType::Ticking;
-			Data.Duration           = 0.f;
-			Data.ClientGraceTime    = 1.f;
-			Data.EffectTag          = HealthTag;
-			Data.bUniqueByEffectTag = true;
-
-			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
-			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			if (AppliedA->bCompleted) { EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot(); return; }
-
-			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
-			TestNotNull("B applied", AppliedB);
-			TestTrue ("A suspended", AppliedA->bPendingDeathBySuccessor);
-
-			// Stamp B as Pending and DO NOT add to bound state (simulating server
-			// rejection). Push ActionTimer past the timeout window so the reap path
-			// fires.
-			AbilityComp->GetProcessedEffectIDsForTest().Add(AppliedB->EffectData.EffectID, EGMCEffectAnswerState::Pending);
-			AbilityComp->ActionTimer = 5.0;
-			AbilityComp->TickActiveEffects(0.f);
-
-			TestEqual("B reaped (Timeout state)",
-				static_cast<int>(AbilityComp->GetProcessedEffectIDsForTest().FindRef(AppliedB->EffectData.EffectID)),
-				static_cast<int>(EGMCEffectAnswerState::Timeout));
-			TestFalse("A revived (bPendingDeathBySuccessor=false)",
-				AppliedA->bPendingDeathBySuccessor);
-			TestFalse("A still alive (not bCompleted)",
-				AppliedA->bCompleted);
-
-			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});
 
 		It("Re-Apply allowed once the previous instance has been removed", [this]()

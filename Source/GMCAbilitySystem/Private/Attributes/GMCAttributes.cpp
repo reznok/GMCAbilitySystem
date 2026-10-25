@@ -166,6 +166,32 @@ void FAttribute::PurgeTemporalModifier(double CurrentActionTimer)
 	}
 }
 
+void FAttribute::GetTemporalModifiersOf(const UGMCAbilityEffect* InstigatorEffect, TArray<FAttributeTemporaryModifier>& OutModifiers) const
+{
+	for (const FAttributeTemporaryModifier& Mod : ValueTemporalModifiers)
+	{
+		if (Mod.InstigatorEffect == InstigatorEffect)
+		{
+			OutModifiers.Add(Mod);
+		}
+	}
+}
+
+void FAttribute::RestoreTemporalModifier(const FAttributeTemporaryModifier& Modifier) const
+{
+	const bool bAlreadyPresent = ValueTemporalModifiers.ContainsByPredicate([&Modifier](const FAttributeTemporaryModifier& Mod)
+	{
+		return Mod.ApplicationIndex == Modifier.ApplicationIndex
+			&& Mod.InstigatorEffect == Modifier.InstigatorEffect
+			&& Mod.ActionTimer == Modifier.ActionTimer;
+	});
+	if (!bAlreadyPresent)
+	{
+		ValueTemporalModifiers.Add(Modifier);
+	}
+	bIsDirty = true;
+}
+
 FString FAttribute::DumpDebugString() const
 {
 	FString Out = FString::Printf(TEXT("%s | Value=%0.3f RawValue=%0.3f Initial=%0.3f Bound=%d Dirty=%d Clamp=[%0.1f..%0.1f min:%d max:%d]"),
