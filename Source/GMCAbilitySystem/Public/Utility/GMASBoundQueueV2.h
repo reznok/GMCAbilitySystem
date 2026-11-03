@@ -159,7 +159,10 @@ public:
 	void QueueClientOperation(const int OperationID);
 
 	// Queue a server operation; Timeout is the ack grace in seconds (UGMASNetworkTimingSettings::ServerOperationGraceSeconds for pawns with a client, 0 otherwise).
-	void QueueServerOperation(const int OperationID, const float Timeout);
+	// bNotifyOwningClient broadcasts OnServerOperationAdded (the Client RPC); pass false for a
+	// pawn with no owning connection, where the RPC would run on the server and strand the id
+	// in ClientQueuedOperations.
+	void QueueServerOperation(const int OperationID, const float Timeout, const bool bNotifyOwningClient = true);
 	
 	bool CurrentOperationIsOfType(const UScriptStruct* T) const
 	{

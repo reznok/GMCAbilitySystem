@@ -1076,8 +1076,9 @@ private:
 	//     BoundQueueV2.GenAncillaryTick forces it (OnServerOperationForced ->
 	//     ProcessOperation(bForce=true)), ~1 frame later and outside any other pawn's
 	//     movement tick. Never applied inline, because this can run re-entrantly
-	//     inside another pawn's move. The Client RPC still fires and is a harmless
-	//     no-op without an owning connection.
+	//     inside another pawn's move. The Client RPC is not sent: without an owning
+	//     connection it would run on the server and strand the id in
+	//     ClientQueuedOperations.
 	// All authority-side call sites use this instead of BoundQueueV2.QueueServerOperation
 	// directly so the decision stays uniform across every op type.
 	void EnqueueServerOperation(const int OperationID);
@@ -1477,12 +1478,21 @@ public:
 	// Test seam: bind the BoundQueueV2 grace-force delegate the same way BeginPlay does,
 	// so headless specs can drive the next-tick force path (OnServerOperationForced ->
 	// ProcessOperation(bForce=true)) without a world/BeginPlay. Only the force delegate is
-	// bound; the Client-RPC "added" delegate is intentionally left unbound (no NetDriver in
-	// the orphan-component harness). Idempotent: AddUnique-style binding via AddDynamic.
+	// bound; the Client-RPC "added" delegate is left unbound unless BindServerOpAddedDelegateForTest
+	// is called. Idempotent: AddUnique-style binding via AddDynamic.
 	void BindServerOpForcedDelegateForTest()
 	{
 		BoundQueueV2.OnServerOperationForced.RemoveDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
 		BoundQueueV2.OnServerOperationForced.AddDynamic(this, &UGMC_AbilitySystemComponent::OnServerOperationForced);
+	}
+
+	// Test seam: bind the Client-RPC "added" delegate the same way BeginPlay does. An ownerless
+	// component runs the Client RPC locally, which is what a server does for a pawn without an
+	// owning connection, so a spec can prove that nothing is sent for such a pawn.
+	void BindServerOpAddedDelegateForTest()
+	{
+		BoundQueueV2.OnServerOperationAdded.RemoveDynamic(this, &UGMC_AbilitySystemComponent::RPCOnServerOperationAdded);
+		BoundQueueV2.OnServerOperationAdded.AddDynamic(this, &UGMC_AbilitySystemComponent::RPCOnServerOperationAdded);
 	}
 
 	// Test seam for the HasAuthority() guard in ServerProcessOperation and the confirm-timeout

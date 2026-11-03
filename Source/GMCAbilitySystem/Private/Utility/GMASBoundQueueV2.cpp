@@ -209,7 +209,7 @@ void FGMASBoundQueueV2::QueueClientOperation(const int OperationID)
 	ClientQueuedOperations.Add(OperationID);
 }
 
-void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float Timeout)
+void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float Timeout, const bool bNotifyOwningClient)
 {
 	if (!OperationPayloads.Contains(OperationID))
 	{
@@ -222,8 +222,13 @@ void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float 
 	// Add to server timeout map
 	ServerQueuedBoundOperationsGracePeriods.Add(OperationID, Timeout);
 
-	// Notify
-	OnServerOperationAdded.Broadcast(OperationID, QueuedOperation);
+	// Notify the owning client. A pawn without one (AI, level-placed, unpossessed) has no
+	// recipient: the Client RPC would run on the server itself and park the id in
+	// ClientQueuedOperations, which the server never drains.
+	if (bNotifyOwningClient)
+	{
+		OnServerOperationAdded.Broadcast(OperationID, QueuedOperation);
+	}
 }
 
 void FGMASBoundQueueV2::ServerAcknowledgeOperation(int ID)

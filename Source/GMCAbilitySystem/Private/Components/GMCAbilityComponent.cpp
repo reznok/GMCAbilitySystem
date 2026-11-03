@@ -5377,10 +5377,13 @@ void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
 	// movement tick -- decrements (0 - DeltaTime <= 0) and force-applies via
 	// OnServerOperationForced -> ProcessOperation(bForce=true). That is the exact
 	// proven-correct path the grace timeout always used, now ~1 frame instead of the full grace.
-	// QueueServerOperation also fires the Client RPC, which is a harmless no-op for a
-	// pawn with no owning connection. ProcessOperation drains the cached payload and
-	// the grace tick removes the grace-map entry, so the op applies exactly once.
-	BoundQueueV2.QueueServerOperation(OperationID, /*Timeout=*/0.f);
+	// The Client RPC is NOT sent (bNotifyOwningClient = false): with no owning connection
+	// it would run on the server itself, add the id to ClientQueuedOperations (which the
+	// server never drains: an Error in CheckValidState and a dropped-operation Warning the
+	// next frame) and re-cache the payload with an expiration entry that is never pruned
+	// on a server. ProcessOperation drains the cached payload and the grace tick removes
+	// the grace-map entry, so the op applies exactly once.
+	BoundQueueV2.QueueServerOperation(OperationID, /*Timeout=*/0.f, /*bNotifyOwningClient=*/false);
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

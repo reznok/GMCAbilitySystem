@@ -234,6 +234,45 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetActiveEffects().Num(), 1);
 		});
 
+		It("does not send the Client RPC for a pawn with no owning client (nothing strands in ClientQueuedOperations)", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->SetActionTimerForTest(1.0);
+			AbilityComp->bForceNoAckClientForTest = true; // simulate AI / no autonomous-proxy client
+			AbilityComp->BindServerOpForcedDelegateForTest();
+			AbilityComp->BindServerOpAddedDelegateForTest(); // an ownerless component runs the Client RPC locally, like a server would
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			const int OpID = MakeApplyEffectOp(779);
+			const int32 ExpirationsBefore = Q.OperationDataCacheExpiration.Num();
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+
+			TestEqual("no client operation parked on the server", Q.ClientQueuedOperations.Num(), 0);
+			TestEqual("the payload is not re-cached with a second expiration entry",
+				Q.OperationDataCacheExpiration.Num(), ExpirationsBefore);
+
+			// The next-tick force still applies it, exactly once, and the queue stays clean.
+			Q.GenAncillaryTick(0.016f);
+			TestTrue("op still applied by the next-tick force", AbilityComp->GetActiveEffects().Contains(779));
+			TestEqual("still no client operation after the force", Q.ClientQueuedOperations.Num(), 0);
+		});
+
+		It("still sends the Client RPC when an acking client exists", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->SetActionTimerForTest(1.0);
+			AbilityComp->bForceNoAckClientForTest = false; // player target -> client will ack
+			AbilityComp->BindServerOpAddedDelegateForTest();
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			const int OpID = MakeApplyEffectOp(780);
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+
+			// The RPC ran (locally here); on a real owning client this is what feeds the move.
+			TestTrue("the client queue received the op", Q.ClientQueuedOperations.Contains(OpID));
+			Q.ClientQueuedOperations.Reset(); // the headless component has no move to drain it
+		});
+
 		It("routes through the grace/ack queue when an acking client exists", [this, MakeApplyEffectOp]()
 		{
 			AbilityComp->SetActionTimerForTest(1.0);
