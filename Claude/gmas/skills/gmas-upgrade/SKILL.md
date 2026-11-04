@@ -60,7 +60,7 @@ A project that touches these fails to build, or a mixed client/server pair stops
 | `float UGMCAbility::GetClientStartTime() const` | `double` | store it in a `double` (or cast) |
 | `float UGMCAbilityEffect::ClientEffectApplicationTime` | `double` | same |
 | `bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer&)` (private) | `const FGameplayTagContainer&` | nothing outside GMAS |
-| `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout = 1.0f)` | `QueueServerOperation(int, float Timeout)`: no default; the component passes `UGMASNetworkTimingSettings::ServerOperationGraceSeconds` (new, 1 s) or 0 for pawns without a client | pass a timeout; tune the grace in Project Settings → GMC Ability System → Network Timing |
+| `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout = 1.0f)` | `QueueServerOperation(int, float Timeout)`: no default; the component passes `UGMASNetworkTimingSettings::ServerOperationGraceSeconds` (new, 1 s) or 0 for pawns without a client. On `dev` after 1.4.1 a third parameter `bool bNotifyOwningClient = true` follows; the component passes `false` for pawns without a client, so no client RPC goes out for them | pass a timeout; tune the grace in Project Settings → GMC Ability System → Network Timing. Existing two-argument calls compile unchanged |
 | `UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn()` | `DrivesPawnLocally()` (same answer); the old name is deprecated | rename in task subclasses |
 
 ### Tier 2: semantics changes (review your abilities)
