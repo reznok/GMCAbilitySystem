@@ -51,7 +51,9 @@ void FGMASBoundQueueV2::ClearStaleOperationData()
 			const int OperationID = It->OperationID;
 			if (!OperationPayloads.Contains(OperationID))
 			{
+				// Dropped too, or it would warn again on every later tick.
 				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("OperationID %d not found in OperationPayloads, but still in cache expiration map"), OperationID);
+				It.RemoveCurrent();
 				continue;
 			}
 			// Remove stale operation data
@@ -191,7 +193,7 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 			if (OperationPayloads.Contains(It.Key()))
 			{
 				OnServerOperationForced.Broadcast(OperationPayloads[It.Key()]);
-				OperationPayloads.Remove(It.Key());
+				RemovePayloadByID(It.Key());
 			}
 			It.RemoveCurrent();
 		}
@@ -200,7 +202,9 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 
 void FGMASBoundQueueV2::CacheOperationPayload(const int OperationID, const FInstancedStruct& Payload)
 {
+	// One expiration entry per id: caching an id again replaces its payload and restarts its age.
 	OperationPayloads.Add(OperationID, Payload);
+	OperationDataCacheExpiration.RemoveAll([OperationID](const FOperationDataCacheExpiration& Entry) { return Entry.OperationID == OperationID; });
 	OperationDataCacheExpiration.Add({OperationID, GMCMoveCounter});
 }
 
@@ -233,10 +237,7 @@ void FGMASBoundQueueV2::QueueServerOperation(const int OperationID, const float 
 
 void FGMASBoundQueueV2::ServerAcknowledgeOperation(int ID)
 {
-	if (OperationPayloads.Contains(ID))
-	{
-		OperationPayloads.Remove(ID);
-	}
+	RemovePayloadByID(ID);
 
 	if (ServerQueuedBoundOperationsGracePeriods.Contains(ID))
 	{

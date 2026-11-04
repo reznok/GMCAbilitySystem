@@ -69,12 +69,12 @@ protected:
 public:
 	// Accessors for OperationPayloads
 	
+	// Every payload removal goes through here so its expiration entry leaves with it: a server
+	// never advances GMCMoveCounter, so ClearStaleOperationData never prunes the list there.
 	void RemovePayloadByID(const int OperationID)
 	{
-		if (OperationPayloads.Contains(OperationID))
-		{
-			OperationPayloads.Remove(OperationID);
-		}
+		OperationPayloads.Remove(OperationID);
+		OperationDataCacheExpiration.RemoveAll([OperationID](const FOperationDataCacheExpiration& Entry) { return Entry.OperationID == OperationID; });
 		ReportedInvalidPayloadIDs.Remove(OperationID);
 	}
 
