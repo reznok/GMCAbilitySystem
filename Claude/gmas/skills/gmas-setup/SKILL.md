@@ -61,7 +61,7 @@ Regenerate project files, build (a source plugin compiles with the project), ope
 |---|---|---|
 | pawn | `AGMC_Pawn` (`Source/GMCCore/Public/Actors/GMCPawn.h`) | an `APawn` that owns GMC's move pipeline: finds its replication component (`GetReplicationComponent()`), binds it from `PostInitializeComponents` (`SetupReplicationComponent()` calls `BindReplicationData`), and handles possession and move-state replication |
 | convenience pawn | `AGMAS_Pawn` (`Public/Actors/GMAS_Pawn.h`) | `AGMC_Pawn` plus a capsule root, skeletal mesh, spring arm, camera, an ability system component (`AbilitySystemComponent`, subobject `Ability Component`) and an optional `InputMappingContext` added at priority 0. No movement component: you add yours. Purely optional |
-| movement component | `UGMC_OrganicMovementCmp` (`Source/GMCCore/Public/Components/GMCOrganicMovementComponent.h`) for characters; `UGMC_MovementUtilityCmp` (`GMCMovementUtilityComponent.h`, same folder) for anything else | your subclass overrides the five hooks below and forwards them |
+| movement component | `UGMC_OrganicMovementCmp` (`Source/GMCCore/Public/Components/GMCOrganicMovementComponent.h`) for characters; `UGMC_MovementUtilityCmp` (`GMCMovementUtilityComponent.h`, same folder) for anything else | your subclass overrides the five hooks below (eight on 1.5+) and forwards them |
 | ability system component ("the ASC") | `UGMC_AbilitySystemComponent` (`Public/Components/GMCAbilityComponent.h`), a `UGameplayTasksComponent`, replicated by default | one per pawn. Set its `GMCMovementComponent` pointer (`UGMC_MovementUtilityCmp*`, `BlueprintReadWrite`) yourself before the bind. 1.4.1+ resolves a null pointer from the owner's `UGMC_MovementUtilityCmp` at the bind and binds nothing (Error) when there is none; 1.4.0 dereferenced it unchecked and crashed |
 
 **Timing.** `AGMC_Pawn::PostInitializeComponents` runs the bind, so your `BindReplicationData_Implementation` executes before any `BeginPlay`. The ASC reads `AttributeDataAssets` *during* the bind (`InstantiateAttributes`) and `StartingAbilities`, `AbilityMaps`, `StartingTags` in its own `BeginPlay`; `StartingEffects` go out from the server once the pawn has a controller. Fill all of them in class defaults, the constructor, or in the pawn's `PostInitializeComponents` before `Super`, identically on every machine (`gmas:gmas-rules`).
@@ -73,8 +73,10 @@ Regenerate project files, build (a source plugin compiles with the project), ope
 | `GenPredictionTick_Implementation(float DeltaTime)` | `Super`, your predicted logic, then `GenPredictionTick(DeltaTime)` |
 | `GenSimulationTick_Implementation(float DeltaTime)` | `Super`, then `GenSimulationTick(DeltaTime)` |
 | `GenAncillaryTick_Implementation(float DeltaTime, bool bLocalMove, bool bCombinedClientMove)` | `Super`, then `GenAncillaryTick(DeltaTime, bCombinedClientMove)`; `bLocalMove` is not forwarded |
+| `CL_OnAPMoveReceived_Implementation(FGMC_Move& APMove)` (1.5+, `Source/GMCCore/Public/Components/GMCReplicationComponent.h`) | `Super`, then `CL_OnAPMoveReceived(APMove.MetaData.Timestamp)`: acknowledges the task payloads that move carried and bounds the replay journal |
+| `CL_PreReplay_Implementation()`, `CL_PostReplay_Implementation()` (1.5+, same header) | `Super`, then `CL_OnPreReplay()` / `CL_OnPostReplay()`: one replay pass of the effect journal each |
 
-`UGMC_OrganicMovementCmp` implements four of the five itself (all but the ancillary tick), so always call `Super` first. Where the ASC call sits relative to your own logic inside a hook is yours to decide; keep it the same on every machine.
+`UGMC_OrganicMovementCmp` implements four of the five itself (all but the ancillary tick), and the two replay hooks too, so always call `Super` first. The three client hooks (1.5+) run on the owning client only; without `CL_OnAPMoveReceived` no task payload is ever acknowledged, so the resend cannot recover a lost move (a build that keeps payloads for resend anyway logs `[TaskResend] ... resend stopped` for each after 2 s), and without the replay pair the journal guesses replay passes from move times (`gmas:gmas-rules`). Where the ASC call sits relative to your own logic inside a hook is yours to decide; keep it the same on every machine.
 
 ```cpp
 // MyMovementCmp.h
@@ -93,6 +95,10 @@ public:
     virtual void GenPredictionTick_Implementation(float DeltaTime) override;
     virtual void GenSimulationTick_Implementation(float DeltaTime) override;
     virtual void GenAncillaryTick_Implementation(float DeltaTime, bool bLocalMove, bool bCombinedClientMove) override;
+    // GMAS 1.5+: client-only hooks.
+    virtual void CL_OnAPMoveReceived_Implementation(FGMC_Move& APMove) override;
+    virtual void CL_PreReplay_Implementation() override;
+    virtual void CL_PostReplay_Implementation() override;
 protected:
     UPROPERTY(Transient) TObjectPtr<UGMC_AbilitySystemComponent> AbilitySystem;
 };
@@ -127,6 +133,21 @@ void UMyMovementCmp::GenAncillaryTick_Implementation(float DeltaTime, bool bLoca
 {
     Super::GenAncillaryTick_Implementation(DeltaTime, bLocalMove, bCombinedClientMove);
     AbilitySystem->GenAncillaryTick(DeltaTime, bCombinedClientMove);
+}
+void UMyMovementCmp::CL_OnAPMoveReceived_Implementation(FGMC_Move& APMove)
+{
+    Super::CL_OnAPMoveReceived_Implementation(APMove);
+    AbilitySystem->CL_OnAPMoveReceived(APMove.MetaData.Timestamp);
+}
+void UMyMovementCmp::CL_PreReplay_Implementation()
+{
+    Super::CL_PreReplay_Implementation();
+    AbilitySystem->CL_OnPreReplay();
+}
+void UMyMovementCmp::CL_PostReplay_Implementation()
+{
+    Super::CL_PostReplay_Implementation();
+    AbilitySystem->CL_OnPostReplay();
 }
 ```
 
@@ -169,7 +190,7 @@ The same five events, in the movement component Blueprint (a child of `GMC_Organ
 1. Character Blueprint: *Add Component → GMC Ability System Component* (or parent the Blueprint to `GMAS Pawn`, which already has one).
 2. Movement component Blueprint: a variable of type *GMC Ability System Component*, filled from *Get Owner → Get Component by Class*.
 3. *Event Bind Replication Data*: call the parent, do your own binds, set the ASC's `GMCMovementComponent` (advanced-display, writable) to *Self*, then call the ASC's *Bind Replication Data* last.
-4. *Event Pre Local Move Execution*, *Event Gen Prediction Tick*, *Event Gen Simulation Tick*, *Event Gen Ancillary Tick*: parent call, then the ASC function of the same name with the event pins connected (`Delta Time`; the ancillary tick's `Combined Client Move`).
+4. *Event Pre Local Move Execution*, *Event Gen Prediction Tick*, *Event Gen Simulation Tick*, *Event Gen Ancillary Tick*: parent call, then the ASC function of the same name with the event pins connected (`Delta Time`; the ancillary tick's `Combined Client Move`). 1.5+: *Event CL On AP Move Received* → parent call, then the ASC's *CL On AP Move Received* with the move's timestamp (break the move struct to its meta data). `CL_OnPreReplay` / `CL_OnPostReplay` are not Blueprint-callable: forward the replay pair from a C++ movement component.
 5. Input: on the input action's *Started* event call the ASC's *Activate Ability* node (the display name of `QueueAbility`) with the `Input.*` tag and the *Input Action* pin connected; ability tasks that wait for key release read it.
 
 ## Attributes, tags, abilities
@@ -247,7 +268,7 @@ void AMyPawn::OnDash(const FInputActionInstance& Instance)
 
 - `GMC` and `GMCAbilitySystem` enabled in `.uproject`; GMAS is a submodule on `main` (or a pinned release) or a copied release; `Build.cs` lists `GMCCore`, `GMCAbilitySystem`, `GameplayTags` (and `EnhancedInput` for input).
 - Pawn derives from `AGMC_Pawn` or `AGMAS_Pawn`; controllers from `AGMC_PlayerController` / `AGMC_AIController`; one `AGMC_WorldTimeReplicator` is spawned.
-- The movement component overrides all five hooks, calls `Super` first in each, sets `GMCMovementComponent` (required on 1.4.0, recommended on 1.4.1+) and calls `BindReplicationData()` as the last line of its bind; `GenAncillaryTick` forwards `(DeltaTime, bCombinedClientMove)`.
+- The movement component overrides all five hooks (on 1.5+ also `CL_OnAPMoveReceived`, `CL_PreReplay`, `CL_PostReplay`), calls `Super` first in each, sets `GMCMovementComponent` (required on 1.4.0, recommended on 1.4.1+) and calls `BindReplicationData()` as the last line of its bind; `GenAncillaryTick` forwards `(DeltaTime, bCombinedClientMove)`.
 - `AttributeDataAssets`, `AbilityMaps`, `StartingAbilities`, `StartingEffects`, `StartingTags` are filled before the bind or in class defaults, identically on every machine.
 - Every attribute row has a deliberate clamp (`Max`, `MaxAttributeTag`, or `bClampMax` off) and `bGMCBound` only where predicted logic reads it.
 - Tags use the prefixes the pickers enforce: `Attribute.*`, `Ability.*` (the ability's own tag), `Input.*` (map key and `QueueAbility` argument).
