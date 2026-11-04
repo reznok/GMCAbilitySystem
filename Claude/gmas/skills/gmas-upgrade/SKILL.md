@@ -60,7 +60,7 @@ A project that touches these fails to build, or a mixed client/server pair stops
 | `float UGMCAbility::GetClientStartTime() const` | `double` | store it in a `double` (or cast) |
 | `float UGMCAbilityEffect::ClientEffectApplicationTime` | `double` | same |
 | `bool UGMCAbilityEffect::DoesOwnerHaveTagFromContainer(FGameplayTagContainer&)` (private) | `const FGameplayTagContainer&` | nothing outside GMAS |
-| `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout = 1.0f)` | `QueueServerOperation(int, float Timeout)`: no default; the component passes `UGMASNetworkTimingSettings::ServerOperationGraceSeconds` (new, 1 s) or 0 for pawns without a client. On `dev` after 1.4.1 a third parameter `bool bNotifyOwningClient = true` follows; the component passes `false` for pawns without a client, so no client RPC goes out for them | pass a timeout; tune the grace in Project Settings → GMC Ability System → Network Timing. Existing two-argument calls compile unchanged |
+| `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout = 1.0f)` | `QueueServerOperation(int, float Timeout)`: no default; the component passes `UGMASNetworkTimingSettings::ServerOperationGraceSeconds` (new, 1 s) or 0 for pawns without a client | pass a timeout; tune the grace in Project Settings → GMC Ability System → Network Timing |
 | `UGMCAbilityTaskBase::IsClientOrRemoteListenServerPawn()` | `DrivesPawnLocally()` (same answer); the old name is deprecated | rename in task subclasses |
 
 ### Tier 2: semantics changes (review your abilities)
@@ -171,6 +171,8 @@ Each row was a bug. Nothing to do unless your project relied on the old behaviou
 | Before | 1.5 | Do |
 |---|---|---|
 | `RPCConfirmAbilityActivation` and `RPCClientEndAbility` | replaced by `ClientAbilitySync` / `ServerAbilitySync` (private; one message struct for answers, ends and digests). Only a component subclass that overrode the old RPCs breaks | delete the overrides; use `OnAbilityEnded` / `OnAbilityCancelled` |
+| `FGMASBoundQueueV2::QueueServerOperation(int, float Timeout)`; a pawn without a client still got the client RPC, which ran on the server itself (`ClientQueuedOperations has N pending operations on server`, Error, then `Dropped client operation`, Warning) | a third parameter `bool bNotifyOwningClient = true`; the component passes `false` for pawns without a client, so no RPC goes out for them | nothing: two-argument calls compile unchanged |
+| `OperationDataCacheExpiration` was pruned only on clients, so a server kept one entry per cached operation forever | every payload removal (`RemovePayloadByID`, the acknowledgement, the grace force) drops its entry; one entry per id | nothing |
 | `TryActivateAbility(Class, ...)` | gained trailing defaulted parameters (`SourceOperationID`, `SourceCandidateIndex`, `bClientAuthorized`) | nothing for existing callers; an override or function pointer needs the new signature |
 | a server natural end only removed the client copy; a server refusal left it until the confirm timeout | a natural end runs `EndAbility` on the client (end event, `OnAbilityEnded`, chain window); a refusal is answered `Rejected` and the client copy is cancelled after one round trip | cosmetics and chain windows now fire on the client too: guard them like any live-move work; expect `CancelAbilityEvent` early, not 2 s later |
 | an orphan (an instance on one side only) lived on | digest and orphan ends: both sides end it (`[AbilityReconcile]`, Warning) | rework a design that relied on an unmatched instance surviving |
