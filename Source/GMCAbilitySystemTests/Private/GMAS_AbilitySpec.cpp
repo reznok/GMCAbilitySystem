@@ -237,10 +237,16 @@ void FGMASAbilitySpec::Define()
 			TestTrue("no payload allocated before the clock is ready", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount() == 0);
 			TestFalse("direct activation safely refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
 			TestEqual("no live ability can hold the gate", AbilityComp->GetActiveAbilityCount(UGMAS_TestAbility::StaticClass()), 0);
+			// The clock arrives inside the prediction tick: the hold ends there, the held input drains outside the move.
 			AbilityComp->UpdateStartupPredictionClockForTest(10.0);
+			TestFalse("hold ended by the move clock", AbilityComp->ShouldWaitForStartupClockForTest());
+			TestEqual("held input not drained inside the prediction tick", AbilityComp->GetStartupAbilityRequestCountForTest(), 1);
+			TestTrue("no payload allocated inside the prediction tick", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount() == 0);
+			AbilityComp->PreLocalMoveExecution();
 			TestEqual("startup requests drained", AbilityComp->GetStartupAbilityRequestCountForTest(), 0);
 			TestEqual("one operation allocated", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
 			AbilityComp->UpdateStartupPredictionClockForTest(11.0);
+			AbilityComp->PreLocalMoveExecution();
 			TestEqual("no second dispatch", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
 			TestTrue("activation works after initialization", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
 		});
@@ -306,6 +312,36 @@ void FGMASAbilitySpec::Define()
 			TestFalse("activation refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
 			AbilityComp->UpdateStartupPredictionClockForTest(3.0);
 			TestTrue("valid clock releases the gate", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+		});
+		It("a client that does not predict ends the hold and drains held input in PreLocalMoveExecution", [this]()
+		{
+			UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+			if (!TestNotNull("startup world", World)) return;
+			ON_SCOPE_EXIT { World->DestroyWorld(false); };
+			AActor* Owner = World->SpawnActor<AActor>();
+			if (!TestNotNull("startup owner", Owner)) return;
+			// The owning client's copy. Restored before the world goes away.
+			Owner->SetRole(ROLE_AutonomousProxy);
+			ON_SCOPE_EXIT { Owner->SetRole(ROLE_Authority); };
+			AbilityComp->RemoveFromRoot();
+			AbilityComp = NewObject<UGMC_AbilitySystemComponent>(Owner);
+			AbilityComp->AddToRoot();
+			AbilityComp->GMCMovementComponent = MoveCmp;
+			AbilityComp->BindReplicationData();
+			if (!TestFalse("no authority", AbilityComp->HasAuthority())) return;
+			AbilityComp->QueueAbility(AbilityTag, nullptr, true);
+			TestTrue("held while the client predicts", AbilityComp->ShouldWaitForStartupClockForTest());
+			TestEqual("held input kept", AbilityComp->GetStartupAbilityRequestCountForTest(), 1);
+			// GMC turns prediction off itself while the pawn is physics-simulated: no prediction or ancillary tick then.
+			MoveCmp->bUseClientPrediction = false;
+			TestFalse("no hold for a client that does not predict", AbilityComp->ShouldWaitForStartupClockForTest());
+			TestEqual("held input waits for a point outside the move", AbilityComp->GetStartupAbilityRequestCountForTest(), 1);
+			TestTrue("no payload allocated yet", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount() == 0);
+			AbilityComp->PreLocalMoveExecution();
+			TestEqual("held input drained", AbilityComp->GetStartupAbilityRequestCountForTest(), 0);
+			TestEqual("one operation allocated", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
+			MoveCmp->bUseClientPrediction = true;
+			TestFalse("the hold stays ended once the client predicts again", AbilityComp->ShouldWaitForStartupClockForTest());
 		});
 	});
 

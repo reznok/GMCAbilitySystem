@@ -2538,8 +2538,12 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->MoveTimestampOverrideForTest = 1.01;
 			AbilityComp->GenPredictionTick(0.f);
 			TestEqual("Move 2 dispatched payload 6", MovementDispatches.FindRef(106), 1);
+			TestEqual("Move 2 did not run the copy of payload 5 again", MovementDispatches.FindRef(105), 1);
+			TestEqual("No ancillary dispatch before the ancillary tick", AncillaryDispatches.Num(), 0);
 			AbilityComp->GenAncillaryTick(0.f, false);
 			TestEqual("The ancillary pass dispatched the last move's payload", AncillaryDispatches.FindRef(106), 1);
+			// An ability that activates outside the movement tick reads its payloads from the ancillary pass only.
+			TestEqual("The ancillary pass dispatched the first move's payload", AncillaryDispatches.FindRef(105), 1);
 			TestTrue("Seq 5 marked", AbilityComp->IsTaskDataSeqDispatchedForTest(5));
 			TestTrue("Seq 6 marked", AbilityComp->IsTaskDataSeqDispatchedForTest(6));
 
@@ -2551,6 +2555,8 @@ void FGMASBugFixSpec::Define()
 
 			TestEqual("Payload 5 dispatched once by the moves", MovementDispatches.FindRef(105), 1);
 			TestEqual("Payload 6 dispatched once by the moves", MovementDispatches.FindRef(106), 1);
+			TestEqual("Payload 5 dispatched once by the ancillary passes", AncillaryDispatches.FindRef(105), 1);
+			TestEqual("Payload 6 dispatched once by the ancillary passes", AncillaryDispatches.FindRef(106), 1);
 			AbilityComp->TaskDataDispatchHookForTest = nullptr;
 		});
 

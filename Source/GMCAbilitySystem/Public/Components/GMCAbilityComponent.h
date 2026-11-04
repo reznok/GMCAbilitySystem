@@ -104,6 +104,26 @@ struct FGMCEffectSnapshot
 	FGameplayTag EffectTag;
 };
 
+// A task payload kept past the move that carried it: on the client until the server acknowledges it (resend), on the
+// server until the end of the frame. Reflected so that the object references inside the payload (a target data
+// object, for one) are known to the garbage collector for as long as the copy lives.
+USTRUCT()
+struct FGMASSequencedTaskData
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FInstancedStruct Payload;
+
+	// Client-issued sequence number, 0 for an unsequenced payload.
+	UPROPERTY()
+	int32 Seq = 0;
+
+	// Client: FPlatformTime::Seconds() when the payload was queued. Unused on the server.
+	UPROPERTY()
+	double QueuedRealTime = 0.0;
+};
+
 UENUM(BlueprintType)
 enum class EGMCAbilityEffectQueueType : uint8
 {
@@ -935,12 +955,17 @@ protected:
 	// Sync'd containers for abilities and effects
 	FGMCAbilityData AbilityData;
 	
-	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
+	// Transient UPROPERTY, as are the resend slots: a payload can hold object references (target data), which the
+	// garbage collector must see while a slot holds them.
+	UPROPERTY(Transient)
+	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 
 	// A move carries one payload, and is sent once. Each later move also carries copies of the payloads that the
 	// server did not acknowledge yet, so a lost move delays a payload instead of losing it. Read by the server only.
 	// Empty = invalid struct: 1 bit when GMC sends it in full, and no allocation per move.
+	UPROPERTY(Transient)
 	FInstancedStruct TaskDataResendA;
+	UPROPERTY(Transient)
 	FInstancedStruct TaskDataResendB;
 
 	// Client-issued sequence number of the payload in each slot, 0 when the slot is empty. The server dispatches each
@@ -1070,17 +1095,13 @@ private:
 	// Add the starting ability tags to GrantedAbilities at start
 	void InitializeStartingAbilities();
 	
+	UPROPERTY(Transient)
 	TArray<FInstancedStruct> QueuedTaskData;
 
-	struct FUnackedTaskData
-	{
-		FInstancedStruct Payload;
-		int32 Seq = 0;
-		double QueuedRealTime = 0.0;
-	};
-
-	// Client: payloads sent and not acknowledged yet, oldest first.
-	TArray<FUnackedTaskData> UnackedTaskData;
+	// Client: payloads sent and not acknowledged yet, oldest first. Kept up to the resend window (2 s): reflected, so
+	// that an object a payload references is not collected while its copy waits to be resent.
+	UPROPERTY(Transient)
+	TArray<FGMASSequencedTaskData> UnackedTaskData;
 
 	// Client: set by the first CL_OnAPMoveReceived. The acknowledgement needs that hook, which the game's movement
 	// component forwards; until it has been seen, a payload is sent once and never kept for resend.
@@ -1102,13 +1123,18 @@ private:
 	};
 
 	// Server, remote client pawn: the payloads of the move being executed, oldest first. Built on the first dispatch
-	// of the move, so both dispatch passes see the same list. Marked as dispatched when the next move rebuilds it or
-	// the ancillary tick clears the slots.
+	// of the move, so its sub-steps and the ancillary pass see the same list. Points into the bound slots.
 	TArray<FMoveTaskData, TInlineAllocator<3>> MoveTaskData;
 	bool bMoveTaskDataBuilt = false;
-	// ActionTimer (the move time) the list was built at. GMC can run several client moves in one server frame, each
-	// with its own slots, and clears them once per frame: a movement dispatch at another time rebuilds the list.
+	// ActionTimer (the move time) the list was built at. A movement dispatch at another time is the next client move
+	// of the same frame: the list moves into FrameTaskData and is rebuilt from the new slots.
 	double MoveTaskDataActionTimer = 0.0;
+
+	// Server, remote client pawn: copies of the payloads of the earlier moves of this frame, which their movement pass
+	// dispatched and the ancillary pass has not seen yet (the bound slots now hold the next move's payloads). The
+	// ancillary pass dispatches them with the last move's list; their numbers are marked dispatched at the end of it.
+	UPROPERTY(Transient)
+	TArray<FGMASSequencedTaskData> FrameTaskData;
 
 	// Server: highest sequence number dispatched, and bit N set when number (High - N) was dispatched.
 	int32 DispatchedTaskDataSeqHigh = 0;
@@ -1116,7 +1142,10 @@ private:
 
 	bool IsRemoteClientPawnOnServer() const;
 	void BuildMoveTaskData();
-	// Marks the sequenced payloads of the list dispatched and empties it.
+	// A new client move in the same frame: copies the current list into FrameTaskData and empties it.
+	void CarryMoveTaskDataIntoFrame();
+	// End of the ancillary pass: marks the sequenced payloads of the move list and of FrameTaskData dispatched, and
+	// empties both.
 	void ReleaseMoveTaskData();
 	bool IsTaskDataSeqDispatched(int32 Seq) const;
 	void MarkTaskDataSeqDispatched(int32 Seq);
@@ -1170,12 +1199,21 @@ private:
 	TArray<FGMCEffectSnapshot> StartupEffectSnapshots;
 	bool bStartupPredictionClockReady = false;
 	bool ShouldWaitForStartupClock() const;
+	// A client whose movement component does not predict: GMC runs no prediction tick for it, so no move clock.
+	bool IsNonPredictingClient() const;
 	void UpdateStartupPredictionClock(double Timestamp);
-	// Ends the hold and dispatches what waited for it.
+	// Ends the hold and restores the held effect snapshots. The held ability requests drain later, outside the move
+	// (DrainStartupAbilityRequests): a client-auth candidate must not activate inside a prediction tick.
 	void ReleaseStartupHold();
 	// Ancillary tick: ends the hold of an authority pawn that has no controller. Such a pawn runs no move, so no
 	// move timestamp would ever end it.
 	void ReleaseStartupHoldWithoutMoveClock();
+	// Ends the hold of a client that does not predict (IsNonPredictingClient).
+	void ReleaseStartupHoldWithoutPrediction();
+	// Re-queues the held ability requests once the hold has ended. Called outside the move only.
+	void DrainStartupAbilityRequests();
+	// Start of the ancillary tick and of PreLocalMoveExecution: the releases that need no move clock, then the drain.
+	void ServiceStartupHoldOutsideMove();
 
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
@@ -1717,7 +1755,7 @@ public:
 	// client path; the server path needs IsRemoteClientPawnOnServer, which the GMC net-role helpers cannot answer here.
 	int32 GetUnackedTaskDataCountForTest() const { return UnackedTaskData.Num(); }
 	// Moves every pending payload back in time, as if it had been queued Seconds earlier.
-	void AgeUnackedTaskDataForTest(double Seconds) { for (FUnackedTaskData& Entry : UnackedTaskData) { Entry.QueuedRealTime -= Seconds; } }
+	void AgeUnackedTaskDataForTest(double Seconds) { for (FGMASSequencedTaskData& Entry : UnackedTaskData) { Entry.QueuedRealTime -= Seconds; } }
 	bool bForceRemoteClientPawnOnServerForTest = false;
 	// GMC writes the bound slots from the client move before the server runs it.
 	void SetTaskDataSlotsForTest(const FInstancedStruct& Main, int32 MainSeq, const FInstancedStruct& ResendA, int32 ResendASeq,
@@ -1730,9 +1768,10 @@ public:
 	// Receives every payload DispatchTaskData is handed, before it reads it.
 	TFunction<void(const FInstancedStruct& /*Payload*/, bool /*bFromMovement*/)> TaskDataDispatchHookForTest;
 
-	// Startup hold seam: the ancillary-tick release, without the rest of GenAncillaryTick (its server branch reads
-	// GMC net-role state that the orphan stub cannot provide).
-	void ReleaseStartupHoldWithoutMoveClockForTest() { ReleaseStartupHoldWithoutMoveClock(); }
+	// Startup hold seam: what the ancillary tick runs first (the releases without a move clock, then the drain of the
+	// held requests), without the rest of GenAncillaryTick (its server branch reads GMC net-role state that the
+	// orphan stub cannot provide).
+	void ReleaseStartupHoldWithoutMoveClockForTest() { ServiceStartupHoldOutsideMove(); }
 	bool ShouldWaitForStartupClockForTest() const { return ShouldWaitForStartupClock(); }
 
 	// Test seams for the replay journal: the headless harness has no owner pawn and no move timestamps.

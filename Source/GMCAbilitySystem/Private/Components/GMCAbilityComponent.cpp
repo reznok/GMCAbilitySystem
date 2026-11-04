@@ -331,8 +331,9 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	// Caution if you override Ancillarytick, this value should wrap up the override.
 	bInAncillaryTick = true;
 
-	// A pawn that runs no move never gets the clock that ends the startup hold.
-	ReleaseStartupHoldWithoutMoveClock();
+	// A pawn that runs no move never gets the clock that ends the startup hold. Input held by the hold drains here,
+	// outside the prediction tick, once the hold has ended.
+	ServiceStartupHoldOutsideMove();
 
 	// Drain any PredictedQueued operations buffered since the last tick.
 	{
@@ -1003,7 +1004,15 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 
 bool UGMC_AbilitySystemComponent::ShouldWaitForStartupClock() const
 {
-	return GetOwner() != nullptr && !bStartupPredictionClockReady;
+	// A client that does not predict runs no prediction tick, so no move clock would ever end its hold.
+	return GetOwner() != nullptr && !bStartupPredictionClockReady && !IsNonPredictingClient();
+}
+
+bool UGMC_AbilitySystemComponent::IsNonPredictingClient() const
+{
+	// GMC executes a client's own moves (prediction and ancillary ticks) only while it predicts; it turns prediction
+	// off itself while the pawn is physics-simulated with server-authoritative replication.
+	return GetOwnerRole() == ROLE_AutonomousProxy && GMCMovementComponent && !GMCMovementComponent->IsUsingClientPrediction();
 }
 
 void UGMC_AbilitySystemComponent::UpdateStartupPredictionClock(double Timestamp)
@@ -1037,13 +1046,42 @@ void UGMC_AbilitySystemComponent::ReleaseStartupHoldWithoutMoveClock()
 	ReleaseStartupHold();
 }
 
+void UGMC_AbilitySystemComponent::ReleaseStartupHoldWithoutPrediction()
+{
+	// ShouldWaitForStartupClock already lets such a client through. Ending the hold for good keeps it ended if the
+	// client predicts again later, and restores the effect snapshots that waited for it.
+	if (bStartupPredictionClockReady || GetOwner() == nullptr || !IsNonPredictingClient())
+	{
+		return;
+	}
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[SpawnClock] %s does not predict: startup hold ended without a move clock."), *GetNameSafe(GetOwner()));
+	ReleaseStartupHold();
+}
+
+void UGMC_AbilitySystemComponent::ServiceStartupHoldOutsideMove()
+{
+	ReleaseStartupHoldWithoutMoveClock();
+	ReleaseStartupHoldWithoutPrediction();
+	DrainStartupAbilityRequests();
+}
+
 void UGMC_AbilitySystemComponent::ReleaseStartupHold()
 {
 	bStartupPredictionClockReady = true;
-	// Restore effects before input: their tags can gate the deferred activations.
+	// Restore effects before input: their tags can gate the deferred activations. The held input itself drains in
+	// DrainStartupAbilityRequests, at the next ancillary tick or PreLocalMoveExecution: this can run inside the
+	// prediction tick, where a client-auth candidate must not activate (bActivateOnMovementTick=false).
 	TArray<FGMCEffectSnapshot> Snapshots = MoveTemp(StartupEffectSnapshots);
 	StartupEffectSnapshots.Reset();
 	Client_ReceiveActiveEffectsSnapshot_Implementation(Snapshots);
+}
+
+void UGMC_AbilitySystemComponent::DrainStartupAbilityRequests()
+{
+	if (StartupAbilityRequests.IsEmpty() || ShouldWaitForStartupClock())
+	{
+		return;
+	}
 	// Move out before dispatch: activation can re-enter QueueAbility.
 	TArray<FInstancedStruct> Requests = MoveTemp(StartupAbilityRequests);
 	TMap<FGameplayTag, bool> ConcurrencyChecks = MoveTemp(StartupConcurrencyChecks);
@@ -1059,7 +1097,8 @@ void UGMC_AbilitySystemComponent::ReleaseStartupHold()
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction, bool bPreventConcurrentActivation)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
-	if (ShouldWaitForStartupClock())
+	// Held input that waits for its drain outside the move keeps a later request behind it, in order.
+	if (ShouldWaitForStartupClock() || !StartupAbilityRequests.IsEmpty())
 	{
 		// Coalesce held input before spawn initialization: no IDs, cooldowns or instances yet.
 		if (InputTag.IsValid())
@@ -1660,6 +1699,10 @@ void UGMC_AbilitySystemComponent::DrainPendingPredictedOperations()
 
 void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 {
+	// Before the bound queue fills this move's operation slot, so a drained request leaves in this move. Also the
+	// only GMAS hook a client that does not predict gets: GMC runs neither its prediction nor its ancillary tick.
+	ServiceStartupHoldOutsideMove();
+
 	if (QueuedTaskData.Num() > 0)
 	{
 		// FIFO. Tasks chained inside a single BP graph push payloads in the
@@ -1685,7 +1728,10 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 			// in its own move. The number still lets the server dispatch it once.
 			if (bAPMoveTimestampSeen)
 			{
-				UnackedTaskData.Add({TaskData, TaskDataSeq, FPlatformTime::Seconds()});
+				FGMASSequencedTaskData& Entry = UnackedTaskData.AddDefaulted_GetRef();
+				Entry.Payload = TaskData;
+				Entry.Seq = TaskDataSeq;
+				Entry.QueuedRealTime = FPlatformTime::Seconds();
 			}
 		}
 	}
@@ -1722,7 +1768,7 @@ void UGMC_AbilitySystemComponent::FillTaskDataResendSlots()
 	const double Now = FPlatformTime::Seconds();
 	for (int32 Index = UnackedTaskData.Num() - 1; Index >= 0; --Index)
 	{
-		const FUnackedTaskData& Entry = UnackedTaskData[Index];
+		const FGMASSequencedTaskData& Entry = UnackedTaskData[Index];
 		if (Now - Entry.QueuedRealTime > MaxResendSeconds || Index < UnackedTaskData.Num() - MaxUnackedTaskData)
 		{
 			const FGMCAbilityTaskData* Header = Entry.Payload.GetPtr<FGMCAbilityTaskData>();
@@ -1734,7 +1780,7 @@ void UGMC_AbilitySystemComponent::FillTaskDataResendSlots()
 	}
 
 	// Oldest first: the server dispatches in sequence order, so the oldest copy must not wait behind a newer one.
-	for (const FUnackedTaskData& Entry : UnackedTaskData)
+	for (const FGMASSequencedTaskData& Entry : UnackedTaskData)
 	{
 		if (Entry.Seq == TaskDataSeq)
 		{
@@ -1781,7 +1827,7 @@ void UGMC_AbilitySystemComponent::CL_OnAPMoveReceived(double APMoveTimestamp)
 			const int32 SeqA = GMCMovementComponent->GetBoundInt(TaskDataSeqBindIndex, Move.InputState);
 			const int32 SeqB = GMCMovementComponent->GetBoundInt(TaskDataResendASeqBindIndex, Move.InputState);
 			const int32 SeqC = GMCMovementComponent->GetBoundInt(TaskDataResendBSeqBindIndex, Move.InputState);
-			UnackedTaskData.RemoveAll([SeqA, SeqB, SeqC](const FUnackedTaskData& Entry)
+			UnackedTaskData.RemoveAll([SeqA, SeqB, SeqC](const FGMASSequencedTaskData& Entry)
 			{
 				return Entry.Seq == SeqA || Entry.Seq == SeqB || Entry.Seq == SeqC;
 			});
@@ -3264,6 +3310,15 @@ void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 
 void UGMC_AbilitySystemComponent::ReleaseMoveTaskData()
 {
+	// Both passes have seen these payloads: the movement pass of their own move, and the ancillary pass that ends now.
+	for (const FGMASSequencedTaskData& Item : FrameTaskData)
+	{
+		if (Item.Seq > 0)
+		{
+			MarkTaskDataSeqDispatched(Item.Seq);
+		}
+	}
+	FrameTaskData.Reset();
 	if (!bMoveTaskDataBuilt)
 	{
 		return;
@@ -3274,6 +3329,21 @@ void UGMC_AbilitySystemComponent::ReleaseMoveTaskData()
 		{
 			MarkTaskDataSeqDispatched(Item.Seq);
 		}
+	}
+	MoveTaskData.Reset();
+	bMoveTaskDataBuilt = false;
+}
+
+
+void UGMC_AbilitySystemComponent::CarryMoveTaskDataIntoFrame()
+{
+	// By value: the bound slots the list points into are overwritten by the next move. Reset keeps the capacity, so a
+	// frame allocates only for the payloads it really carries.
+	for (const FMoveTaskData& Item : MoveTaskData)
+	{
+		FGMASSequencedTaskData& Copy = FrameTaskData.AddDefaulted_GetRef();
+		Copy.Payload = *Item.Payload;
+		Copy.Seq = Item.Seq;
 	}
 	MoveTaskData.Reset();
 	bMoveTaskDataBuilt = false;
@@ -3362,7 +3432,9 @@ void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 			}
 			return;
 		}
-		if (IsTaskDataSeqDispatched(Seq) || MoveTaskData.ContainsByPredicate([Seq](const FMoveTaskData& Item) { return Item.Seq == Seq; }))
+		// An earlier move of this frame carried it too: its movement pass ran it, and the ancillary pass runs its copy.
+		if (IsTaskDataSeqDispatched(Seq) || MoveTaskData.ContainsByPredicate([Seq](const FMoveTaskData& Item) { return Item.Seq == Seq; })
+			|| FrameTaskData.ContainsByPredicate([Seq](const FGMASSequencedTaskData& Item) { return Item.Seq == Seq; }))
 		{
 			return;
 		}
@@ -3400,19 +3472,39 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 		return;
 	}
 
-	// GMC runs one prediction tick per client move, several of them in one server frame, and the ancillary tick
-	// that clears the slots once per frame. A movement dispatch at another move time is the next client move: its
-	// slots hold other payloads, and the previous list was dispatched by its own move. The sub-steps of one move
-	// share its time and reuse its list; so does the ancillary pass, which dispatches the frame's last move.
+	// Each payload reaches the movement pass of its own move and the ancillary pass of the frame, once each. A frame
+	// can run several client moves (one prediction tick each) before the ancillary tick that clears the slots. A
+	// movement dispatch at another move time is the next client move: its slots hold other payloads, and the previous
+	// list, already dispatched by its own move, is kept by value for the ancillary pass. The sub-steps of one move
+	// share its time and reuse its list.
 	if (bMoveTaskDataBuilt && bFromMovement && MoveTaskDataActionTimer != ActionTimer)
 	{
-		ReleaseMoveTaskData();
+		CarryMoveTaskDataIntoFrame();
 	}
 	if (!bMoveTaskDataBuilt)
 	{
 		BuildMoveTaskData();
 	}
-	for (const FMoveTaskData& Item : MoveTaskData)
+	if (bFromMovement || FrameTaskData.IsEmpty())
+	{
+		for (const FMoveTaskData& Item : MoveTaskData)
+		{
+			DispatchTaskData(*Item.Payload, bFromMovement);
+		}
+		return;
+	}
+
+	// Ancillary pass after several moves: the earlier moves' copies and the last move's list, in sequence order.
+	// Neither array changes during the dispatch: only a movement pass carries a list into FrameTaskData.
+	TArray<FMoveTaskData, TInlineAllocator<8>> FrameList;
+	FrameList.Reserve(FrameTaskData.Num() + MoveTaskData.Num());
+	for (const FGMASSequencedTaskData& Item : FrameTaskData)
+	{
+		FrameList.Add({Item.Seq, &Item.Payload});
+	}
+	FrameList.Append(MoveTaskData);
+	FrameList.StableSort([](const FMoveTaskData& Lhs, const FMoveTaskData& Rhs) { return Lhs.Seq < Rhs.Seq; });
+	for (const FMoveTaskData& Item : FrameList)
 	{
 		DispatchTaskData(*Item.Payload, bFromMovement);
 	}
