@@ -2462,6 +2462,123 @@ void FGMASBugFixSpec::Define()
 			TestFalse("Seq 2 new after the restart", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
 		});
 	});
+
+	// The client acknowledges a payload through CL_OnAPMoveReceived, a hook the game's movement component forwards.
+	// Without it, a payload is sent once, as before the resend existed. The orphan component is a client.
+	Describe("TaskData resend acknowledgement hook", [this]()
+	{
+		// TaskID stays -1: the dispatch reads nothing further, so no task or ability is needed.
+		auto MakePayload = [](int AbilityID)
+		{
+			FGMCAbilityTaskData Data;
+			Data.AbilityID = AbilityID;
+			Data.TaskType = EGMCAbilityTaskDataType::Progress;
+			return FInstancedStruct::Make(Data);
+		};
+
+		It("Before the first hook call, a client payload is not kept for resend", [this, MakePayload]()
+		{
+			AbilityComp->QueueTaskData(MakePayload(101));
+			AbilityComp->PreLocalMoveExecution();
+			TestEqual("Nothing kept for resend", AbilityComp->GetUnackedTaskDataCountForTest(), 0);
+
+			// Past the 2 s resend window: nothing pending, so no "not acknowledged" Warning.
+			AbilityComp->AgeUnackedTaskDataForTest(3.0);
+			AbilityComp->PreLocalMoveExecution();
+			TestEqual("Still nothing pending", AbilityComp->GetUnackedTaskDataCountForTest(), 0);
+		});
+
+		It("After the hook is seen, a payload is kept until acknowledged and dropped after the window", [this, MakePayload]()
+		{
+			AbilityComp->CL_OnAPMoveReceived(0.5);
+			AbilityComp->QueueTaskData(MakePayload(102));
+			AbilityComp->PreLocalMoveExecution();
+			TestEqual("Kept for resend", AbilityComp->GetUnackedTaskDataCountForTest(), 1);
+
+			AbilityComp->AgeUnackedTaskDataForTest(3.0);
+			AddExpectedErrorPlain(TEXT("not acknowledged after"), EAutomationExpectedErrorFlags::Contains, 1);
+			AbilityComp->PreLocalMoveExecution();
+			TestEqual("Dropped once the window ended", AbilityComp->GetUnackedTaskDataCountForTest(), 0);
+		});
+	});
+
+	// GMC runs one prediction tick per client move, several in one server frame, and one ancillary tick per frame.
+	Describe("TaskData slots of several client moves in one server frame", [this]()
+	{
+		auto MakePayload = [](int AbilityID)
+		{
+			FGMCAbilityTaskData Data;
+			Data.AbilityID = AbilityID;
+			Data.TaskType = EGMCAbilityTaskDataType::Progress;
+			return FInstancedStruct::Make(Data);
+		};
+
+		It("Each payload is dispatched by the moves exactly once", [this, MakePayload]()
+		{
+			AbilityComp->bForceRemoteClientPawnOnServerForTest = true;
+			AbilityComp->bUseMoveTimestampOverrideForTest = true;
+			TMap<int, int> MovementDispatches;
+			TMap<int, int> AncillaryDispatches;
+			AbilityComp->TaskDataDispatchHookForTest = [&MovementDispatches, &AncillaryDispatches](const FInstancedStruct& Payload, bool bFromMovement)
+			{
+				const FGMCAbilityTaskData* Data = Payload.GetPtr<FGMCAbilityTaskData>();
+				if (!Data || *Data == FGMCAbilityTaskData{}) { return; }
+				++(bFromMovement ? MovementDispatches : AncillaryDispatches).FindOrAdd(Data->AbilityID);
+			};
+			const FInstancedStruct Empty = FInstancedStruct::Make(FGMCAbilityTaskData{});
+			const FInstancedStruct P5 = MakePayload(105);
+			const FInstancedStruct P6 = MakePayload(106);
+
+			// Frame 1, move 1: payload 5.
+			AbilityComp->SetTaskDataSlotsForTest(P5, 5, FInstancedStruct(), 0, FInstancedStruct(), 0);
+			AbilityComp->MoveTimestampOverrideForTest = 1.00;
+			AbilityComp->GenPredictionTick(0.f);
+			// Frame 1, move 2: payload 6, and a copy of 5 that the client had no acknowledgement for yet.
+			AbilityComp->SetTaskDataSlotsForTest(P6, 6, P5, 5, FInstancedStruct(), 0);
+			AbilityComp->MoveTimestampOverrideForTest = 1.01;
+			AbilityComp->GenPredictionTick(0.f);
+			TestEqual("Move 2 dispatched payload 6", MovementDispatches.FindRef(106), 1);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			TestEqual("The ancillary pass dispatched the last move's payload", AncillaryDispatches.FindRef(106), 1);
+			TestTrue("Seq 5 marked", AbilityComp->IsTaskDataSeqDispatchedForTest(5));
+			TestTrue("Seq 6 marked", AbilityComp->IsTaskDataSeqDispatchedForTest(6));
+
+			// Frame 2, move 3: copies of 5 and 6 only.
+			AbilityComp->SetTaskDataSlotsForTest(Empty, 0, P5, 5, P6, 6);
+			AbilityComp->MoveTimestampOverrideForTest = 1.02;
+			AbilityComp->GenPredictionTick(0.f);
+			AbilityComp->GenAncillaryTick(0.f, false);
+
+			TestEqual("Payload 5 dispatched once by the moves", MovementDispatches.FindRef(105), 1);
+			TestEqual("Payload 6 dispatched once by the moves", MovementDispatches.FindRef(106), 1);
+			AbilityComp->TaskDataDispatchHookForTest = nullptr;
+		});
+
+		It("A payload carried only by the second move of the frame is dispatched in that move", [this, MakePayload]()
+		{
+			AbilityComp->bForceRemoteClientPawnOnServerForTest = true;
+			AbilityComp->bUseMoveTimestampOverrideForTest = true;
+			TMap<int, int> MovementDispatches;
+			AbilityComp->TaskDataDispatchHookForTest = [&MovementDispatches](const FInstancedStruct& Payload, bool bFromMovement)
+			{
+				const FGMCAbilityTaskData* Data = Payload.GetPtr<FGMCAbilityTaskData>();
+				if (!bFromMovement || !Data || *Data == FGMCAbilityTaskData{}) { return; }
+				++MovementDispatches.FindOrAdd(Data->AbilityID);
+			};
+			const FInstancedStruct Empty = FInstancedStruct::Make(FGMCAbilityTaskData{});
+
+			AbilityComp->SetTaskDataSlotsForTest(Empty, 0, FInstancedStruct(), 0, FInstancedStruct(), 0);
+			AbilityComp->MoveTimestampOverrideForTest = 2.00;
+			AbilityComp->GenPredictionTick(0.f);
+			AbilityComp->SetTaskDataSlotsForTest(MakePayload(107), 7, FInstancedStruct(), 0, FInstancedStruct(), 0);
+			AbilityComp->MoveTimestampOverrideForTest = 2.01;
+			AbilityComp->GenPredictionTick(0.f);
+			TestEqual("Move 2 dispatched payload 7", MovementDispatches.FindRef(107), 1);
+			AbilityComp->GenAncillaryTick(0.f, false);
+			TestTrue("Seq 7 marked", AbilityComp->IsTaskDataSeqDispatchedForTest(7));
+			AbilityComp->TaskDataDispatchHookForTest = nullptr;
+		});
+	});
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

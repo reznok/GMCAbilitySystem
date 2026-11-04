@@ -128,6 +128,8 @@ void UGMCAbilityEffect::StartEffect()
 		|| EffectData.EffectType == EGMASEffectType::Persistent
 		|| (EffectData.EffectType == EGMASEffectType::Periodic && EffectData.bPeriodicFirstTick))
 	{
+		// The replay re-runs this block (conditions included) only when the live run reached it.
+		bReplayStartModifiersApplied = true;
 		for (int i = 0; i < EffectData.Modifiers.Num(); i++)
 		{
 			FGMCAttributeModifier ModCpy = EffectData.Modifiers[i];
@@ -730,7 +732,8 @@ void UGMCAbilityEffect::ReplayStartWrites()
 	const bool bAppliesModifiersAtStart = EffectData.EffectType == EGMASEffectType::Instant
 		|| EffectData.EffectType == EGMASEffectType::Persistent
 		|| (EffectData.EffectType == EGMASEffectType::Periodic && EffectData.bPeriodicFirstTick);
-	if (!bAppliesModifiersAtStart) return;
+	// An OnEffectApplied listener that ended the effect returned before the start modifiers: none to repeat.
+	if (!bAppliesModifiersAtStart || !bReplayStartModifiersApplied) return;
 
 	if (IsEffectModifiersRegisterInHistory())
 	{

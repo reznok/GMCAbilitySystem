@@ -470,6 +470,9 @@ protected:
 private:
 	bool bHasStarted = false;
 	bool bHasAppliedEffect = false;
+	// True once StartEffect reached its start-modifier block. An OnEffectApplied listener can end the effect
+	// after the start stamp and before that block: ReplayStartWrites must not apply modifiers the live run never did.
+	bool bReplayStartModifiersApplied = false;
 
 	// Bound tags that StartEffect added and EndEffect removed, so a replay repeats the same decision.
 	TArray<FGameplayTag> ReplayAddedTags;

@@ -10,6 +10,7 @@
 #include "Effects/GMCAbilityEffect.h"
 #include "Attributes/GMCAttributeModifier.h"
 #include "UGMAS_TestMovementCmp.h"
+#include "UGMAS_TestEventRecorder.h"
 #include "GMAS_TestHelpers.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -361,6 +362,39 @@ void FGMASReplayJournalSpec::Define()
 			TestEqual("Write pruned", AbilityComp->GetReplayBoundEffectIDWriteCountForTest(), 0);
 
 			Effect->RemoveFromRoot();
+		});
+	});
+
+	Describe("Effect ended by an OnEffectApplied listener", [this]()
+	{
+		It("gets no permanent modifier from the replay, as the live run applied none", [this]()
+		{
+			UGMAS_TestEventRecorder* Recorder = NewObject<UGMAS_TestEventRecorder>(GetTransientPackage());
+			Recorder->AddToRoot();
+			Recorder->Bind(AbilityComp);
+			Recorder->bRemoveOnApplied = true;
+
+			TickMove(9.00, false);
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+			// Instant: bNegateEffectAtEnd is false, the permanent path that writes RawValue.
+			AbilityComp->ApplyAbilityEffect(Effect, MakeData(EGMASEffectType::Instant, -30.f));
+			TestTrue("Live: the listener ended it", Effect->bCompleted);
+			TickMove(9.01, false);
+			TickMove(9.02, false);
+			TestEqual("Live: Value untouched", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
+			TestEqual("Live: RawValue untouched", AbilityComp->GetAttributeRawValue(HealthTag), 100.f);
+
+			// Server source = move 9.00, before the effect.
+			RewindBoundState(100.f, 100.f, false);
+			TickMove(9.01, true);
+			TickMove(9.02, true);
+			TestEqual("Replay: Value untouched", AbilityComp->GetAttributeValueByTag(HealthTag), 100.f);
+			TestEqual("Replay: RawValue untouched", AbilityComp->GetAttributeRawValue(HealthTag), 100.f);
+			TestFalse("Replay: tag not left behind", AbilityComp->HasActiveTag(BurningTag));
+
+			Effect->RemoveFromRoot();
+			Recorder->RemoveFromRoot();
 		});
 	});
 }

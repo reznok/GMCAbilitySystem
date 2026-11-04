@@ -1082,6 +1082,10 @@ private:
 	// Client: payloads sent and not acknowledged yet, oldest first.
 	TArray<FUnackedTaskData> UnackedTaskData;
 
+	// Client: set by the first CL_OnAPMoveReceived. The acknowledgement needs that hook, which the game's movement
+	// component forwards; until it has been seen, a payload is sent once and never kept for resend.
+	bool bAPMoveTimestampSeen = false;
+
 	int32 LastIssuedTaskDataSeq = 0;
 
 	int32 TaskDataSeqBindIndex = -1;
@@ -1098,9 +1102,13 @@ private:
 	};
 
 	// Server, remote client pawn: the payloads of the move being executed, oldest first. Built on the first dispatch
-	// of the move, so both dispatch passes see the same list. Marked as dispatched when the move ends.
+	// of the move, so both dispatch passes see the same list. Marked as dispatched when the next move rebuilds it or
+	// the ancillary tick clears the slots.
 	TArray<FMoveTaskData, TInlineAllocator<3>> MoveTaskData;
 	bool bMoveTaskDataBuilt = false;
+	// ActionTimer (the move time) the list was built at. GMC can run several client moves in one server frame, each
+	// with its own slots, and clears them once per frame: a movement dispatch at another time rebuilds the list.
+	double MoveTaskDataActionTimer = 0.0;
 
 	// Server: highest sequence number dispatched, and bit N set when number (High - N) was dispatched.
 	int32 DispatchedTaskDataSeqHigh = 0;
@@ -1108,6 +1116,8 @@ private:
 
 	bool IsRemoteClientPawnOnServer() const;
 	void BuildMoveTaskData();
+	// Marks the sequenced payloads of the list dispatched and empties it.
+	void ReleaseMoveTaskData();
 	bool IsTaskDataSeqDispatched(int32 Seq) const;
 	void MarkTaskDataSeqDispatched(int32 Seq);
 
@@ -1161,6 +1171,11 @@ private:
 	bool bStartupPredictionClockReady = false;
 	bool ShouldWaitForStartupClock() const;
 	void UpdateStartupPredictionClock(double Timestamp);
+	// Ends the hold and dispatches what waited for it.
+	void ReleaseStartupHold();
+	// Ancillary tick: ends the hold of an authority pawn that has no controller. Such a pawn runs no move, so no
+	// move timestamp would ever end it.
+	void ReleaseStartupHoldWithoutMoveClock();
 
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
@@ -1697,6 +1712,28 @@ public:
 
 	bool IsTaskDataSeqDispatchedForTest(int32 Seq) const { return IsTaskDataSeqDispatched(Seq); }
 	void MarkTaskDataSeqDispatchedForTest(int32 Seq) { MarkTaskDataSeqDispatched(Seq); }
+
+	// TaskData resend seams. The orphan component is a client (no owner role), so PreLocalMoveExecution takes the
+	// client path; the server path needs IsRemoteClientPawnOnServer, which the GMC net-role helpers cannot answer here.
+	int32 GetUnackedTaskDataCountForTest() const { return UnackedTaskData.Num(); }
+	// Moves every pending payload back in time, as if it had been queued Seconds earlier.
+	void AgeUnackedTaskDataForTest(double Seconds) { for (FUnackedTaskData& Entry : UnackedTaskData) { Entry.QueuedRealTime -= Seconds; } }
+	bool bForceRemoteClientPawnOnServerForTest = false;
+	// GMC writes the bound slots from the client move before the server runs it.
+	void SetTaskDataSlotsForTest(const FInstancedStruct& Main, int32 MainSeq, const FInstancedStruct& ResendA, int32 ResendASeq,
+		const FInstancedStruct& ResendB, int32 ResendBSeq)
+	{
+		TaskData = Main; TaskDataSeq = MainSeq;
+		TaskDataResendA = ResendA; TaskDataResendASeq = ResendASeq;
+		TaskDataResendB = ResendB; TaskDataResendBSeq = ResendBSeq;
+	}
+	// Receives every payload DispatchTaskData is handed, before it reads it.
+	TFunction<void(const FInstancedStruct& /*Payload*/, bool /*bFromMovement*/)> TaskDataDispatchHookForTest;
+
+	// Startup hold seam: the ancillary-tick release, without the rest of GenAncillaryTick (its server branch reads
+	// GMC net-role state that the orphan stub cannot provide).
+	void ReleaseStartupHoldWithoutMoveClockForTest() { ReleaseStartupHoldWithoutMoveClock(); }
+	bool ShouldWaitForStartupClockForTest() const { return ShouldWaitForStartupClock(); }
 
 	// Test seams for the replay journal: the headless harness has no owner pawn and no move timestamps.
 	bool bForceReplayJournalForTest = false;

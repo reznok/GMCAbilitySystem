@@ -331,6 +331,9 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 	// Caution if you override Ancillarytick, this value should wrap up the override.
 	bInAncillaryTick = true;
 
+	// A pawn that runs no move never gets the clock that ends the startup hold.
+	ReleaseStartupHoldWithoutMoveClock();
+
 	// Drain any PredictedQueued operations buffered since the last tick.
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Anc_DrainPredictedOps)
@@ -1010,6 +1013,32 @@ void UGMC_AbilitySystemComponent::UpdateStartupPredictionClock(double Timestamp)
 	{
 		return;
 	}
+	ReleaseStartupHold();
+}
+
+void UGMC_AbilitySystemComponent::ReleaseStartupHoldWithoutMoveClock()
+{
+	// The hold waits for the first valid move timestamp of a pawn that runs moves: the client's own pawn, its
+	// server copy until the first client move arrives, a possessed server pawn (AI, listen-server host) until
+	// its first local move. An authority pawn with no controller runs no move, so nothing would ever end its
+	// hold and every activation on it would be refused. Its first ancillary tick ends the hold instead; its
+	// clock stays 0 until a move runs, as for any pawn before the hold existed. Checked from the ancillary
+	// tick, never at BeginPlay: a spawned player or AI pawn is possessed after BeginPlay, before its first tick.
+	if (!ShouldWaitForStartupClock() || !HasAuthority())
+	{
+		return;
+	}
+	const APawn* Pawn = Cast<APawn>(GetOwner());
+	if (!Pawn || Pawn->GetController() != nullptr)
+	{
+		return;
+	}
+	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("[SpawnClock] %s has no controller: startup hold ended without a move clock."), *GetNameSafe(GetOwner()));
+	ReleaseStartupHold();
+}
+
+void UGMC_AbilitySystemComponent::ReleaseStartupHold()
+{
 	bStartupPredictionClockReady = true;
 	// Restore effects before input: their tags can gate the deferred activations.
 	TArray<FGMCEffectSnapshot> Snapshots = MoveTemp(StartupEffectSnapshots);
@@ -1651,7 +1680,13 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 				LastIssuedTaskDataSeq = FMath::RandRange(1, 1 << 30);
 			}
 			TaskDataSeq = ++LastIssuedTaskDataSeq;
-			UnackedTaskData.Add({TaskData, TaskDataSeq, FPlatformTime::Seconds()});
+			// Only CL_OnAPMoveReceived acknowledges a payload. A game that does not forward it would resend each one
+			// for the whole resend window and then report it: until that hook has been seen, a payload is sent once,
+			// in its own move. The number still lets the server dispatch it once.
+			if (bAPMoveTimestampSeen)
+			{
+				UnackedTaskData.Add({TaskData, TaskDataSeq, FPlatformTime::Seconds()});
+			}
 		}
 	}
 
@@ -1723,6 +1758,8 @@ void UGMC_AbilitySystemComponent::CL_OnAPMoveReceived(double APMoveTimestamp)
 {
 	// GMC passes only increasing timestamps, except after its own reset (ClearTransientData): follow it.
 	LastReceivedAPMoveTimestamp = APMoveTimestamp;
+	// The game forwards this hook: payloads queued from here on are kept until acknowledged.
+	bAPMoveTimestampSeen = true;
 
 	if (UnackedTaskData.IsEmpty() || !GMCMovementComponent || TaskDataSeqBindIndex < 0)
 	{
@@ -3214,18 +3251,7 @@ void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 	AbilityData = FGMCAbilityData{};
 	// QueuedAbilityOperations.ClearCurrentOperation();
 
-	if (bMoveTaskDataBuilt)
-	{
-		for (const FMoveTaskData& Item : MoveTaskData)
-		{
-			if (Item.Seq > 0)
-			{
-				MarkTaskDataSeqDispatched(Item.Seq);
-			}
-		}
-		MoveTaskData.Reset();
-		bMoveTaskDataBuilt = false;
-	}
+	ReleaseMoveTaskData();
 
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
 	TaskDataSeq = 0;
@@ -3236,8 +3262,29 @@ void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 }
 
 
+void UGMC_AbilitySystemComponent::ReleaseMoveTaskData()
+{
+	if (!bMoveTaskDataBuilt)
+	{
+		return;
+	}
+	for (const FMoveTaskData& Item : MoveTaskData)
+	{
+		if (Item.Seq > 0)
+		{
+			MarkTaskDataSeqDispatched(Item.Seq);
+		}
+	}
+	MoveTaskData.Reset();
+	bMoveTaskDataBuilt = false;
+}
+
+
 bool UGMC_AbilitySystemComponent::IsRemoteClientPawnOnServer() const
 {
+#if WITH_AUTOMATION_WORKER
+	if (bForceRemoteClientPawnOnServerForTest) { return true; }
+#endif
 	return HasAuthority() && GMCMovementComponent && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn();
 }
 
@@ -3287,6 +3334,7 @@ namespace GMASTaskResendDebug {
 void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 {
 	bMoveTaskDataBuilt = true;
+	MoveTaskDataActionTimer = ActionTimer;
 	MoveTaskData.Reset();
 
 	auto AddSlot = [this](const FInstancedStruct& Slot, int32 Seq, bool bResendSlot)
@@ -3352,6 +3400,14 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 		return;
 	}
 
+	// GMC runs one prediction tick per client move, several of them in one server frame, and the ancillary tick
+	// that clears the slots once per frame. A movement dispatch at another move time is the next client move: its
+	// slots hold other payloads, and the previous list was dispatched by its own move. The sub-steps of one move
+	// share its time and reuse its list; so does the ancillary pass, which dispatches the frame's last move.
+	if (bMoveTaskDataBuilt && bFromMovement && MoveTaskDataActionTimer != ActionTimer)
+	{
+		ReleaseMoveTaskData();
+	}
 	if (!bMoveTaskDataBuilt)
 	{
 		BuildMoveTaskData();
@@ -3364,6 +3420,13 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 
 
 void UGMC_AbilitySystemComponent::DispatchTaskData(const FInstancedStruct& Payload, bool bFromMovement) {
+
+#if WITH_AUTOMATION_WORKER
+	if (TaskDataDispatchHookForTest)
+	{
+		TaskDataDispatchHookForTest(Payload, bFromMovement);
+	}
+#endif
 
 	// A bound slot carries whatever a client queued: check the struct before reading it as a
 	// task payload (FInstancedStruct::Get asserts on a mismatch). Nothing is cleared here; the

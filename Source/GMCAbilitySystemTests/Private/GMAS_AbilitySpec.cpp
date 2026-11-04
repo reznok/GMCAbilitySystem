@@ -17,6 +17,7 @@
 #include <limits>
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "Misc/ScopeExit.h"
 #include "NativeGameplayTags.h"
 #include "Ability/GMCAbility.h"
@@ -261,6 +262,49 @@ void FGMASAbilitySpec::Define()
 				TestFalse("invalid clock refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
 			}
 			AbilityComp->UpdateStartupPredictionClockForTest(2.0);
+			TestTrue("valid clock releases the gate", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+		});
+		It("an authority pawn with no controller ends the hold on its ancillary tick", [this]()
+		{
+			UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+			if (!TestNotNull("startup world", World)) return;
+			ON_SCOPE_EXIT { World->DestroyWorld(false); };
+			APawn* Owner = World->SpawnActorDeferred<APawn>(APawn::StaticClass(), FTransform::Identity);
+			if (!TestNotNull("startup pawn", Owner)) return;
+			Owner->AutoPossessAI = EAutoPossessAI::Disabled;
+			Owner->FinishSpawning(FTransform::Identity);
+			if (!TestNull("no controller", Owner->GetController())) return;
+			AbilityComp->RemoveFromRoot();
+			AbilityComp = NewObject<UGMC_AbilitySystemComponent>(Owner);
+			AbilityComp->AddToRoot();
+			AbilityComp->GMCMovementComponent = MoveCmp;
+			AbilityComp->BindReplicationData();
+			// Such a pawn runs no move: no move timestamp ever ends the hold.
+			AbilityComp->QueueAbility(AbilityTag, nullptr, true);
+			TestEqual("held input kept", AbilityComp->GetStartupAbilityRequestCountForTest(), 1);
+			TestFalse("held before its ancillary tick", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+			AbilityComp->ReleaseStartupHoldWithoutMoveClockForTest();
+			TestFalse("hold ended", AbilityComp->ShouldWaitForStartupClockForTest());
+			TestEqual("held input drained", AbilityComp->GetStartupAbilityRequestCountForTest(), 0);
+			TestEqual("one operation allocated", AbilityComp->GetBoundQueueV2ForTest().GetPayloadCount(), 1);
+			TestTrue("activation works", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+		});
+		It("an owner that is not a pawn keeps the hold until a valid move clock", [this]()
+		{
+			UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+			if (!TestNotNull("startup world", World)) return;
+			ON_SCOPE_EXIT { World->DestroyWorld(false); };
+			AActor* Owner = World->SpawnActor<AActor>();
+			if (!TestNotNull("startup owner", Owner)) return;
+			AbilityComp->RemoveFromRoot();
+			AbilityComp = NewObject<UGMC_AbilitySystemComponent>(Owner);
+			AbilityComp->AddToRoot();
+			AbilityComp->GMCMovementComponent = MoveCmp;
+			AbilityComp->BindReplicationData();
+			AbilityComp->ReleaseStartupHoldWithoutMoveClockForTest();
+			TestTrue("still held", AbilityComp->ShouldWaitForStartupClockForTest());
+			TestFalse("activation refused", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
+			AbilityComp->UpdateStartupPredictionClockForTest(3.0);
 			TestTrue("valid clock releases the gate", AbilityComp->TryActivateAbility(UGMAS_TestAbility::StaticClass()));
 		});
 	});
