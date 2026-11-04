@@ -1116,36 +1116,34 @@ private:
 	// Client: writes the resend slots of the move about to be saved.
 	void FillTaskDataResendSlots();
 
+	// Ancillary pass over several moves: a payload of FrameTaskData and its number, sorted across the moves.
 	struct FMoveTaskData
 	{
 		int32 Seq = 0;
 		const FInstancedStruct* Payload = nullptr;
 	};
 
-	// Server, remote client pawn: the payloads of the move being executed, oldest first. Built on the first dispatch
-	// of the move, so its sub-steps and the ancillary pass see the same list. Points into the bound slots.
-	TArray<FMoveTaskData, TInlineAllocator<3>> MoveTaskData;
-	bool bMoveTaskDataBuilt = false;
-	// ActionTimer (the move time) the list was built at. A movement dispatch at another time is the next client move
-	// of the same frame: the list moves into FrameTaskData and is rebuilt from the new slots.
-	double MoveTaskDataActionTimer = 0.0;
-
-	// Server, remote client pawn: copies of the payloads of the earlier moves of this frame, which their movement pass
-	// dispatched and the ancillary pass has not seen yet (the bound slots now hold the next move's payloads). The
-	// ancillary pass dispatches them with the last move's list; their numbers are marked dispatched at the end of it.
+	// Server, remote client pawn: copies of the payloads of every client move run in this frame, each move's oldest
+	// first. Copied by value when a move first dispatches (GMC writes the next move's payloads into the same bound
+	// slots), so the movement pass of each move and the ancillary pass of the frame each see every payload once. The
+	// numbers are marked dispatched at the end of the ancillary pass.
 	UPROPERTY(Transient)
 	TArray<FGMASSequencedTaskData> FrameTaskData;
+	// Index in FrameTaskData of the first payload of the move being executed.
+	int32 MoveTaskDataStart = 0;
+	bool bMoveTaskDataBuilt = false;
+	// ActionTimer (the move time) the move's copies were made at. A movement dispatch at another time is the next client
+	// move of the same frame: its payloads are copied after the previous move's.
+	double MoveTaskDataActionTimer = 0.0;
 
 	// Server: highest sequence number dispatched, and bit N set when number (High - N) was dispatched.
 	int32 DispatchedTaskDataSeqHigh = 0;
 	uint64 DispatchedTaskDataSeqMask = 0;
 
 	bool IsRemoteClientPawnOnServer() const;
+	// Copies the payloads of the move being executed into FrameTaskData.
 	void BuildMoveTaskData();
-	// A new client move in the same frame: copies the current list into FrameTaskData and empties it.
-	void CarryMoveTaskDataIntoFrame();
-	// End of the ancillary pass: marks the sequenced payloads of the move list and of FrameTaskData dispatched, and
-	// empties both.
+	// End of the ancillary pass: marks the sequenced payloads of FrameTaskData dispatched and empties it.
 	void ReleaseMoveTaskData();
 	bool IsTaskDataSeqDispatched(int32 Seq) const;
 	void MarkTaskDataSeqDispatched(int32 Seq);

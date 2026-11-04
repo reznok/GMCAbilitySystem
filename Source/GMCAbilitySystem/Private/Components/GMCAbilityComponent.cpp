@@ -3319,33 +3319,7 @@ void UGMC_AbilitySystemComponent::ReleaseMoveTaskData()
 		}
 	}
 	FrameTaskData.Reset();
-	if (!bMoveTaskDataBuilt)
-	{
-		return;
-	}
-	for (const FMoveTaskData& Item : MoveTaskData)
-	{
-		if (Item.Seq > 0)
-		{
-			MarkTaskDataSeqDispatched(Item.Seq);
-		}
-	}
-	MoveTaskData.Reset();
-	bMoveTaskDataBuilt = false;
-}
-
-
-void UGMC_AbilitySystemComponent::CarryMoveTaskDataIntoFrame()
-{
-	// By value: the bound slots the list points into are overwritten by the next move. Reset keeps the capacity, so a
-	// frame allocates only for the payloads it really carries.
-	for (const FMoveTaskData& Item : MoveTaskData)
-	{
-		FGMASSequencedTaskData& Copy = FrameTaskData.AddDefaulted_GetRef();
-		Copy.Payload = *Item.Payload;
-		Copy.Seq = Item.Seq;
-	}
-	MoveTaskData.Reset();
+	MoveTaskDataStart = 0;
 	bMoveTaskDataBuilt = false;
 }
 
@@ -3405,9 +3379,24 @@ void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 {
 	bMoveTaskDataBuilt = true;
 	MoveTaskDataActionTimer = ActionTimer;
-	MoveTaskData.Reset();
+	MoveTaskDataStart = FrameTaskData.Num();
 
-	auto AddSlot = [this](const FInstancedStruct& Slot, int32 Seq, bool bResendSlot)
+	// Copied by value here, on the move's first dispatch: GMC writes the next client move's payloads into the same bound
+	// slots before that move runs, so a slot read later in the frame no longer holds this move's payload. Oldest first
+	// within the move.
+	auto AddCopy = [this](const FInstancedStruct& Slot, int32 Seq)
+	{
+		int32 Index = FrameTaskData.Num();
+		while (Index > MoveTaskDataStart && FrameTaskData[Index - 1].Seq > Seq)
+		{
+			--Index;
+		}
+		FrameTaskData.InsertDefaulted(Index, 1);
+		FrameTaskData[Index].Payload = Slot;
+		FrameTaskData[Index].Seq = Seq;
+	};
+
+	auto AddSlot = [this, &AddCopy](const FInstancedStruct& Slot, int32 Seq, bool bResendSlot)
 	{
 		const FGMCAbilityTaskData* Header = Slot.GetPtr<FGMCAbilityTaskData>();
 		if (!Header)
@@ -3415,7 +3404,7 @@ void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 			// Not a task struct: the main slot still goes to DispatchTaskData, which drops it with an Error.
 			if (!bResendSlot && Slot.IsValid())
 			{
-				MoveTaskData.Add({0, &Slot});
+				AddCopy(Slot, 0);
 			}
 			return;
 		}
@@ -3428,13 +3417,13 @@ void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 			// Unsequenced payload: dispatched as before the resend existed.
 			if (!bResendSlot)
 			{
-				MoveTaskData.Add({0, &Slot});
+				AddCopy(Slot, 0);
 			}
 			return;
 		}
-		// An earlier move of this frame carried it too: its movement pass ran it, and the ancillary pass runs its copy.
-		if (IsTaskDataSeqDispatched(Seq) || MoveTaskData.ContainsByPredicate([Seq](const FMoveTaskData& Item) { return Item.Seq == Seq; })
-			|| FrameTaskData.ContainsByPredicate([Seq](const FGMASSequencedTaskData& Item) { return Item.Seq == Seq; }))
+		// Already in this move, or an earlier move of this frame carried it too: its movement pass ran it, and the
+		// ancillary pass runs the frame's copy.
+		if (IsTaskDataSeqDispatched(Seq) || FrameTaskData.ContainsByPredicate([Seq](const FGMASSequencedTaskData& Item) { return Item.Seq == Seq; }))
 		{
 			return;
 		}
@@ -3453,14 +3442,12 @@ void UGMC_AbilitySystemComponent::BuildMoveTaskData()
 			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[TaskResend] Payload seq=%d (AbilityID=%d TaskID=%d) recovered from a resend copy at ActionTimer=%.4f."),
 				Seq, Header->AbilityID, Header->TaskID, ActionTimer);
 		}
-		MoveTaskData.Add({Seq, &Slot});
+		AddCopy(Slot, Seq);
 	};
 
 	AddSlot(TaskDataResendA, TaskDataResendASeq, true);
 	AddSlot(TaskDataResendB, TaskDataResendBSeq, true);
 	AddSlot(TaskData, TaskDataSeq, false);
-
-	MoveTaskData.StableSort([](const FMoveTaskData& Lhs, const FMoveTaskData& Rhs) { return Lhs.Seq < Rhs.Seq; });
 }
 
 
@@ -3474,35 +3461,34 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 
 	// Each payload reaches the movement pass of its own move and the ancillary pass of the frame, once each. A frame
 	// can run several client moves (one prediction tick each) before the ancillary tick that clears the slots. A
-	// movement dispatch at another move time is the next client move: its slots hold other payloads, and the previous
-	// list, already dispatched by its own move, is kept by value for the ancillary pass. The sub-steps of one move
-	// share its time and reuse its list.
+	// movement dispatch at another move time is the next client move: its payloads are copied after the previous
+	// move's, which stay for the ancillary pass. The sub-steps of one move share its time and reuse its copies.
+	// FrameTaskData does not change during a dispatch: only BuildMoveTaskData adds to it.
 	if (bMoveTaskDataBuilt && bFromMovement && MoveTaskDataActionTimer != ActionTimer)
 	{
-		CarryMoveTaskDataIntoFrame();
+		bMoveTaskDataBuilt = false;
 	}
 	if (!bMoveTaskDataBuilt)
 	{
 		BuildMoveTaskData();
 	}
-	if (bFromMovement || FrameTaskData.IsEmpty())
+	if (bFromMovement || MoveTaskDataStart == 0)
 	{
-		for (const FMoveTaskData& Item : MoveTaskData)
+		// This move's payloads (the whole frame when it ran one move), already in sequence order.
+		for (int32 Index = bFromMovement ? MoveTaskDataStart : 0; Index < FrameTaskData.Num(); ++Index)
 		{
-			DispatchTaskData(*Item.Payload, bFromMovement);
+			DispatchTaskData(FrameTaskData[Index].Payload, bFromMovement);
 		}
 		return;
 	}
 
-	// Ancillary pass after several moves: the earlier moves' copies and the last move's list, in sequence order.
-	// Neither array changes during the dispatch: only a movement pass carries a list into FrameTaskData.
+	// Ancillary pass after several moves: every move's payloads, in sequence order across the moves.
 	TArray<FMoveTaskData, TInlineAllocator<8>> FrameList;
-	FrameList.Reserve(FrameTaskData.Num() + MoveTaskData.Num());
+	FrameList.Reserve(FrameTaskData.Num());
 	for (const FGMASSequencedTaskData& Item : FrameTaskData)
 	{
 		FrameList.Add({Item.Seq, &Item.Payload});
 	}
-	FrameList.Append(MoveTaskData);
 	FrameList.StableSort([](const FMoveTaskData& Lhs, const FMoveTaskData& Rhs) { return Lhs.Seq < Rhs.Seq; });
 	for (const FMoveTaskData& Item : FrameList)
 	{
