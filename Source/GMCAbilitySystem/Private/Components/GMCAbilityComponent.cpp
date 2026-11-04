@@ -18,6 +18,7 @@
 #include "Settings/GMASNetworkTimingSettings.h"
 #include "Blueprint/UserWidget.h"
 #include "GameFramework/PlayerController.h"
+#include "Algo/BinarySearch.h"
 #include "HAL/PlatformStackWalk.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -25,6 +26,14 @@
 #include "TimerManager.h"
 #include "HAL/IConsoleManager.h"
 #include "GameFramework/Pawn.h"
+
+namespace GMASReplayJournal
+{
+	// Fallback ghost bounds, used when CL_OnAPMoveReceived is not forwarded by the movement component.
+	constexpr double GhostMaxAgeSeconds = 10.0;
+	constexpr int32 GhostMaxCount = 256;
+	constexpr int32 BoundEffectIDWriteMaxCount = 1024;
+}
 
 namespace GMASApplyTrace {
 	// Opt-in trace: dumps the C++ and script call stack of every local effect instantiation whose class name contains GMAS.ApplyTraceFilter (empty = all).
@@ -235,9 +244,8 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 
 	BoundQueueV2.BindToGMC(GMCMovementComponent);
 
-	// ServerValidated (not ClientValidated): output-side divergence does not trigger
-	// client replay — required because GMC's InstancedStruct equality is order-sensitive
-	// and would replay-storm under apply/remove churn on this list.
+	// ServerValidated: the server checks the client value of each move, and a mismatch still causes a correction
+	// and a replay. Both sides keep the list sorted, and the client replay journal rebuilds it.
 	if (!ActiveEffectIDsBound.IsValid())
 	{
 		ActiveEffectIDsBound.InitializeAs<FGMASActiveEffectIDsState>();
@@ -247,21 +255,64 @@ void UGMC_AbilitySystemComponent::BindReplicationData()
 		EGMC_CombineMode::CombineIfUnchanged,
 		EGMC_SimulationMode::Periodic_Output,
 		EGMC_InterpolationFunction::TargetValue);
+
+	// TaskData resend (same settings as TaskData). Client and server must bind the same layout.
+	TaskDataSeqBindIndex = GMCMovementComponent->BindInt(TaskDataSeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(TaskDataResendA,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	TaskDataResendASeqBindIndex = GMCMovementComponent->BindInt(TaskDataResendASeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	GMCMovementComponent->BindInstancedStruct(TaskDataResendB,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
+
+	TaskDataResendBSeqBindIndex = GMCMovementComponent->BindInt(TaskDataResendBSeq,
+		EGMC_PredictionMode::ClientAuth_Input,
+		EGMC_CombineMode::CombineIfUnchanged,
+		EGMC_SimulationMode::None,
+		EGMC_InterpolationFunction::TargetValue);
 }
 
 void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Add(int EffectID)
 {
-	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
-	{
-		State->IDs.AddUnique(EffectID);
-	}
+	WriteBoundActiveEffectID(EffectID, true);
+	RecordReplayBoundEffectIDWrite(EffectID, true);
 }
 
 void UGMC_AbilitySystemComponent::BoundActiveEffectIDs_Remove(int EffectID)
 {
-	if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+	WriteBoundActiveEffectID(EffectID, false);
+	RecordReplayBoundEffectIDWrite(EffectID, false);
+}
+
+void UGMC_AbilitySystemComponent::WriteBoundActiveEffectID(int EffectID, bool bAdd)
+{
+	FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>();
+	if (!State) return;
+
+	if (!bAdd)
 	{
 		State->IDs.Remove(EffectID);
+	}
+	else if (!State->IDs.Contains(EffectID))
+	{
+		// The two sides can add the same IDs in a different order: a sorted list compares equal.
+		State->IDs.Insert(EffectID, Algo::LowerBound(State->IDs, EffectID));
 	}
 }
 
@@ -332,10 +383,12 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		//   so the call was a no-op there.
 		// - Listen server local pawn: empty queue → was setting OperationData to
 		//   empty base, destroying the deferred ability payload (the bug).
-		// - Server-side ClientQueuedOperations cannot be populated (all 4 callers
-		//   gated by !HasAuthority(), and RPCOnServerOperationAdded is Client-RPC).
-		//   CheckValidState (GMASBoundQueueV2.cpp) already logs an
-		//   Error if it ever happens -- the drain was idempotent defensive code.
+		// - Server-side ClientQueuedOperations is filled only for a locally controlled server
+		//   pawn that still receives the Client RPC (the listen-server host's own pawn, or any
+		//   pawn in standalone): RPCOnServerOperationAdded then runs locally, and the pawn's own
+		//   PreLocalMoveExecution drains it. AI and unpossessed pawns on a networked server get
+		//   no RPC, because EnqueueServerOperation passes bNotifyOwningClient=false. The drain
+		//   was idempotent defensive code.
 		//
 		// Route by who FILLS the live slot, because that decides whether the payload is
 		// client-supplied. On a remotely controlled pawn SV_ApplyValidatedState copied the client
@@ -354,9 +407,11 @@ void UGMC_AbilitySystemComponent::GenAncillaryTick(float DeltaTime, bool bIsComb
 		// An empty slot and a client-direction batch wrapper both carry OperationID 0, so both are
 		// skipped quietly: the batch is server-direction only, and its ack reaches us through the
 		// OutputState path above.
-		// A server-made operation (positive id) aimed at this client is echoed back in the client's
-		// next move; it is applied through the acknowledgement path, so it is skipped quietly too
-		// instead of failing the client-input allowlist.
+		//
+		// Only a negative id is client-made. A positive id is one of our own server operations: the
+		// client echoes its payload in the InputState of the move that applies it, and GMC runs this
+		// tick before the OutputState lands. Its ack already came through the OutputState path, so
+		// the echo is skipped quietly too. Validating it logged "not allowed by server as client input".
 		if (GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			const FGMASBoundQueueV2OperationBaseData* LiveOperation = BoundQueueV2.OperationData.GetPtr<FGMASBoundQueueV2OperationBaseData>();
@@ -455,9 +510,7 @@ TArray<UGMCAbilityEffect*> UGMC_AbilitySystemComponent::GetActiveEffectsByTag(co
 	TArray<UGMCAbilityEffect*> ActiveEffectsFound;
 
 	for (const TTuple<int, UGMCAbilityEffect*>& EffectFound : ActiveEffects) {
-		if (!IsValid(EffectFound.Value)) { continue; }
-		const FGameplayTag& Tag = EffectFound.Value->EffectData.EffectTag;
-		if (bMatchExact ? Tag.MatchesTagExact(GameplayTag) : Tag.MatchesTag(GameplayTag)) {
+		if (IsValid(EffectFound.Value) && (bMatchExact ? EffectFound.Value->EffectData.EffectTag.MatchesTagExact(GameplayTag) : EffectFound.Value->EffectData.EffectTag.MatchesTag(GameplayTag))) {
 			ActiveEffectsFound.Add(EffectFound.Value);
 		}
 	}
@@ -820,6 +873,18 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 {
 
 	if (ActivatedAbility == nullptr) return false;
+	// Direct callers receive a refusal and may retry; QueueAbility retains early input.
+	if (ShouldWaitForStartupClock())
+	{
+		// An operation-derived activation is already consumed: this refusal loses it on this side only.
+		if (ForcedAbilityID != 0)
+		{
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[SpawnClock] Activation of %s refused before the first valid prediction clock. forced_id=%d Authority=%d"),
+				*GetNameSafe(ActivatedAbility), ForcedAbilityID, HasAuthority() ? 1 : 0);
+		}
+		return false;
+	}
 
 	int AbilityID;
 	if (ForcedAbilityID != 0)
@@ -933,9 +998,57 @@ bool UGMC_AbilitySystemComponent::TryActivateAbility(const TSubclassOf<UGMCAbili
 	return true;
 }
 
+bool UGMC_AbilitySystemComponent::ShouldWaitForStartupClock() const
+{
+	return GetOwner() != nullptr && !bStartupPredictionClockReady;
+}
+
+void UGMC_AbilitySystemComponent::UpdateStartupPredictionClock(double Timestamp)
+{
+	ActionTimer = Timestamp;
+	if (bStartupPredictionClockReady || !GMCMovementComponent || !FMath::IsFinite(Timestamp) || Timestamp <= 0.0)
+	{
+		return;
+	}
+	bStartupPredictionClockReady = true;
+	// Restore effects before input: their tags can gate the deferred activations.
+	TArray<FGMCEffectSnapshot> Snapshots = MoveTemp(StartupEffectSnapshots);
+	StartupEffectSnapshots.Reset();
+	Client_ReceiveActiveEffectsSnapshot_Implementation(Snapshots);
+	// Move out before dispatch: activation can re-enter QueueAbility.
+	TArray<FInstancedStruct> Requests = MoveTemp(StartupAbilityRequests);
+	TMap<FGameplayTag, bool> ConcurrencyChecks = MoveTemp(StartupConcurrencyChecks);
+	StartupAbilityRequests.Reset();
+	StartupConcurrencyChecks.Reset();
+	for (const auto& Request : Requests)
+	{
+		const auto& Data = Request.Get<FGMASBoundQueueV2AbilityActivationOperation>();
+		QueueAbility(Data.InputTag, Data.InputAction, ConcurrencyChecks.FindRef(Data.InputTag));
+	}
+}
+
 void UGMC_AbilitySystemComponent::QueueAbility(FGameplayTag InputTag, const UInputAction* InputAction, bool bPreventConcurrentActivation)
 {
 	if (GetOwnerRole() != ROLE_AutonomousProxy && GetOwnerRole() != ROLE_Authority) return;
+	if (ShouldWaitForStartupClock())
+	{
+		// Coalesce held input before spawn initialization: no IDs, cooldowns or instances yet.
+		if (InputTag.IsValid())
+		{
+			FGMASBoundQueueV2AbilityActivationOperation Request;
+			Request.InputTag = InputTag;
+			Request.InputAction = InputAction;
+			const int32 Existing = StartupAbilityRequests.IndexOfByPredicate([&](const FInstancedStruct& Pending)
+			{ return Pending.Get<FGMASBoundQueueV2AbilityActivationOperation>().InputTag == InputTag; });
+			FInstancedStruct Data = FInstancedStruct::Make<FGMASBoundQueueV2AbilityActivationOperation>(Request);
+			if (Existing == INDEX_NONE) StartupAbilityRequests.Add(MoveTemp(Data));
+			else StartupAbilityRequests[Existing] = MoveTemp(Data);
+			StartupConcurrencyChecks.FindOrAdd(InputTag) = bPreventConcurrentActivation;
+		}
+		return;
+	}
+
+
 
 	// Detect client-auth path before standard routing.
 	TArray<TSubclassOf<UGMCAbility>> Candidates = GetGrantedAbilitiesByTag(InputTag);
@@ -1279,10 +1392,11 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UGMC_AbilitySystemComponent::GenPredictionTick)
 
+	if (!GMCMovementComponent) return;
 	// A teleport made outside a move (ancillary tick, forced operation) is carried into the first
 	// live move that follows, so that move's output state records it. A replay never consumes it:
 	// replayed moves re-apply their own operations and set the flag themselves.
-	if (GMCMovementComponent && GMCMovementComponent->CL_IsReplaying())
+	if (GMCMovementComponent->CL_IsReplaying())
 	{
 		bJustTeleported = false;
 	}
@@ -1291,7 +1405,15 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		bJustTeleported = bTeleportPendingForMove;
 		bTeleportPendingForMove = false;
 	}
-	ActionTimer = GMCMovementComponent->GetMoveTimestamp();
+	double MoveTimestamp = GMCMovementComponent->GetMoveTimestamp();
+#if WITH_AUTOMATION_WORKER
+	if (bUseMoveTimestampOverrideForTest)
+	{
+		MoveTimestamp = MoveTimestampOverrideForTest;
+	}
+#endif
+	// Writes ActionTimer.
+	UpdateStartupPredictionClock(MoveTimestamp);
 
 	// Replay-burst diagnostic — sticky flag, consumed by GenAncillaryTick.
 	// Set early so even short-circuiting paths below still record the observation.
@@ -1299,6 +1421,22 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	{
 		bReplayObservedThisFrame = true;
 	}
+
+	const bool bReplaying = IsReplayingForGMASLogic();
+	BeginReplayPassIfNeeded(bReplaying);
+	if (!bReplaying)
+	{
+		ResolvePendingReplayStamps();
+		PruneReplayGhosts();
+		PruneReplayBoundEffectIDWrites();
+	}
+
+	CurrentReplayPhase = EGMASReplayPhase::PreTick;
+	if (bReplaying)
+	{
+		ReplayEffectTransitions(EGMASReplayPhase::PreTick);
+	}
+	CurrentReplayPhase = EGMASReplayPhase::BeforeEffects;
 
 	// Drain any PredictedQueued operations buffered since the last tick.
 	{
@@ -1368,7 +1506,7 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 	} // GMAS_Pred_ProcessOperation
 
 	// Purge "future" temporary modifiers on replay
-	if (GMCMovementComponent->CL_IsReplaying())
+	if (bReplaying)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_PurgeTemporalModifiers)
 		for (FAttribute& Attribute : BoundAttributes.Attributes)
@@ -1376,6 +1514,12 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 			Attribute.PurgeTemporalModifier(ActionTimer);
 		}
 	}
+
+	if (bReplaying)
+	{
+		ReplayEffectTransitions(EGMASReplayPhase::BeforeEffects);
+	}
+	CurrentReplayPhase = EGMASReplayPhase::Abilities;
 
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_SendTaskDataToActiveAbility)
@@ -1387,11 +1531,23 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		TickActiveAbilities(DeltaTime);
 	}
 
+	if (bReplaying)
+	{
+		ReplayEffectTransitions(EGMASReplayPhase::Abilities);
+	}
+
+	CurrentReplayPhase = EGMASReplayPhase::InEffects;
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_TickActiveEffects)
 		TickActiveEffects(DeltaTime);
 	}
+	if (bReplaying)
+	{
+		TickReplayGhosts(DeltaTime);
+		ReplayEffectTransitions(EGMASReplayPhase::InEffects);
+	}
 
+	CurrentReplayPhase = EGMASReplayPhase::AfterEffects;
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_ProcessAttributes)
 		ProcessAttributes(true);
@@ -1402,6 +1558,17 @@ void UGMC_AbilitySystemComponent::GenPredictionTick(float DeltaTime)
 		TRACE_CPUPROFILER_EVENT_SCOPE(GMAS_Pred_CleanupStaleAbilities)
 		CleanupStaleAbilities();
 	}
+	if (bReplaying)
+	{
+		ReplayEffectTransitions(EGMASReplayPhase::AfterEffects);
+		// A replay runs no ancillary tick. Its transitions re-run after the last iteration of the move, before
+		// GMC saves the move output.
+		if (!GMCMovementComponent->IsSubSteppedIteration())
+		{
+			ReplayEffectTransitions(EGMASReplayPhase::PostTick);
+		}
+	}
+	CurrentReplayPhase = EGMASReplayPhase::None;
 }
 
 void UGMC_AbilitySystemComponent::GenSimulationTick(float DeltaTime)
@@ -1475,13 +1642,120 @@ void UGMC_AbilitySystemComponent::PreLocalMoveExecution()
 		// failure in HandleTaskData (TaskID lookup miss).
 		TaskData = QueuedTaskData[0];
 		QueuedTaskData.RemoveAt(0);
+
+		if (!HasAuthority() && TaskData.GetPtr<FGMCAbilityTaskData>())
+		{
+			// Random start: a client that reconnects to the same pawn must not reuse numbers the server already dispatched.
+			if (LastIssuedTaskDataSeq == 0)
+			{
+				LastIssuedTaskDataSeq = FMath::RandRange(1, 1 << 30);
+			}
+			TaskDataSeq = ++LastIssuedTaskDataSeq;
+			UnackedTaskData.Add({TaskData, TaskDataSeq, FPlatformTime::Seconds()});
+		}
+	}
+
+	if (!HasAuthority())
+	{
+		FillTaskDataResendSlots();
 	}
 	BoundQueueV2.GenPreLocalMoveExecution();
 }
 
+void UGMC_AbilitySystemComponent::FillTaskDataResendSlots()
+{
+	TaskDataResendA.Reset();
+	TaskDataResendASeq = 0;
+	TaskDataResendB.Reset();
+	TaskDataResendBSeq = 0;
+
+	if (UnackedTaskData.IsEmpty())
+	{
+		return;
+	}
+
+	// The acknowledgement reads the move history, which only a predicting client keeps.
+	if (!GMCMovementComponent || !GMCMovementComponent->IsUsingClientPrediction())
+	{
+		UnackedTaskData.Reset();
+		return;
+	}
+
+	// The task heartbeat watchdog owns a payload that is still not acknowledged after this delay.
+	constexpr double MaxResendSeconds = 2.0;
+	constexpr int32 MaxUnackedTaskData = 16;
+	const double Now = FPlatformTime::Seconds();
+	for (int32 Index = UnackedTaskData.Num() - 1; Index >= 0; --Index)
+	{
+		const FUnackedTaskData& Entry = UnackedTaskData[Index];
+		if (Now - Entry.QueuedRealTime > MaxResendSeconds || Index < UnackedTaskData.Num() - MaxUnackedTaskData)
+		{
+			const FGMCAbilityTaskData* Header = Entry.Payload.GetPtr<FGMCAbilityTaskData>();
+			UE_LOG(LogGMCAbilitySystem, Warning,
+				TEXT("[TaskResend] Payload seq=%d (AbilityID=%d TaskID=%d) not acknowledged after %.2f s, resend stopped (%d pending)."),
+				Entry.Seq, Header ? Header->AbilityID : -1, Header ? Header->TaskID : -1, Now - Entry.QueuedRealTime, UnackedTaskData.Num());
+			UnackedTaskData.RemoveAt(Index);
+		}
+	}
+
+	// Oldest first: the server dispatches in sequence order, so the oldest copy must not wait behind a newer one.
+	for (const FUnackedTaskData& Entry : UnackedTaskData)
+	{
+		if (Entry.Seq == TaskDataSeq)
+		{
+			continue;
+		}
+		if (TaskDataResendASeq == 0)
+		{
+			TaskDataResendA = Entry.Payload;
+			TaskDataResendASeq = Entry.Seq;
+		}
+		else
+		{
+			TaskDataResendB = Entry.Payload;
+			TaskDataResendBSeq = Entry.Seq;
+			break;
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::CL_OnAPMoveReceived(double APMoveTimestamp)
+{
+	// GMC passes only increasing timestamps, except after its own reset (ClearTransientData): follow it.
+	LastReceivedAPMoveTimestamp = APMoveTimestamp;
+
+	if (UnackedTaskData.IsEmpty() || !GMCMovementComponent || TaskDataSeqBindIndex < 0)
+	{
+		return;
+	}
+
+	// Exact timestamp match only: the server executed that move, so it read every payload the move carried. An APMove
+	// timestamp that matches no move here (proxy move, move discarded before it was sent) acknowledges nothing.
+	const FGMC_MoveHistory& History = GMCMovementComponent->MoveHistory;
+	for (int32 Index = History.Num() - 1; Index >= 0; --Index)
+	{
+		const FGMC_Move& Move = History[Index];
+		if (Move.MetaData.Timestamp > APMoveTimestamp)
+		{
+			continue;
+		}
+		if (Move.MetaData.Timestamp == APMoveTimestamp)
+		{
+			const int32 SeqA = GMCMovementComponent->GetBoundInt(TaskDataSeqBindIndex, Move.InputState);
+			const int32 SeqB = GMCMovementComponent->GetBoundInt(TaskDataResendASeqBindIndex, Move.InputState);
+			const int32 SeqC = GMCMovementComponent->GetBoundInt(TaskDataResendBSeqBindIndex, Move.InputState);
+			UnackedTaskData.RemoveAll([SeqA, SeqB, SeqC](const FUnackedTaskData& Entry)
+			{
+				return Entry.Seq == SeqA || Entry.Seq == SeqB || Entry.Seq == SeqC;
+			});
+		}
+		return;
+	}
+}
+
 void UGMC_AbilitySystemComponent::RPCOnServerOperationAdded_Implementation(const int OperationID, const FInstancedStruct Operation)
 {
-	UE_LOG(LogGMCAbilitySystem, Verbose, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
+	UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("RPCOnServerOperationAdded: %d"), OperationID);
 	BoundQueueV2.CacheOperationPayload(OperationID, Operation);
 	BoundQueueV2.ClientQueuedOperations.Add(OperationID);
 }
@@ -1817,45 +2091,12 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 	// predicts age out via the Pending+timeout reap below.
 	if (!HasAuthority() && !bIsReplaying)
 	{
-		// Snapshot the keys before iterating: EndEffect() below can re-enter this map via
-		// BP-side handlers and gameplay-tag listeners (RemoveTags / OnEffectEnded broadcasts
-		// that ultimately call back into the ASC). Iterating the live TMap while mutations
-		// land on its underlying TSparseArray invalidates the iterator — symptom is either
-		// an out-of-bounds crash, or silently skipped Pending→Validated promotions which
-		// then surface as attribute drift on reconnect (when a bound-state burst fills
-		// many Pending entries at once and several have PendingReplacements queued).
-		TArray<int32> KeysSnapshot;
-		ProcessedEffectIDs.GenerateKeyArray(KeysSnapshot);
-
-		for (const int32 Key : KeysSnapshot)
+		for (TPair<int, EGMCEffectAnswerState>& Processed : ProcessedEffectIDs)
 		{
-			EGMCEffectAnswerState* StatePtr = ProcessedEffectIDs.Find(Key);
-			if (!StatePtr) continue;  // entry was removed by a re-entrant callback — skip safely
-
-			if (*StatePtr == EGMCEffectAnswerState::Pending
-				&& BoundActiveEffectIDs_Contains(Key))
+			if (Processed.Value == EGMCEffectAnswerState::Pending
+				&& BoundActiveEffectIDs_Contains(Processed.Key))
 			{
-				*StatePtr = EGMCEffectAnswerState::Validated;
-
-				// Successor confirmed by server → finalize the suspended OLDs.
-				// Real EndEffect runs now (tag cleanup, modifier rollback, etc.) so the
-				// ability-cleanup pathways downstream see a properly-ended effect.
-				if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Key))
-				{
-					for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
-					{
-						if (UGMCAbilityEffect* OldRaw = Old.Get())
-						{
-							if (!OldRaw->bCompleted)
-							{
-								OldRaw->bPendingDeathBySuccessor = false;
-								OldRaw->EndAtActionTimer = -1.0;
-								OldRaw->EndEffect();
-							}
-						}
-					}
-					PendingReplacements.Remove(Key);
-				}
+				Processed.Value = EGMCEffectAnswerState::Validated;
 			}
 		}
 	}
@@ -1894,7 +2135,13 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			continue;
 		}
 
-		EffectValue->Tick(DeltaTime);
+		// A replayed move that precedes this effect's creation or start must not tick it: that tick did not exist.
+		const bool bSkipReplayedTick = bIsReplaying && IsReplayJournalActive()
+			&& EffectValue->IsReplayedBeforeStart(ActionTimer, EGMASReplayPhase::Abilities);
+		if (!bSkipReplayedTick)
+		{
+			EffectValue->Tick(DeltaTime);
+		}
 		if (EffectValue->bCompleted)
 		{
 			CompletedActiveEffects.Push(Key);
@@ -1913,27 +2160,22 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			ProcessedEffectIDs[Key] = EGMCEffectAnswerState::Timeout;
 			UE_LOG(LogGMCAbilitySystem, Error, TEXT("Effect `%s` Not Confirmed By Server (ID: `%d`), Removing..."), *GetNameSafe(EffectValue), Key);
 
-			// Successor rejected by server → revive the suspended OLDs. They resume
-			// ticking modifiers from the next tick onward; their natural EndAtActionTimer
-			// (still set, never cleared in the suspend path) will fire when due.
-			if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(Key))
-			{
-				for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
-				{
-					if (UGMCAbilityEffect* OldRaw = Old.Get())
-					{
-						if (!OldRaw->bCompleted)
-						{
-							OldRaw->bPendingDeathBySuccessor = false;
-						}
-					}
-				}
-				PendingReplacements.Remove(Key);
-			}
-
 			EffectValue->EndEffect();
 			CompletedActiveEffects.Push(Key);
 		}
+	}
+
+	// A replayed move does not clean an effect that ended after it, or that did not exist yet: the original run
+	// cleaned it at a later move, and the bound ID list must keep it until that move.
+	if (bIsReplaying && IsReplayJournalActive())
+	{
+		CompletedActiveEffects.RemoveAll([this](int EffectID)
+		{
+			UGMCAbilityEffect* const* Effect = ActiveEffects.Find(EffectID);
+			return Effect && IsValid(*Effect)
+				&& (!(*Effect)->ReplayEndStamp.IsAtOrBefore(ActionTimer, EGMASReplayPhase::InEffects)
+					|| (*Effect)->IsReplayedBeforeStart(ActionTimer, EGMASReplayPhase::InEffects));
+		});
 	}
 
 	// Clean expired effects
@@ -1947,25 +2189,17 @@ void UGMC_AbilitySystemComponent::TickActiveEffects(float DeltaTime)
 			const UGMCAbilityEffect* Ended = ActiveEffects.FindRef(EffectID);
 			if (!(Ended && Ended->IsValidLowLevel() && Ended->EffectData.EffectType == EGMASEffectType::Instant))
 			{
-				RPCClientEndEffect(EffectID);
+				RPCClientEndEffect(EffectID, ActionTimer);
 			}
 		}
 
-		// Revive any OLDs still suspended on this successor — covers cleanup paths
-		// that bypass the Validated/Timeout transitions.
-		if (TArray<TWeakObjectPtr<UGMCAbilityEffect>>* Suspended = PendingReplacements.Find(EffectID))
+		// Keep the ended effect while a replay can still cover its lifetime.
+		if (UGMCAbilityEffect* const* EndedEffect = ActiveEffects.Find(EffectID))
 		{
-			for (const TWeakObjectPtr<UGMCAbilityEffect>& Old : *Suspended)
+			if (IsValid(*EndedEffect) && (*EndedEffect)->HasAppliedEffect() && IsReplayJournalActive())
 			{
-				if (UGMCAbilityEffect* OldRaw = Old.Get())
-				{
-					if (!OldRaw->bCompleted)
-					{
-						OldRaw->bPendingDeathBySuccessor = false;
-					}
-				}
+				ReplayGhostEffects.AddUnique(*EndedEffect);
 			}
-			PendingReplacements.Remove(EffectID);
 		}
 
 		ActiveEffects.Remove(EffectID);
@@ -2043,14 +2277,19 @@ bool UGMC_AbilitySystemComponent::IsLocallyControlledPawnASC() const
 	return false;
 }
 
-void UGMC_AbilitySystemComponent::RPCClientEndEffect_Implementation(int EffectID)
+void UGMC_AbilitySystemComponent::RPCClientEndEffect_Implementation(int EffectID, double ServerActionTimer)
 {
-	if (ActiveEffects.Contains(EffectID))
+	UGMCAbilityEffect* const* EndedEffect = ActiveEffects.Find(EffectID);
+	if (EndedEffect && *EndedEffect)
 	{
-		// Route through RemoveActiveAbilityEffect so the bilateral defer (Bug #3) applies here too.
-		// Server's local RemoveActiveAbilityEffect armed its own defer; client must arm a matching one
-		// to keep per-tick application counts symmetric on Ticking / Periodic effects.
-		RemoveActiveAbilityEffect(ActiveEffects[EffectID]);
+		// The replay journal stamps this end at the server move, not at the move the RPC lands in.
+		TGuardValue<const UGMCAbilityEffect*> StampOverrideGuard(ReplayStampOverrideEffect, *EndedEffect);
+		TGuardValue<double> StampOverrideTimeGuard(ReplayStampOverrideTime, ServerActionTimer);
+
+		// The server sends this after its own end: the effect ends now, even with a defer armed here.
+		(*EndedEffect)->EndAtActionTimer = -1.0;
+		(*EndedEffect)->PendingEndGrace = -1.0;
+		(*EndedEffect)->EndEffect();
 		UE_LOG(LogGMCAbilitySystem, VeryVerbose, TEXT("[RPC] Server Ended Effect: %d"), EffectID);
 	}
 }
@@ -2839,6 +3078,13 @@ void UGMC_AbilitySystemComponent::Server_RequestActiveEffectsSnapshot_Implementa
 
 void UGMC_AbilitySystemComponent::Client_ReceiveActiveEffectsSnapshot_Implementation(const TArray<FGMCEffectSnapshot>& Snapshots)
 {
+	if (ShouldWaitForStartupClock())
+	{
+		// RestoreEffectFromSnapshot rebases on ActionTimer, still 0 until the first prediction tick.
+		StartupEffectSnapshots.Append(Snapshots);
+		return;
+	}
+
 	for (const FGMCEffectSnapshot& Snapshot : Snapshots)
 	{
 		if (ActiveEffects.Contains(Snapshot.EffectID))
@@ -2967,21 +3213,167 @@ TArray<TSubclassOf<UGMCAbility>> UGMC_AbilitySystemComponent::GetGrantedAbilitie
 void UGMC_AbilitySystemComponent::ClearAbilityAndTaskData() {
 	AbilityData = FGMCAbilityData{};
 	// QueuedAbilityOperations.ClearCurrentOperation();
+
+	if (bMoveTaskDataBuilt)
+	{
+		for (const FMoveTaskData& Item : MoveTaskData)
+		{
+			if (Item.Seq > 0)
+			{
+				MarkTaskDataSeqDispatched(Item.Seq);
+			}
+		}
+		MoveTaskData.Reset();
+		bMoveTaskDataBuilt = false;
+	}
+
 	TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});
+	TaskDataSeq = 0;
+	TaskDataResendA.Reset();
+	TaskDataResendASeq = 0;
+	TaskDataResendB.Reset();
+	TaskDataResendBSeq = 0;
+}
+
+
+bool UGMC_AbilitySystemComponent::IsRemoteClientPawnOnServer() const
+{
+	return HasAuthority() && GMCMovementComponent && GMCMovementComponent->IsPlayerControlledPawn() && !GMCMovementComponent->IsLocallyControlledServerPawn();
+}
+
+
+bool UGMC_AbilitySystemComponent::IsTaskDataSeqDispatched(int32 Seq) const
+{
+	if (Seq > DispatchedTaskDataSeqHigh)
+	{
+		return false;
+	}
+	// Copies trail the newest payload by a few numbers only. A number this far behind is a restarted client sequence.
+	const int32 Age = DispatchedTaskDataSeqHigh - Seq;
+	return Age < 64 && (DispatchedTaskDataSeqMask & (1ull << Age)) != 0;
+}
+
+
+void UGMC_AbilitySystemComponent::MarkTaskDataSeqDispatched(int32 Seq)
+{
+	if (DispatchedTaskDataSeqHigh - Seq >= 64)
+	{
+		DispatchedTaskDataSeqHigh = Seq;
+		DispatchedTaskDataSeqMask = 0;
+	}
+	else if (Seq > DispatchedTaskDataSeqHigh)
+	{
+		const int32 Shift = Seq - DispatchedTaskDataSeqHigh;
+		DispatchedTaskDataSeqMask = Shift >= 64 ? 0 : DispatchedTaskDataSeqMask << Shift;
+		DispatchedTaskDataSeqHigh = Seq;
+	}
+	DispatchedTaskDataSeqMask |= 1ull << (DispatchedTaskDataSeqHigh - Seq);
+}
+
+
+#if !UE_BUILD_SHIPPING
+namespace GMASTaskResendDebug {
+	static int32 DropServerTaskPayloads = 0;
+	static FAutoConsoleVariableRef CVarDropServerTaskPayloads(
+		TEXT("GMAS.Debug.DropServerTaskPayloads"),
+		DropServerTaskPayloads,
+		TEXT("Server: ignore the next N task payloads in the move that first carries them, as if that move was lost. ")
+		TEXT("Each one must then arrive through a resend copy."),
+		ECVF_Cheat);
+}
+#endif
+
+
+void UGMC_AbilitySystemComponent::BuildMoveTaskData()
+{
+	bMoveTaskDataBuilt = true;
+	MoveTaskData.Reset();
+
+	auto AddSlot = [this](const FInstancedStruct& Slot, int32 Seq, bool bResendSlot)
+	{
+		const FGMCAbilityTaskData* Header = Slot.GetPtr<FGMCAbilityTaskData>();
+		if (!Header)
+		{
+			// Not a task struct: the main slot still goes to DispatchTaskData, which drops it with an Error.
+			if (!bResendSlot && Slot.IsValid())
+			{
+				MoveTaskData.Add({0, &Slot});
+			}
+			return;
+		}
+		if (*Header == FGMCAbilityTaskData{})
+		{
+			return;
+		}
+		if (Seq <= 0)
+		{
+			// Unsequenced payload: dispatched as before the resend existed.
+			if (!bResendSlot)
+			{
+				MoveTaskData.Add({0, &Slot});
+			}
+			return;
+		}
+		if (IsTaskDataSeqDispatched(Seq) || MoveTaskData.ContainsByPredicate([Seq](const FMoveTaskData& Item) { return Item.Seq == Seq; }))
+		{
+			return;
+		}
+#if !UE_BUILD_SHIPPING
+		if (!bResendSlot && GMASTaskResendDebug::DropServerTaskPayloads > 0)
+		{
+			--GMASTaskResendDebug::DropServerTaskPayloads;
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[TaskResend] Debug drop of payload seq=%d (AbilityID=%d TaskID=%d), %d drop(s) left."),
+				Seq, Header->AbilityID, Header->TaskID, GMASTaskResendDebug::DropServerTaskPayloads);
+			return;
+		}
+#endif
+		if (bResendSlot)
+		{
+			// The move that first carried this payload never ran here: lost, discarded by the client, or audited out.
+			UE_LOG(LogGMCAbilitySystem, Log, TEXT("[TaskResend] Payload seq=%d (AbilityID=%d TaskID=%d) recovered from a resend copy at ActionTimer=%.4f."),
+				Seq, Header->AbilityID, Header->TaskID, ActionTimer);
+		}
+		MoveTaskData.Add({Seq, &Slot});
+	};
+
+	AddSlot(TaskDataResendA, TaskDataResendASeq, true);
+	AddSlot(TaskDataResendB, TaskDataResendBSeq, true);
+	AddSlot(TaskData, TaskDataSeq, false);
+
+	MoveTaskData.StableSort([](const FMoveTaskData& Lhs, const FMoveTaskData& Rhs) { return Lhs.Seq < Rhs.Seq; });
 }
 
 
 void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement) {
 
-	// The bound slot carries whatever a client queued: check the struct before reading it as a
+	if (!IsRemoteClientPawnOnServer())
+	{
+		DispatchTaskData(TaskData, bFromMovement);
+		return;
+	}
+
+	if (!bMoveTaskDataBuilt)
+	{
+		BuildMoveTaskData();
+	}
+	for (const FMoveTaskData& Item : MoveTaskData)
+	{
+		DispatchTaskData(*Item.Payload, bFromMovement);
+	}
+}
+
+
+void UGMC_AbilitySystemComponent::DispatchTaskData(const FInstancedStruct& Payload, bool bFromMovement) {
+
+	// A bound slot carries whatever a client queued: check the struct before reading it as a
 	// task payload (FInstancedStruct::Get asserts on a mismatch). Nothing is cleared here; the
 	// slot is reset by ClearAbilityAndTaskData at the end of the ancillary tick either way.
-	const FGMCAbilityTaskData* TaskDataPtr = TaskData.IsValid() && TaskData.GetScriptStruct()->IsChildOf(FGMCAbilityTaskData::StaticStruct())
-		? TaskData.GetPtr<FGMCAbilityTaskData>() : nullptr;
-	if (TaskData.IsValid() && !TaskDataPtr)
+	const FGMCAbilityTaskData* TaskDataPtr = Payload.IsValid() && Payload.GetScriptStruct()->IsChildOf(FGMCAbilityTaskData::StaticStruct())
+		? Payload.GetPtr<FGMCAbilityTaskData>() : nullptr;
+	if (Payload.IsValid() && !TaskDataPtr)
 	{
 		UE_LOG(LogGMCAbilitySystem, Error, TEXT("[TaskDiag] Bound task payload is %s, not a FGMCAbilityTaskData; dropped (owner %s, Authority=%d)."),
-			*TaskData.GetScriptStruct()->GetName(), *GetNameSafe(GetOwner()), HasAuthority() ? 1 : 0);
+			*Payload.GetScriptStruct()->GetName(), *GetNameSafe(GetOwner()), HasAuthority() ? 1 : 0);
 		return;
 	}
 	const FGMCAbilityTaskData TaskDataFromInstance = TaskDataPtr ? *TaskDataPtr : FGMCAbilityTaskData{};
@@ -3018,7 +3410,7 @@ void UGMC_AbilitySystemComponent::SendTaskDataToActiveAbility(bool bFromMovement
 						TaskDataFromInstance.TaskID, TaskDataFromInstance.AbilityID);
 				}
 			}
-			TargetAbility->HandleTaskData(TaskDataFromInstance.TaskID, TaskData);
+			TargetAbility->HandleTaskData(TaskDataFromInstance.TaskID, Payload);
 		}
 		else if (!ActiveAbilities.Contains(TaskDataFromInstance.AbilityID))
 		{
@@ -3285,7 +3677,9 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 				//      authority); the later passes simply find it gone. This is the
 				//      MP error-spam case — silently skip it, exactly mirroring the
 				//      single-op drained-reprocess no-op (which returns false quietly
-				//      on the cache miss). Keep it OUT of the ack list as before.
+				//      on the cache miss). Keep it OUT of the ack list as before. A
+				//      listen-host or standalone pawn that queued to itself re-reads its
+				//      own slot on the ancillary pass the same way.
 				//
 				//  (2) GENUINE DIVERGENCE. The payload was never delivered / expired
 				//      and was never applied here. This is the case the diagnostic
@@ -3618,9 +4012,14 @@ void UGMC_AbilitySystemComponent::ProcessEffectApplicationFromOperation(const FG
 	// The latter is what the [ApplyTrace] logs caught: live id=338 then replayed id=339,
 	// both ticking → bound attributes drain/regen at 2× rate on the client → forced
 	// corrections → continuous chain replay.
-	// The bound state has already been replayed so the existing instance carries the
-	// correct snapshot — there is nothing for a second instantiation to add.
+	// The existing instance keeps living through the replay; the replay journal re-runs its
+	// bound writes (tags, temporal modifiers) at the move that made them.
 	if (ActiveEffects.Contains(Data.EffectID))
+	{
+		return;
+	}
+	// Same for an instance that ended later in the replayed window: re-creating it would apply it twice.
+	if (IsReplayingForGMASLogic() && HasReplayGhostWithEffectID(Data.EffectID))
 	{
 		return;
 	}
@@ -4466,7 +4865,7 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 				continue;
 			}
 
-			if (Existing.Value->EndAtActionTimer >= 0.0)
+			if (Existing.Value->EndAtActionTimer >= 0.0 || Existing.Value->PendingEndGrace >= 0.0)
 			{
 				DeferredMatchesToReplace.Add(Existing.Value);
 			}
@@ -4525,42 +4924,19 @@ UGMCAbilityEffect* UGMC_AbilitySystemComponent::ApplyAbilityEffect(UGMCAbilityEf
 		BoundActiveEffectIDs_Add(EffectID);
 	}
 
-	// Replace deferred same-tag matches. Server force-ends immediately (authoritative);
-	// client suspends the OLD pending the successor's Validated/Timeout verdict so a
-	// server-rejected predict can revive the OLD instead of leaving it permanently dead.
+	// Replace deferred same-tag matches: both sides end them now, in the same phase. A client cannot wait for the
+	// server's verdict on the successor: it writes the successor's ID itself, so that verdict is never seen.
 	// Order: ActiveEffects.Add above must precede any EndEffect here so the multi-instance
 	// preserve check counts the NEW as a sibling (no one-tick GrantedTags flicker).
-	// A successor that is already complete (an Instant unique-tag effect) has no verdict to wait
-	// for, so the client ends the olds at once too.
-	if (HasAuthority() || Effect->bCompleted)
+	for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
 	{
-		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
+		if (!DeferredOld || DeferredOld->bCompleted)
 		{
-			if (!DeferredOld || DeferredOld->bCompleted)
-			{
-				continue;
-			}
-			DeferredOld->EndAtActionTimer = -1.0;
-			DeferredOld->EndEffect();
+			continue;
 		}
-	}
-	else
-	{
-		TArray<TWeakObjectPtr<UGMCAbilityEffect>> SuspendedOlds;
-		SuspendedOlds.Reserve(DeferredMatchesToReplace.Num());
-		for (UGMCAbilityEffect* DeferredOld : DeferredMatchesToReplace)
-		{
-			if (!DeferredOld || DeferredOld->bCompleted)
-			{
-				continue;
-			}
-			DeferredOld->bPendingDeathBySuccessor = true;
-			SuspendedOlds.Add(DeferredOld);
-		}
-		if (SuspendedOlds.Num() > 0)
-		{
-			PendingReplacements.Add(Effect->EffectData.EffectID, MoveTemp(SuspendedOlds));
-		}
+		DeferredOld->EndAtActionTimer = -1.0;
+		DeferredOld->PendingEndGrace = -1.0;
+		DeferredOld->EndEffect();
 	}
 
 	// CVar-gated apply-path stackdump for chasing duplicate-apply bugs.
@@ -4593,8 +4969,8 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	// Anti-drift defer: for effects that keep ticking attributes after Remove is called, the side
 	// that ends the effect later accumulates extra modifier applications (Ticking: continuous drain;
 	// Periodic: period-boundary chunks). Both sides arm the same absolute EndAtActionTimer so each
-	// fires the same number of applications before EndEffect. A grace of 0 (project default or
-	// per-effect override) turns the deferral off and ends the effect at once.
+	// fires the same number of applications before EndEffect. With a grace of 0 the effect ends at
+	// the next move.
 	const bool bIsNetworked    = GetNetMode() != NM_Standalone
 #if WITH_AUTOMATION_WORKER
 		|| bForceNetworkedForTest
@@ -4603,13 +4979,13 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 	const bool bIsTimeDriven   = Effect->EffectData.EffectType == EGMASEffectType::Ticking
 	                          || Effect->EffectData.EffectType == EGMASEffectType::Periodic;
 
-	// Per-effect override when set (> 0), else the project default; both may be 0 = no deferral.
+	// Effective grace = per-effect override if explicitly set (>0), else server-wise project default
+	// from UGMASNetworkTimingSettings. With 0, the effect ends at the next move: the Remove move still ticks.
 	const float EffectiveGraceTime = Effect->EffectData.ClientGraceTime > 0.f
 		? Effect->EffectData.ClientGraceTime
 		: GetDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime;
-	const bool bHasGracePeriod = EffectiveGraceTime > 0.f;
 
-	if (bIsNetworked && bIsTimeDriven && bHasGracePeriod && !Effect->bCompleted)
+	if (bIsNetworked && bIsTimeDriven && !Effect->bCompleted)
 	{
 		// Idempotent arming on absolute ActionTimer. The first call latches EndAtActionTimer using
 		// the current ActionTimer (which is identical on client and server replay because both
@@ -4617,9 +4993,17 @@ void UGMC_AbilitySystemComponent::RemoveActiveAbilityEffect(UGMCAbilityEffect* E
 		// during the defer window must be a NO-OP: a duplicate Remove path (e.g. RPCClientEndEffect
 		// landing on top of a local-replayed Remove) would otherwise reset the latch and shift the
 		// end timestamp, breaking bilateral symmetry.
-		if (Effect->EndAtActionTimer < 0.0)
+		if (Effect->EndAtActionTimer < 0.0 && Effect->PendingEndGrace < 0.0)
 		{
-			Effect->EndAtActionTimer = ActionTimer + EffectiveGraceTime;
+			if (CurrentReplayPhase == EGMASReplayPhase::None && !bInAncillaryTick)
+			{
+				// Between moves, the Remove belongs to the next move: the other side runs it there.
+				Effect->PendingEndGrace = EffectiveGraceTime;
+			}
+			else
+			{
+				ArmEffectEnd(Effect, EffectiveGraceTime);
+			}
 		}
 		return;
 	}
@@ -5380,10 +5764,440 @@ void UGMC_AbilitySystemComponent::EnqueueServerOperation(const int OperationID)
 	// The Client RPC is NOT sent (bNotifyOwningClient = false): with no owning connection
 	// it would run on the server itself, add the id to ClientQueuedOperations (which the
 	// server never drains: an Error in CheckValidState and a dropped-operation Warning the
-	// next frame) and re-cache the payload with an expiration entry that is never pruned
-	// on a server. ProcessOperation drains the cached payload and the grace tick removes
-	// the grace-map entry, so the op applies exactly once.
+	// next frame) and re-cache the payload. ProcessOperation drains the cached payload and
+	// the grace tick removes the grace-map entry, so the op applies exactly once.
 	BoundQueueV2.QueueServerOperation(OperationID, /*Timeout=*/0.f, /*bNotifyOwningClient=*/false);
+}
+
+bool UGMC_AbilitySystemComponent::IsReplayJournalActive() const
+{
+#if WITH_AUTOMATION_WORKER
+	if (bForceReplayJournalForTest) { return true; }
+#endif
+	return !HasAuthority() && GMCMovementComponent && GMCMovementComponent->IsUsingClientPrediction() && IsLocallyControlledPawnASC();
+}
+
+void UGMC_AbilitySystemComponent::StampReplayTransition(UGMCAbilityEffect* Effect, FGMASEffectReplayStamp& Stamp)
+{
+	Stamp.Seq = ++ReplayTransitionSeq;
+	Stamp.PassCountAtRecord = ReplayPassCount;
+	Stamp.PassId = IsReplayingForGMASLogic() ? ReplayPassCount : 0;
+
+	// RPCClientEndEffect: the server ended it in that move, before its effects ticked. With a pending start, the
+	// normal path stamps the end after the start.
+	if (Effect && Effect == ReplayStampOverrideEffect && &Stamp == &Effect->ReplayEndStamp && !Effect->ReplayStartStamp.bPending)
+	{
+		const FGMASEffectReplayStamp& Start = Effect->ReplayStartStamp;
+		Stamp.Time = ReplayStampOverrideTime;
+		Stamp.Phase = EGMASReplayPhase::Abilities;
+		// Started here after the server end: end at the start, so a replay never re-runs the start alone.
+		if (Start.bSet && !Start.IsAtOrBefore(Stamp.Time, Stamp.Phase))
+		{
+			Stamp.Time = Start.Time;
+			Stamp.Phase = Start.Phase;
+		}
+		Stamp.bSet = true;
+		Stamp.bPending = false;
+		return;
+	}
+
+	if (CurrentReplayPhase != EGMASReplayPhase::None)
+	{
+		Stamp.Time = ActionTimer;
+		Stamp.Phase = CurrentReplayPhase;
+		Stamp.bSet = true;
+		Stamp.bPending = false;
+		return;
+	}
+
+	if (bInAncillaryTick)
+	{
+		// GMC saves the move output after the ancillary tick, so the transition belongs to the move that just ran.
+		Stamp.Time = ActionTimer;
+		Stamp.Phase = EGMASReplayPhase::PostTick;
+		Stamp.bSet = true;
+		Stamp.bPending = false;
+		return;
+	}
+
+	// Outside a prediction tick: the next local move gives the stamp. Only the replaying side needs it.
+	Stamp.bSet = false;
+	Stamp.bPending = IsReplayJournalActive();
+	if (Stamp.bPending && Effect)
+	{
+		PendingReplayStampEffects.AddUnique(Effect);
+	}
+}
+
+void UGMC_AbilitySystemComponent::ArmEffectEnd(UGMCAbilityEffect* Effect, double GraceTime)
+{
+	if (!Effect) return;
+
+	Effect->EndAtActionTimer = ActionTimer + GraceTime;
+	// GMC can merge the next move into this one, with the next move time. The server would then arm one move later.
+	if (GMCMovementComponent)
+	{
+		GMCMovementComponent->CL_DoNotCombineNextMove();
+	}
+}
+
+void UGMC_AbilitySystemComponent::CL_OnPreReplay()
+{
+	bReplayPreReplayHookSeen = true;
+	bReplayPassStartRequested = true;
+}
+
+void UGMC_AbilitySystemComponent::BeginReplayPassIfNeeded(bool bReplaying)
+{
+	// Fallback without the CL_PreReplay hook: a replay restarts at an older move. Strict, because the
+	// sub-steps of one move share its move time.
+	const bool bGuessedPassStart = !bReplayPreReplayHookSeen
+		&& (!bLastPredictionTickWasReplay || ActionTimer < LastPredictionTickTime);
+	if (bReplaying && (bReplayPassStartRequested || bGuessedPassStart))
+	{
+		bReplayPassStartRequested = false;
+		++ReplayPassCount;
+
+		// The replay source is the last server move received. Without that hook, only the move's own time matches.
+		const bool bSourceKnown = LastReceivedAPMoveTimestamp > -TNumericLimits<double>::Max() && LastReceivedAPMoveTimestamp < ActionTimer;
+		ReplayWindowStart = bSourceKnown ? LastReceivedAPMoveTimestamp : ActionTimer - UE_KINDA_SMALL_NUMBER;
+		ReplayWindowMoveTime = ActionTimer;
+		RestoreReplayGhostsAtPassStart();
+	}
+	else if (bReplaying && ActionTimer != ReplayWindowMoveTime)
+	{
+		ReplayWindowStart = ReplayWindowMoveTime;
+		ReplayWindowMoveTime = ActionTimer;
+	}
+	bLastPredictionTickWasReplay = bReplaying;
+	LastPredictionTickTime = ActionTimer;
+}
+
+void UGMC_AbilitySystemComponent::CL_OnPostReplay()
+{
+	if (!IsReplayJournalActive()) return;
+
+	// Writes made after the last move belong to no replayed move, so the replay rebuilt the state without them.
+	for (FGMASReplayBoundEffectIDWrite& Write : ReplayBoundEffectIDWrites)
+	{
+		if (!Write.Stamp.bPending) continue;
+		WriteBoundActiveEffectID(Write.EffectID, Write.bAdd);
+		Write.Stamp.PassCountAtRecord = ReplayPassCount;
+	}
+
+	if (PendingReplayStampEffects.IsEmpty()) return;
+
+	struct FLateTransition
+	{
+		int32 Seq;
+		UGMCAbilityEffect* Effect;
+		bool bStart;
+	};
+	TArray<FLateTransition> Transitions;
+	for (const TWeakObjectPtr<UGMCAbilityEffect>& WeakEffect : PendingReplayStampEffects)
+	{
+		UGMCAbilityEffect* Effect = WeakEffect.Get();
+		if (!Effect || !Effect->HasAppliedEffect()) continue;
+		if (Effect->ReplayStartStamp.bPending)
+		{
+			Transitions.Add({Effect->ReplayStartStamp.Seq, Effect, true});
+		}
+		if (Effect->ReplayEndStamp.bPending)
+		{
+			Transitions.Add({Effect->ReplayEndStamp.Seq, Effect, false});
+		}
+	}
+	Transitions.Sort([](const FLateTransition& A, const FLateTransition& B) { return A.Seq < B.Seq; });
+
+	for (const FLateTransition& Transition : Transitions)
+	{
+		FGMASEffectReplayStamp& Stamp = Transition.bStart ? Transition.Effect->ReplayStartStamp : Transition.Effect->ReplayEndStamp;
+		if (Transition.bStart)
+		{
+			Transition.Effect->ReplayStartWrites();
+		}
+		else
+		{
+			Transition.Effect->ReplayEndWrites();
+		}
+		// Already re-run for this pass: the next local move must not apply it a second time.
+		Stamp.PassCountAtRecord = ReplayPassCount;
+	}
+}
+
+void UGMC_AbilitySystemComponent::ResolvePendingReplayStamps()
+{
+	for (FGMASReplayBoundEffectIDWrite& Write : ReplayBoundEffectIDWrites)
+	{
+		FGMASEffectReplayStamp& Stamp = Write.Stamp;
+		if (!Stamp.bPending) continue;
+		const bool bReplayRanSince = Stamp.PassCountAtRecord != ReplayPassCount;
+		Stamp.Time = ActionTimer;
+		Stamp.Phase = EGMASReplayPhase::PreTick;
+		Stamp.bSet = true;
+		Stamp.bPending = false;
+		if (bReplayRanSince)
+		{
+			WriteBoundActiveEffectID(Write.EffectID, Write.bAdd);
+		}
+	}
+
+	if (PendingReplayStampEffects.IsEmpty()) return;
+
+	struct FPendingReplayTransition
+	{
+		int32 Seq;
+		UGMCAbilityEffect* Effect;
+		FGMASEffectReplayStamp* Stamp;
+		bool bStart;
+		bool bEnd;
+	};
+	TArray<FPendingReplayTransition> Transitions;
+	for (const TWeakObjectPtr<UGMCAbilityEffect>& WeakEffect : PendingReplayStampEffects)
+	{
+		UGMCAbilityEffect* Effect = WeakEffect.Get();
+		if (!Effect) continue;
+		if (Effect->ReplayCreatedStamp.bPending)
+		{
+			Transitions.Add({Effect->ReplayCreatedStamp.Seq, Effect, &Effect->ReplayCreatedStamp, false, false});
+		}
+		if (Effect->ReplayStartStamp.bPending)
+		{
+			Transitions.Add({Effect->ReplayStartStamp.Seq, Effect, &Effect->ReplayStartStamp, true, false});
+		}
+		if (Effect->ReplayEndStamp.bPending)
+		{
+			Transitions.Add({Effect->ReplayEndStamp.Seq, Effect, &Effect->ReplayEndStamp, false, true});
+		}
+	}
+	PendingReplayStampEffects.Reset();
+
+	Transitions.Sort([](const FPendingReplayTransition& A, const FPendingReplayTransition& B) { return A.Seq < B.Seq; });
+	for (const FPendingReplayTransition& Transition : Transitions)
+	{
+		FGMASEffectReplayStamp& Stamp = *Transition.Stamp;
+		// A replay that ran after the transition rebuilt the bound state without it.
+		const bool bReplayRanSince = Stamp.PassCountAtRecord != ReplayPassCount;
+		Stamp.Time = ActionTimer;
+		Stamp.Phase = EGMASReplayPhase::PreTick;
+		Stamp.bSet = true;
+		Stamp.bPending = false;
+
+		if (Transition.bStart)
+		{
+			Transition.Effect->RestampStartTemporalModifiers(ActionTimer);
+			if (bReplayRanSince)
+			{
+				Transition.Effect->ReplayStartWrites();
+			}
+		}
+		else if (Transition.bEnd && bReplayRanSince)
+		{
+			Transition.Effect->ReplayEndWrites();
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::ReplayEffectTransitions(EGMASReplayPhase Phase)
+{
+	if (!IsReplayJournalActive()) return;
+
+	struct FReplayTransition
+	{
+		int32 Seq;
+		UGMCAbilityEffect* Effect;
+		bool bStart;
+	};
+	TArray<FReplayTransition> Transitions;
+
+	// Transitions recorded by this pass already ran live; the journal re-runs only the older ones, once per pass.
+	const auto Matches = [this, Phase](const FGMASEffectReplayStamp& Stamp)
+	{
+		return Stamp.bSet && Stamp.Phase == Phase
+			&& Stamp.Time > ReplayWindowStart && Stamp.Time <= ActionTimer
+			&& Stamp.PassId != ReplayPassCount && Stamp.ReplayedInPass != ReplayPassCount;
+	};
+	const auto Collect = [&Transitions, &Matches](UGMCAbilityEffect* Effect)
+	{
+		if (!IsValid(Effect) || !Effect->HasAppliedEffect()) return;
+		if (Matches(Effect->ReplayStartStamp))
+		{
+			Transitions.Add({Effect->ReplayStartStamp.Seq, Effect, true});
+		}
+		if (Matches(Effect->ReplayEndStamp))
+		{
+			Transitions.Add({Effect->ReplayEndStamp.Seq, Effect, false});
+		}
+	};
+
+	for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffects)
+	{
+		Collect(Pair.Value);
+	}
+	for (const TObjectPtr<UGMCAbilityEffect>& Ghost : ReplayGhostEffects)
+	{
+		Collect(Ghost.Get());
+	}
+
+	// Same order as the original run: an Instant start precedes its end, a swap's end precedes the next start.
+	Transitions.Sort([](const FReplayTransition& A, const FReplayTransition& B) { return A.Seq < B.Seq; });
+	for (const FReplayTransition& Transition : Transitions)
+	{
+		if (Transition.bStart)
+		{
+			Transition.Effect->ReplayStartStamp.ReplayedInPass = ReplayPassCount;
+			Transition.Effect->ReplayStartWrites();
+		}
+		else
+		{
+			Transition.Effect->ReplayEndStamp.ReplayedInPass = ReplayPassCount;
+			Transition.Effect->ReplayEndWrites();
+		}
+	}
+
+	// The array keeps the record order.
+	for (FGMASReplayBoundEffectIDWrite& Write : ReplayBoundEffectIDWrites)
+	{
+		if (!Matches(Write.Stamp)) continue;
+		Write.Stamp.ReplayedInPass = ReplayPassCount;
+		WriteBoundActiveEffectID(Write.EffectID, Write.bAdd);
+	}
+}
+
+void UGMC_AbilitySystemComponent::RestoreReplayGhostsAtPassStart()
+{
+	if (!IsReplayJournalActive()) return;
+
+	// The rewound bound state already holds these effects; only their local temporal entries are missing.
+	TArray<UGMCAbilityEffect*> Ghosts;
+	CollectReplayGhosts(Ghosts);
+	for (UGMCAbilityEffect* Ghost : Ghosts)
+	{
+		// Ended at or before the source move: the rewound state no longer holds it.
+		const FGMASEffectReplayStamp& End = Ghost->ReplayEndStamp;
+		if (End.bSet && End.Time <= ReplayWindowStart) continue;
+		Ghost->RestoreGhostTemporalModifiersUpTo(ReplayWindowStart);
+	}
+
+	// A start made after the last move holds entries stamped at that move; CL_OnPostReplay puts them back.
+	for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffects)
+	{
+		if (IsValid(Pair.Value) && Pair.Value->HasAppliedEffect() && Pair.Value->ReplayStartStamp.bPending)
+		{
+			Pair.Value->RemoveAllTemporalModifiers();
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::TickReplayGhosts(float DeltaTime)
+{
+	if (!IsReplayJournalActive()) return;
+
+	TArray<UGMCAbilityEffect*> Ghosts;
+	CollectReplayGhosts(Ghosts);
+	for (UGMCAbilityEffect* Ghost : Ghosts)
+	{
+		if (!Ghost->bHasReplayLastModifierTick || ActionTimer > Ghost->ReplayLastModifierTickTime) continue;
+		// Its tick ran in this move only if it had started, and not yet ended, before the effects tick.
+		if (!Ghost->ReplayStartStamp.IsAtOrBefore(ActionTimer, EGMASReplayPhase::Abilities)) continue;
+		if (Ghost->ReplayEndStamp.IsAtOrBefore(ActionTimer, EGMASReplayPhase::Abilities)) continue;
+		Ghost->ReplayGhostTick(DeltaTime);
+	}
+}
+
+void UGMC_AbilitySystemComponent::CollectReplayGhosts(TArray<UGMCAbilityEffect*>& OutGhosts) const
+{
+	for (const TObjectPtr<UGMCAbilityEffect>& Ghost : ReplayGhostEffects)
+	{
+		if (IsValid(Ghost.Get()) && Ghost->HasAppliedEffect())
+		{
+			OutGhosts.AddUnique(Ghost.Get());
+		}
+	}
+	// An end outside a prediction tick keeps the effect in ActiveEffects until the next cleanup pass.
+	for (const TPair<int, UGMCAbilityEffect*>& Pair : ActiveEffects)
+	{
+		if (IsValid(Pair.Value) && Pair.Value->bCompleted && Pair.Value->HasAppliedEffect())
+		{
+			OutGhosts.AddUnique(Pair.Value);
+		}
+	}
+}
+
+void UGMC_AbilitySystemComponent::PruneReplayGhosts()
+{
+	if (ReplayGhostEffects.IsEmpty()) return;
+
+	TArray<UGMCAbilityEffect*> Released;
+
+	// Fallback bounds for a project that does not forward CL_OnAPMoveReceived. No replay reaches that far back.
+	ReplayGhostEffects.RemoveAll([this, &Released](const TObjectPtr<UGMCAbilityEffect>& Ghost)
+	{
+		if (!IsValid(Ghost.Get())) return true;
+		const FGMASEffectReplayStamp& End = Ghost->ReplayEndStamp;
+		const bool bRelease = End.bSet
+			? End.Time <= LastReceivedAPMoveTimestamp || End.Time < ActionTimer - GMASReplayJournal::GhostMaxAgeSeconds
+			: !End.bPending;
+		if (bRelease)
+		{
+			Released.Add(Ghost.Get());
+		}
+		return bRelease;
+	});
+
+	const int32 Excess = ReplayGhostEffects.Num() - GMASReplayJournal::GhostMaxCount;
+	if (Excess > 0)
+	{
+		for (int32 Index = 0; Index < Excess; ++Index)
+		{
+			Released.Add(ReplayGhostEffects[Index].Get());
+		}
+		ReplayGhostEffects.RemoveAt(0, Excess);
+	}
+
+	// CalculateValue checks the instigator of every entry: a released ghost must leave none behind.
+	for (UGMCAbilityEffect* Ghost : Released)
+	{
+		if (IsValid(Ghost))
+		{
+			Ghost->RemoveAllTemporalModifiers();
+		}
+	}
+}
+
+bool UGMC_AbilitySystemComponent::HasReplayGhostWithEffectID(int EffectID) const
+{
+	return ReplayGhostEffects.ContainsByPredicate([EffectID](const TObjectPtr<UGMCAbilityEffect>& Ghost)
+	{
+		return IsValid(Ghost.Get()) && Ghost->EffectData.EffectID == EffectID;
+	});
+}
+
+void UGMC_AbilitySystemComponent::RecordReplayBoundEffectIDWrite(int EffectID, bool bAdd)
+{
+	if (!IsReplayJournalActive()) return;
+
+	FGMASReplayBoundEffectIDWrite& Write = ReplayBoundEffectIDWrites.AddDefaulted_GetRef();
+	Write.EffectID = EffectID;
+	Write.bAdd = bAdd;
+	StampReplayTransition(nullptr, Write.Stamp);
+}
+
+void UGMC_AbilitySystemComponent::PruneReplayBoundEffectIDWrites()
+{
+	// A replay restarts at the last server move received or later: an older write never runs again.
+	ReplayBoundEffectIDWrites.RemoveAll([this](const FGMASReplayBoundEffectIDWrite& Write)
+	{
+		const FGMASEffectReplayStamp& Stamp = Write.Stamp;
+		return Stamp.bSet
+			&& (Stamp.Time <= LastReceivedAPMoveTimestamp || Stamp.Time < ActionTimer - GMASReplayJournal::GhostMaxAgeSeconds);
+	});
+
+	const int32 Excess = ReplayBoundEffectIDWrites.Num() - GMASReplayJournal::BoundEffectIDWriteMaxCount;
+	if (Excess > 0)
+	{
+		ReplayBoundEffectIDWrites.RemoveAt(0, Excess);
+	}
 }
 
 void UGMC_AbilitySystemComponent::ProcessReplayBurstDiagnostic()

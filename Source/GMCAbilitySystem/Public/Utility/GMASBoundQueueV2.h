@@ -17,18 +17,6 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnServerOperationForced, FInstanced
 
 
 USTRUCT()
-struct FOperationDataCacheExpiration
-{
-	GENERATED_BODY()
-	
-	// Operation ID
-	int OperationID = -1;
-
-	// The GMC move # (GMCMoveCounter) when this operation was added
-	int64 ModeAddedAt = -1;
-};
-
-USTRUCT()
 struct GMCABILITYSYSTEM_API FGMASBoundQueueV2
 {
 	GENERATED_BODY()
@@ -39,10 +27,12 @@ struct GMCABILITYSYSTEM_API FGMASBoundQueueV2
 	UPROPERTY()
 	UGMC_MovementUtilityCmp* GMCMovementComponent = nullptr;
 
-	// Every time a GMC move is processed, this counter is incremented
-	// Used to expire stale operation data
+	// Incremented each ancillary tick, on the server and on the client. Used to expire stale operation data.
 	int64 GMCMoveCounter = 0;
-	TArray<FOperationDataCacheExpiration> OperationDataCacheExpiration;
+
+	// OperationID -> GMCMoveCounter when its payload was cached. Every payload removal goes through
+	// RemovePayloadByID, so an entry never outlives its payload. A re-cache refreshes the entry.
+	TMap<int32, int64> OperationDataCacheExpiration;
 
 	void ClearStaleOperationData();
 	
@@ -69,12 +59,12 @@ protected:
 public:
 	// Accessors for OperationPayloads
 	
-	// Every payload removal goes through here so its expiration entry leaves with it: a server
-	// never advances GMCMoveCounter, so ClearStaleOperationData never prunes the list there.
+	// Every single-payload removal goes through here so its expiration entry and its report latch
+	// leave with it. ClearStaleOperationData and ResetForNewConnection prune all three in place.
 	void RemovePayloadByID(const int OperationID)
 	{
 		OperationPayloads.Remove(OperationID);
-		OperationDataCacheExpiration.RemoveAll([OperationID](const FOperationDataCacheExpiration& Entry) { return Entry.OperationID == OperationID; });
+		OperationDataCacheExpiration.Remove(OperationID);
 		ReportedInvalidPayloadIDs.Remove(OperationID);
 	}
 
@@ -189,8 +179,9 @@ public:
 	// to recognise the reprocess; older entries are evicted FIFO. IDs are monotonic for
 	// one connection (GetNextOperationID does not reuse a value), so an ID found here was
 	// genuinely processed -- there are no false benign-skips. A reconnecting client restarts
-	// its ids, so the server empties the ring then (ResetForNewConnection). Netmode-independent
-	// (does not depend on GMCMoveCounter, which never advances on a listen server).
+	// its ids, so the server empties the ring then (ResetForNewConnection). Netmode-independent:
+	// GMCMoveCounter counts ancillary ticks on every machine (the server advances it too), but the
+	// ring does not depend on it.
 	static constexpr int32 MaxRecentlyProcessedOperations = 256;
 	TArray<int32> RecentlyProcessedOperationIDs;
 

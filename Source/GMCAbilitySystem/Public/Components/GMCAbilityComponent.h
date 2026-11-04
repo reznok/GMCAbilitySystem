@@ -60,6 +60,7 @@ struct FGMASActiveEffectIDsState
 {
 	GENERATED_BODY()
 
+	// Sorted ascending: GMC compares the list element by element.
 	UPROPERTY()
 	TArray<int> IDs;
 };
@@ -216,7 +217,7 @@ public:
 
 	// Bound/Synced over GMC
 	UPROPERTY(BlueprintReadOnly, Category = "GMCAbilitySystem")
-	double ActionTimer;
+	double ActionTimer = 0.0;
 
 	// Is this a server-only pawn (not player-controlled)?
 	bool IsServerOnly() const;
@@ -860,8 +861,13 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="GMAS")
 	virtual void PreLocalMoveExecution();
-	
-	
+
+	// Client only. Call from the movement component's CL_OnAPMoveReceived, with the APMove timestamp:
+	// the payloads that the acknowledged move carried stop being resent.
+	UFUNCTION(BlueprintCallable, Category="GMAS")
+	virtual void CL_OnAPMoveReceived(double APMoveTimestamp);
+
+
 #pragma endregion GMC
 
 #pragma region ToStringHelpers
@@ -931,9 +937,23 @@ protected:
 	
 	FInstancedStruct TaskData = FInstancedStruct::Make(FGMCAbilityTaskData{});;
 
+	// A move carries one payload, and is sent once. Each later move also carries copies of the payloads that the
+	// server did not acknowledge yet, so a lost move delays a payload instead of losing it. Read by the server only.
+	// Empty = invalid struct: 1 bit when GMC sends it in full, and no allocation per move.
+	FInstancedStruct TaskDataResendA;
+	FInstancedStruct TaskDataResendB;
+
+	// Client-issued sequence number of the payload in each slot, 0 when the slot is empty. The server dispatches each
+	// number once, so a copy never runs a payload twice.
+	int32 TaskDataSeq = 0;
+	int32 TaskDataResendASeq = 0;
+	int32 TaskDataResendBSeq = 0;
+
 	void ClearAbilityAndTaskData();
 
 	void SendTaskDataToActiveAbility(bool bFromMovement);
+
+	void DispatchTaskData(const FInstancedStruct& Payload, bool bFromMovement);
 
 private:
 
@@ -1051,7 +1071,46 @@ private:
 	void InitializeStartingAbilities();
 	
 	TArray<FInstancedStruct> QueuedTaskData;
-	
+
+	struct FUnackedTaskData
+	{
+		FInstancedStruct Payload;
+		int32 Seq = 0;
+		double QueuedRealTime = 0.0;
+	};
+
+	// Client: payloads sent and not acknowledged yet, oldest first.
+	TArray<FUnackedTaskData> UnackedTaskData;
+
+	int32 LastIssuedTaskDataSeq = 0;
+
+	int32 TaskDataSeqBindIndex = -1;
+	int32 TaskDataResendASeqBindIndex = -1;
+	int32 TaskDataResendBSeqBindIndex = -1;
+
+	// Client: writes the resend slots of the move about to be saved.
+	void FillTaskDataResendSlots();
+
+	struct FMoveTaskData
+	{
+		int32 Seq = 0;
+		const FInstancedStruct* Payload = nullptr;
+	};
+
+	// Server, remote client pawn: the payloads of the move being executed, oldest first. Built on the first dispatch
+	// of the move, so both dispatch passes see the same list. Marked as dispatched when the move ends.
+	TArray<FMoveTaskData, TInlineAllocator<3>> MoveTaskData;
+	bool bMoveTaskDataBuilt = false;
+
+	// Server: highest sequence number dispatched, and bit N set when number (High - N) was dispatched.
+	int32 DispatchedTaskDataSeqHigh = 0;
+	uint64 DispatchedTaskDataSeqMask = 0;
+
+	bool IsRemoteClientPawnOnServer() const;
+	void BuildMoveTaskData();
+	bool IsTaskDataSeqDispatched(int32 Seq) const;
+	void MarkTaskDataSeqDispatched(int32 Seq);
+
 	FGMASBoundQueueV2 BoundQueueV2 = {};
 
 	// Local buffer for PredictedQueued operations called outside of a movement tick.
@@ -1091,6 +1150,17 @@ private:
 	// EnqueueServerOperation. Test builds can force the result via
 	// bForceNoAckClientForTest (headless harness can't populate GMC net-role state).
 	bool ShouldApplyServerOpImmediately() const;
+
+	// Requests made during BeginPlay wait for the first valid GMC prediction timestamp.
+	UPROPERTY(Transient)
+	TArray<FInstancedStruct> StartupAbilityRequests;
+	TMap<FGameplayTag, bool> StartupConcurrencyChecks;
+	// Reconnect effect snapshots received before that timestamp wait for it too.
+	UPROPERTY(Transient)
+	TArray<FGMCEffectSnapshot> StartupEffectSnapshots;
+	bool bStartupPredictionClockReady = false;
+	bool ShouldWaitForStartupClock() const;
+	void UpdateStartupPredictionClock(double Timestamp);
 
 	// Events
 	virtual bool ProcessOperation(FInstancedStruct OperationData, bool bFromMovementTick = true, bool bForce = false);
@@ -1270,23 +1340,12 @@ private:
 	UPROPERTY()
 	TMap<int /*ID*/, EGMCEffectAnswerState /*bServerConfirmed*/> ProcessedEffectIDs;
 
-	// Predict-replace recovery map (client-only). Key: SUCCESSOR effect's ID (the new
-	// instance applied via bUniqueByEffectTag REPLACE). Value: list of OLD instances
-	// that were marked bPendingDeathBySuccessor by that apply, awaiting server's verdict.
-	// On Pending → Validated: finalize each entry (real EndEffect on the OLD).
-	// On Pending → Timeout (server rejected): revive each entry (clear bPendingDeathBySuccessor).
-	// Server never populates this — server's force-end runs immediately at apply time.
-	//
-	// Not UPROPERTY: UHT rejects TMap with TArray-typed values (nested-container limit).
-	// TWeakObjectPtr handles its own GC staleness tracking so we don't need reflection
-	// for safety — entries naturally expire if the effect UObject is GC'd.
-	TMap<int /*SuccessorID*/, TArray<TWeakObjectPtr<UGMCAbilityEffect>>> PendingReplacements;
-
 	// Let the client know that the server has ended an effect
 	// In most cases, the client should have predicted this already,
 	// this is just for redundancy
+	// ServerActionTimer: the move in which the server ended it, so the client replay journal ends it there too.
 	UFUNCTION(Client, Reliable)
-	void RPCClientEndEffect(int EffectID);
+	void RPCClientEndEffect(int EffectID, double ServerActionTimer);
 
 	// Ability sync (client/server convergence of covered ability instances). One message struct, one
 	// reliable RPC per direction; GMASAbilitySyncRules decides what each side does with it.
@@ -1429,6 +1488,58 @@ private:
 	void ProcessReplayBurstDiagnostic();
 	void TryShowReplayBurstWarningWidget();
 
+	// --- Client replay journal for effects ---
+	// A replay rewinds bound tags and attributes, but not ActiveEffects, and it skips consumed activation
+	// operations. Without a journal, a replay loses every effect start and end inside its window, the
+	// replayed history diverges again, and the corrections chain ([ReplayBurst]).
+	EGMASReplayPhase CurrentReplayPhase = EGMASReplayPhase::None;
+	int32 ReplayTransitionSeq = 0;
+	// Incremented at the first replayed move of each replay pass. 0 is reserved for local moves.
+	int32 ReplayPassCount = 0;
+	bool bLastPredictionTickWasReplay = false;
+	double LastPredictionTickTime = 0.0;
+	// Set by CL_OnPreReplay. Once the movement component forwards that hook, it alone opens a replay pass.
+	bool bReplayPreReplayHookSeen = false;
+	bool bReplayPassStartRequested = false;
+	// Latest server move received: a replay never starts before it, so older ghosts can go.
+	double LastReceivedAPMoveTimestamp = -TNumericLimits<double>::Max();
+
+	// The replayed move re-runs the transitions stamped in (ReplayWindowStart, ReplayWindowMoveTime]. A range,
+	// not an equality: a move combine moves the timestamp of the previous move forward.
+	double ReplayWindowStart = 0.0;
+	double ReplayWindowMoveTime = 0.0;
+
+	// Set while RPCClientEndEffect ends this effect: its end stamp takes the server move time. Other stamps keep
+	// the normal rules.
+	const UGMCAbilityEffect* ReplayStampOverrideEffect = nullptr;
+	double ReplayStampOverrideTime = 0.0;
+
+	// Effects with a transition that ran outside a prediction tick, stamped by the next local move.
+	TArray<TWeakObjectPtr<UGMCAbilityEffect>> PendingReplayStampEffects;
+
+	// Ended effects whose window can still be replayed.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UGMCAbilityEffect>> ReplayGhostEffects;
+
+	// Writes to ActiveEffectIDsBound, in record order. The server compares that list with the client value of each
+	// move, so a replay must rebuild it as the original run did.
+	TArray<FGMASReplayBoundEffectIDWrite> ReplayBoundEffectIDWrites;
+
+	// Sorted write to ActiveEffectIDsBound, without a journal record.
+	void WriteBoundActiveEffectID(int EffectID, bool bAdd);
+	void RecordReplayBoundEffectIDWrite(int EffectID, bool bAdd);
+	void PruneReplayBoundEffectIDWrites();
+
+	void BeginReplayPassIfNeeded(bool bReplaying);
+	void ResolvePendingReplayStamps();
+	void ReplayEffectTransitions(EGMASReplayPhase Phase);
+	void RestoreReplayGhostsAtPassStart();
+	void TickReplayGhosts(float DeltaTime);
+	// Ended effects, including those that still wait in ActiveEffects for the cleanup pass of TickActiveEffects.
+	void CollectReplayGhosts(TArray<UGMCAbilityEffect*>& OutGhosts) const;
+	void PruneReplayGhosts();
+	bool HasReplayGhostWithEffectID(int EffectID) const;
+
 	friend UGMCAbilityAnimInstance;
 
 #if WITH_AUTOMATION_WORKER
@@ -1449,6 +1560,8 @@ public:
 	// override its behaviour through inheritance. Setting this flag forces
 	// IsReplayingForGMASLogic() to return true, exercising the production code
 	// path that skips polling/timeout reaping during replay.
+	void UpdateStartupPredictionClockForTest(double Timestamp) { UpdateStartupPredictionClock(Timestamp); }
+	int32 GetStartupAbilityRequestCountForTest() const { return StartupAbilityRequests.Num(); }
 	bool bForceReplayingForTest = false;
 
 	// Test seam for ServerProcessOperation. The function is private so tests cannot
@@ -1581,6 +1694,31 @@ public:
 	{
 		return DeriveAbilityIDFromOperation(OperationID, ActivationIndex);
 	}
+
+	bool IsTaskDataSeqDispatchedForTest(int32 Seq) const { return IsTaskDataSeqDispatched(Seq); }
+	void MarkTaskDataSeqDispatchedForTest(int32 Seq) { MarkTaskDataSeqDispatched(Seq); }
+
+	// Test seams for the replay journal: the headless harness has no owner pawn and no move timestamps.
+	bool bForceReplayJournalForTest = false;
+	bool bUseMoveTimestampOverrideForTest = false;
+	double MoveTimestampOverrideForTest = 0.0;
+	int32 GetReplayGhostCountForTest() const { return ReplayGhostEffects.Num(); }
+	void SetLastReceivedAPMoveTimestampForTest(double Timestamp) { LastReceivedAPMoveTimestamp = Timestamp; }
+	int32 GetReplayBoundEffectIDWriteCountForTest() const { return ReplayBoundEffectIDWrites.Num(); }
+	void RPCClientEndEffectForTest(int EffectID, double ServerActionTimer) { RPCClientEndEffect_Implementation(EffectID, ServerActionTimer); }
+	// GMC writes the server value of the list before it replays: no journal record.
+	void SetBoundActiveEffectIDsForTest(const TArray<int>& IDs)
+	{
+		if (FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetMutablePtr<FGMASActiveEffectIDsState>())
+		{
+			State->IDs = IDs;
+		}
+	}
+	TArray<int> GetBoundActiveEffectIDsForTest() const
+	{
+		const FGMASActiveEffectIDsState* State = ActiveEffectIDsBound.GetPtr<FGMASActiveEffectIDsState>();
+		return State ? State->IDs : TArray<int>();
+	}
 private:
 #endif
 
@@ -1596,6 +1734,22 @@ public:
 	// (polling promotion, Pending+timeout reap). Production wraps the GMC's own
 	// CL_IsReplaying(); test builds layer a per-component override on top.
 	bool IsReplayingForGMASLogic() const;
+
+	// The replay journal runs only on a predicting, locally controlled client: the only side that replays.
+	bool IsReplayJournalActive() const;
+
+	// Forward from the movement component's CL_PreReplay: opens a replay pass exactly once per replay.
+	// Without it, the pass start is guessed from the move times.
+	virtual void CL_OnPreReplay();
+
+	// Forward from CL_PostReplay: re-runs the transitions made after the last move, which no replayed move covers.
+	virtual void CL_OnPostReplay();
+
+	// Gives an effect transition its place in the move timeline (called by UGMCAbilityEffect).
+	void StampReplayTransition(UGMCAbilityEffect* Effect, FGMASEffectReplayStamp& Stamp);
+
+	// Arms the bilateral end of a Ticking/Periodic effect at the current move (called by UGMCAbilityEffect).
+	void ArmEffectEnd(UGMCAbilityEffect* Effect, double GraceTime);
 
 	// Centralized authority check for GMAS server-side dispatch. Production delegates to
 	// AActor::HasAuthority(); test builds layer bForceAuthorityForTest on top so that

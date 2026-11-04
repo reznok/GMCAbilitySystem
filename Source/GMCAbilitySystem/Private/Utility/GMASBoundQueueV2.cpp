@@ -42,24 +42,18 @@ bool FGMASBoundQueueV2::IsValidClientOperation(const FInstancedStruct& Data) con
 
 void FGMASBoundQueueV2::ClearStaleOperationData()
 {
-	const int MaximumFreshMoveIndex = GMCMoveCounter - GMCMovementComponent->MoveHistoryMaxSize;
+	const int64 MaximumFreshMoveIndex = GMCMoveCounter - GMCMovementComponent->MoveHistoryMaxSize;
+	const bool bServer = GMCMovementComponent->GetNetMode() < NM_Client;
 	for (auto It = OperationDataCacheExpiration.CreateIterator(); It; ++It)
 	{
-		const int64 MoveAddedAt = It->ModeAddedAt;
-		if (MoveAddedAt < MaximumFreshMoveIndex)
+		// The server keeps a payload until its client acks it or the grace period forces it.
+		if (It.Value() >= MaximumFreshMoveIndex || (bServer && ServerQueuedBoundOperationsGracePeriods.Contains(It.Key())))
 		{
-			const int OperationID = It->OperationID;
-			if (!OperationPayloads.Contains(OperationID))
-			{
-				// Dropped too, or it would warn again on every later tick.
-				UE_LOG(LogGMCAbilitySystem, Warning, TEXT("OperationID %d not found in OperationPayloads, but still in cache expiration map"), OperationID);
-				It.RemoveCurrent();
-				continue;
-			}
-			// Remove stale operation data
-			OperationPayloads.Remove(OperationID);
-			It.RemoveCurrent();
+			continue;
 		}
+		OperationPayloads.Remove(It.Key());
+		ReportedInvalidPayloadIDs.Remove(It.Key());
+		It.RemoveCurrent();
 	}
 }
 
@@ -177,18 +171,16 @@ void FGMASBoundQueueV2::GenAncillaryTick(const float DeltaTime)
 {
 	CheckValidState();
 
-	if (GMCMovementComponent->GetNetMode() >= NM_Client)
-	{
-		GMCMoveCounter++;
-		ClearStaleOperationData();
-	}
-	
+	// On the server too: the server caches every operation it makes, and nothing else expires them.
+	GMCMoveCounter++;
+	ClearStaleOperationData();
+
 	// Tick all Server Queued Operations
 	for (auto It = ServerQueuedBoundOperationsGracePeriods.CreateIterator(); It; ++It)
 	{
 		It.Value() -= DeltaTime;
-		
-		if (It.Value() <= 0) 
+
+		if (It.Value() <= 0)
 		{
 			if (OperationPayloads.Contains(It.Key()))
 			{
@@ -204,8 +196,7 @@ void FGMASBoundQueueV2::CacheOperationPayload(const int OperationID, const FInst
 {
 	// One expiration entry per id: caching an id again replaces its payload and restarts its age.
 	OperationPayloads.Add(OperationID, Payload);
-	OperationDataCacheExpiration.RemoveAll([OperationID](const FOperationDataCacheExpiration& Entry) { return Entry.OperationID == OperationID; });
-	OperationDataCacheExpiration.Add({OperationID, GMCMoveCounter});
+	OperationDataCacheExpiration.Add(OperationID, GMCMoveCounter);
 }
 
 void FGMASBoundQueueV2::QueueClientOperation(const int OperationID)
@@ -266,11 +257,19 @@ void FGMASBoundQueueV2::ResetForNewConnection()
 	{
 		if (It.Key() < 0)
 		{
-			ReportedInvalidPayloadIDs.Remove(It.Key());
 			It.RemoveCurrent();
 		}
 	}
-	OperationDataCacheExpiration.RemoveAll([this](const auto& Entry) { return Entry.OperationID < 0; });
+	for (auto It = OperationDataCacheExpiration.CreateIterator(); It; ++It)
+	{
+		if (It.Key() < 0)
+		{
+			It.RemoveCurrent();
+		}
+	}
+	// Only ever holds negative ids: an id that aged out without passing through here must not
+	// hide the report of the same id from the new connection.
+	ReportedInvalidPayloadIDs.Reset();
 }
 
 bool FGMASBoundQueueV2::WasOperationRecentlyProcessed(int32 OperationID) const
@@ -282,7 +281,11 @@ void FGMASBoundQueueV2::CheckValidState() const
 {
 	if (GMCMovementComponent->GetNetMode() < NM_Client)
 	{
-		if (ClientQueuedOperations.Num() > 0)
+		// Check Client Queued Operations is empty. A locally controlled server pawn (listen-server host,
+		// standalone) queues to itself through the local RPCOnServerOperationAdded: its next move drains
+		// it. AI pawns on a networked server get no Client RPC (EnqueueServerOperation passes
+		// bNotifyOwningClient=false), so anything queued there is a real leak.
+		if (ClientQueuedOperations.Num() > 0 && !GMCMovementComponent->IsLocallyControlledServerPawn())
 		{
 			if (!bReportedClientQueuedOnServer)
 			{

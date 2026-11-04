@@ -248,7 +248,7 @@ void FGMASBugFixSpec::Define()
 			AbilityComp->EnqueueServerOperationForTest(OpID);
 
 			TestEqual("no client operation parked on the server", Q.ClientQueuedOperations.Num(), 0);
-			TestEqual("the payload is not re-cached with a second expiration entry",
+			TestEqual("the enqueue adds no expiration entry (the op keeps its single entry)",
 				Q.OperationDataCacheExpiration.Num(), ExpirationsBefore);
 
 			// The next-tick force still applies it, exactly once, and the queue stays clean.
@@ -303,9 +303,12 @@ void FGMASBugFixSpec::Define()
 		});
 	});
 
-	// A server never advances GMCMoveCounter, so ClearStaleOperationData never prunes
-	// OperationDataCacheExpiration there. Before the fix every cached operation left one
-	// entry behind forever; now each payload removal takes its entry with it.
+	// OperationDataCacheExpiration maps an operation id to the GMCMoveCounter at which its payload was
+	// cached. Every machine, the server included, advances the counter each ancillary tick, and
+	// ClearStaleOperationData drops a payload older than MoveHistoryMaxSize ticks, except, on the
+	// server, one that still has a grace entry (its client has not acked it yet). Outside that pruning,
+	// an entry still leaves with its payload: every payload removal goes through RemovePayloadByID.
+	// The headless movement component has no owner, so it is standalone and counts as the server here.
 	Describe("Operation cache expiration entries", [this]()
 	{
 		auto MakeApplyEffectOp = [this](int EffectID) -> int
@@ -367,31 +370,76 @@ void FGMASBugFixSpec::Define()
 			const FInstancedStruct Payload = FInstancedStruct::Make(FGMASBoundQueueV2OperationBaseData());
 
 			Q.CacheOperationPayload(792, Payload);
+			Q.GMCMoveCounter += 5;
 			Q.CacheOperationPayload(792, Payload);
 			TestEqual("one entry per id", Q.OperationDataCacheExpiration.Num(), EntriesBefore + 1);
+			TestEqual("the re-cache restarts the entry's age", Q.OperationDataCacheExpiration.FindRef(792), Q.GMCMoveCounter);
 
 			Q.RemovePayloadByID(792);
 			TestFalse("payload removed", Q.HasPayloadByID(792));
 			TestEqual("entry removed with it", Q.OperationDataCacheExpiration.Num(), EntriesBefore);
 		});
 
-		It("ClearStaleOperationData drops an orphaned entry instead of warning on every tick", [this]()
+		It("ClearStaleOperationData drops an aged orphaned entry silently", [this]()
 		{
 			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
 			if (!TestNotNull("bound to a movement component", Q.GMCMovementComponent)) { return; }
 
-			// Exactly one occurrence: the second pass below must not warn again.
-			AddExpectedMessagePlain(TEXT("OperationID 793 not found in OperationPayloads, but still in cache expiration map"),
-				ELogVerbosity::Warning, EAutomationExpectedMessageFlags::Contains, 1);
-
-			Q.OperationDataCacheExpiration.Add({793, Q.GMCMoveCounter});   // an entry whose payload is already gone
+			Q.OperationDataCacheExpiration.Add(793, Q.GMCMoveCounter);   // an entry whose payload is already gone
 			Q.GMCMoveCounter += Q.GMCMovementComponent->MoveHistoryMaxSize + 1;
 
 			Q.ClearStaleOperationData();
+
+			TestFalse("orphaned entry removed", Q.OperationDataCacheExpiration.Contains(793));
+		});
+
+		It("the server expires an aged payload with no grace entry", [this]()
+		{
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			if (!TestNotNull("bound to a movement component", Q.GMCMovementComponent)) { return; }
+			const int32 PayloadsBefore = Q.GetPayloadCount();
+			const FInstancedStruct Payload = FInstancedStruct::Make(FGMASBoundQueueV2OperationBaseData());
+
+			Q.CacheOperationPayload(794, Payload);
+			TestFalse("no grace entry for a payload that was never queued", Q.ServerQueuedBoundOperationsGracePeriods.Contains(794));
+
+			// Still fresh at exactly MoveHistoryMaxSize ticks old.
+			Q.GMCMoveCounter += Q.GMCMovementComponent->MoveHistoryMaxSize;
+			Q.ClearStaleOperationData();
+			TestTrue("payload kept inside the window", Q.HasPayloadByID(794));
+
+			Q.GMCMoveCounter += 1;
 			Q.ClearStaleOperationData();
 
-			TestFalse("orphaned entry removed",
-				Q.OperationDataCacheExpiration.ContainsByPredicate([](const FOperationDataCacheExpiration& Entry) { return Entry.OperationID == 793; }));
+			TestFalse("aged payload expired", Q.HasPayloadByID(794));
+			TestEqual("payload count back where it was", Q.GetPayloadCount(), PayloadsBefore);
+			TestFalse("its expiration entry left with it", Q.OperationDataCacheExpiration.Contains(794));
+		});
+
+		It("the server keeps an aged payload while its grace entry exists", [this, MakeApplyEffectOp]()
+		{
+			AbilityComp->SetActionTimerForTest(1.0);
+			AbilityComp->bForceNoAckClientForTest = false;
+
+			FGMASBoundQueueV2& Q = AbilityComp->GetBoundQueueV2ForTest();
+			if (!TestNotNull("bound to a movement component", Q.GMCMovementComponent)) { return; }
+			const int OpID = MakeApplyEffectOp(795);
+
+			AbilityComp->EnqueueServerOperationForTest(OpID);
+			TestTrue("op waits for its client's ack", Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
+
+			// ClearStaleOperationData alone: an ancillary tick would also run the grace countdown.
+			Q.GMCMoveCounter += Q.GMCMovementComponent->MoveHistoryMaxSize + 1;
+			Q.ClearStaleOperationData();
+
+			TestTrue("aged payload kept while the grace entry exists", Q.HasPayloadByID(OpID));
+			TestTrue("its expiration entry kept too", Q.OperationDataCacheExpiration.Contains(OpID));
+
+			Q.ServerAcknowledgeOperation(OpID);
+
+			TestFalse("payload removed by the ack", Q.HasPayloadByID(OpID));
+			TestFalse("expiration entry removed by the ack", Q.OperationDataCacheExpiration.Contains(OpID));
+			TestFalse("grace entry removed by the ack", Q.ServerQueuedBoundOperationsGracePeriods.Contains(OpID));
 		});
 	});
 
@@ -798,8 +846,8 @@ void FGMASBugFixSpec::Define()
 	// which the headless harness only reaches through the bForceNetworkedForTest seam (orphan
 	// components default to Standalone); the arming itself is covered by GMAS.Unit.EffectLifecycle.
 	// These cases test the *consume* side of the defer on purpose: directly set EndAtActionTimer on
-	// a properly-initialised effect and verify Tick fires EndEffect at the absolute timestamp
-	// regardless of DeltaTime. The design uses ActionTimer comparison (deterministic across
+	// a properly-initialised effect and verify Tick fires EndEffect on the first move strictly past
+	// the absolute timestamp, regardless of DeltaTime. The design uses ActionTimer comparison (deterministic across
 	// replays) instead of a per-tick countdown.
 	Describe("PredictedEnd defer Tick consume (ActionTimer-absolute)", [this]()
 	{
@@ -824,7 +872,7 @@ void FGMASBugFixSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 
-		It("Tick fires EndEffect when ActionTimer reaches EndAtActionTimer exactly", [this]()
+		It("Tick keeps the defer at EndAtActionTimer exactly, then fires on the next move", [this]()
 		{
 			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			Effect->AddToRoot();
@@ -834,13 +882,89 @@ void FGMASBugFixSpec::Define()
 			Data.Duration   = 0.f;
 			AbilityComp->ApplyAbilityEffect(Effect, Data);
 
+			// Strict boundary: the move that armed the defer still ticks, whatever the phase of the Remove call.
 			AbilityComp->SetActionTimerForTest(6.0);
-			Effect->EndAtActionTimer = 6.0;  // boundary: >= triggers
+			Effect->EndAtActionTimer = 6.0;
+			Effect->Tick(0.f);
+			TestFalse("Not completed on the arming move", Effect->bCompleted);
 
+			AbilityComp->SetActionTimerForTest(6.033);
 			Effect->Tick(0.f);
 
 			TestTrue("Effect completed via EndEffect",  Effect->bCompleted);
 			TestEqual("EndAt latch reset to -1.0",      Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("RPCClientEndEffect ends an armed effect at once too", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// The RPC can only find the effect alive when the server ended it before the client armed it.
+			AbilityComp->SetActionTimerForTest(6.0);
+			Effect->EndAtActionTimer = 6.0;
+			AbilityComp->RPCClientEndEffectForTest(Effect->EffectData.EffectID, 5.9);
+
+			TestTrue("Armed effect ended by the RPC", Effect->bCompleted);
+			TestEqual("Latch reset to -1.0",          Effect->EndAtActionTimer, -1.0);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("A Remove made between moves arms on the next local move only", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// Pending arm with the default grace. A replayed move is older than the Remove: no arm.
+			Effect->PendingEndGrace = 0.0;
+			AbilityComp->SetActionTimerForTest(6.0);
+			AbilityComp->bForceReplayingForTest = true;
+			Effect->Tick(0.f);
+			AbilityComp->bForceReplayingForTest = false;
+			TestEqual("Replayed move: still pending", Effect->PendingEndGrace, 0.0);
+			TestEqual("Replayed move: not armed",     Effect->EndAtActionTimer, -1.0);
+
+			// The next local move arms at its own time and still ticks.
+			AbilityComp->SetActionTimerForTest(6.033);
+			Effect->Tick(0.f);
+			TestEqual("Local move: armed at its time", Effect->EndAtActionTimer, 6.033);
+			TestFalse("Local move: not ended yet",     Effect->bCompleted);
+
+			AbilityComp->SetActionTimerForTest(6.066);
+			Effect->Tick(0.f);
+			TestTrue("Next move: ended", Effect->bCompleted);
+
+			Effect->RemoveFromRoot();
+		});
+
+		It("RPCClientEndEffect ends an unarmed effect at once", [this]()
+		{
+			UGMCAbilityEffect* Effect = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			Effect->AddToRoot();
+
+			FGMCAbilityEffectData Data;
+			Data.EffectType = EGMASEffectType::Persistent;
+			Data.Duration   = 0.f;
+			AbilityComp->ApplyAbilityEffect(Effect, Data);
+
+			// Server-only end: the server already ended it, so no local defer.
+			AbilityComp->SetActionTimerForTest(6.0);
+			AbilityComp->RPCClientEndEffectForTest(Effect->EffectData.EffectID, 5.9);
+
+			TestTrue("Unarmed effect ended by the RPC", Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
@@ -907,7 +1031,7 @@ void FGMASBugFixSpec::Define()
 			TestFalse("Not yet completed (5.7 < 6.0)",  Effect->bCompleted);
 
 			AbilityComp->SetActionTimerForTest(6.1);  Effect->Tick(0.4f);
-			TestTrue("Completed (6.1 >= 6.0)",          Effect->bCompleted);
+			TestTrue("Completed (6.1 > 6.0)",           Effect->bCompleted);
 
 			Effect->RemoveFromRoot();
 		});
@@ -1232,15 +1356,9 @@ void FGMASBugFixSpec::Define()
 			EffectHealth->RemoveFromRoot(); EffectMana->RemoveFromRoot();
 		});
 
-		It("Deferred match suspended client-side by re-Apply (server-accept path finalizes)", [this]()
+		It("Deferred match ended at once by re-Apply (both sides)", [this]()
 		{
-			// Client predict-apply: OLD is suspended (bPendingDeathBySuccessor) but
-			// not yet finalized. Tracking entry recorded in PendingReplacements.
-			// When the polling promotes the successor to Validated (server bound
-			// state confirms), the OLD is finalized via real EndEffect.
-			// The seam makes RemoveActiveAbilityEffect take its networked branch so the
-			// deferral arms through the production path.
-			AbilityComp->bForceNetworkedForTest = true;
+			// The harness is standalone, so RemoveActiveAbilityEffect ends at once: the defer is armed by hand.
 			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
 			EffectA->AddToRoot(); EffectB->AddToRoot();
@@ -1254,35 +1372,38 @@ void FGMASBugFixSpec::Define()
 
 			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
 			TestNotNull("First Apply succeeds", AppliedA);
+			AppliedA->EndAtActionTimer = AbilityComp->ActionTimer + 1.0;
 
-			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			TestTrue("EffectA still alive in ActiveEffects (defer armed)",
-				AbilityComp->GetActiveEffects().Contains(AppliedA->EffectData.EffectID));
-			TestFalse("EffectA not ended by Remove (deferred)", AppliedA->bCompleted);
-			TestTrue("EffectA's EndAtActionTimer is armed", AppliedA->EndAtActionTimer >= 0.0);
-
-			// Re-Apply: B succeeds, A is SUSPENDED (not finalized).
 			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
 			TestNotNull("Re-Apply succeeds during A's defer window", AppliedB);
+			TestTrue ("A ended at once",  AppliedA->bCompleted);
+			TestEqual("A latch reset",    AppliedA->EndAtActionTimer, -1.0);
+			TestFalse("B alive",          AppliedB->bCompleted);
 
-			// On the headless harness HasAuthority() is false (orphan component),
-			// so the client suspend path runs.
-			TestTrue ("EffectA suspended (bPendingDeathBySuccessor=true)",
-				AppliedA->bPendingDeathBySuccessor);
-			TestFalse("EffectA NOT yet finalized (bCompleted=false)",
-				AppliedA->bCompleted);
-			TestTrue ("EffectA's EndAtActionTimer still armed (preserved for revival path)",
-				AppliedA->EndAtActionTimer >= 0.0);
+			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
+		});
 
-			// Simulate server confirmation: bound state contains B's ID + polling
-			// promotes B to Validated, which finalizes A.
-			AbilityComp->BoundActiveEffectIDs_Add(AppliedB->EffectData.EffectID);
-			AbilityComp->TickActiveEffects(0.f);
+		It("Same-tag effect with a pending arm ended at once by re-Apply", [this]()
+		{
+			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
+			EffectA->AddToRoot(); EffectB->AddToRoot();
 
-			TestTrue ("EffectA finalized after B promoted to Validated (bCompleted=true)",
-				AppliedA->bCompleted);
-			TestEqual("EffectA's EndAtActionTimer cleared after finalization",
-				AppliedA->EndAtActionTimer, -1.0);
+			FGMCAbilityEffectData Data;
+			Data.EffectType         = EGMASEffectType::Ticking;
+			Data.Duration           = 0.f;
+			Data.EffectTag          = HealthTag;
+			Data.bUniqueByEffectTag = true;
+
+			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
+			TestNotNull("First Apply succeeds", AppliedA);
+			// A Remove made between moves.
+			AppliedA->PendingEndGrace = 0.0;
+
+			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
+			TestNotNull("Re-Apply succeeds while A waits for its arm", AppliedB);
+			TestTrue ("A ended at once",     AppliedA->bCompleted);
+			TestEqual("A pending arm reset", AppliedA->PendingEndGrace, -1.0);
 
 			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});
@@ -1355,70 +1476,6 @@ void FGMASBugFixSpec::Define()
 				AbilityComp->GetActiveEffects().Contains(Applied2->EffectData.EffectID));
 
 			PendingEffect->RemoveFromRoot(); ReapableEffect->RemoveFromRoot();
-		});
-
-		It("Deferred match revived by re-Apply timeout (server-reject path)", [this]()
-		{
-			// Client predict-apply: OLD suspended, successor stamped Pending. The
-			// server's bound state never confirms (= rejection). After the timeout
-			// window, the successor is reaped and the suspended OLD is REVIVED:
-			// bPendingDeathBySuccessor cleared, OLD resumes ticking modifiers and its
-			// own deferred end still fires when due.
-			// The reap logs `Effect ... Not Confirmed By Server (ID: ...), Removing...` at
-			// Error severity; declared so the framework does not fail the test on it.
-			AddExpectedErrorPlain(TEXT("Not Confirmed By Server"), EAutomationExpectedErrorFlags::Contains, 1);
-			AbilityComp->bForceNetworkedForTest = true;
-			UGMCAbilityEffect* EffectA = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			UGMCAbilityEffect* EffectB = NewObject<UGMCAbilityEffect>(GetTransientPackage());
-			EffectA->AddToRoot(); EffectB->AddToRoot();
-
-			FGMCAbilityEffectData Data;
-			Data.EffectType         = EGMASEffectType::Ticking;
-			Data.Duration           = 0.f;
-			Data.ClientGraceTime    = 1.f;
-			Data.EffectTag          = HealthTag;
-			Data.bUniqueByEffectTag = true;
-
-			// Clock at 1.0 (harness seed): A's deferred end arms at 2.0.
-			UGMCAbilityEffect* AppliedA = AbilityComp->ApplyAbilityEffect(EffectA, Data);
-			AbilityComp->RemoveActiveAbilityEffect(AppliedA);
-			TestFalse("A not ended by Remove (deferred)", AppliedA->bCompleted);
-			TestEqual("A's deferred end armed at 2.0", AppliedA->EndAtActionTimer, 2.0);
-
-			UGMCAbilityEffect* AppliedB = AbilityComp->ApplyAbilityEffect(EffectB, Data);
-			TestNotNull("B applied", AppliedB);
-			TestTrue ("A suspended", AppliedA->bPendingDeathBySuccessor);
-
-			// Models the state after a server correction lacking B has been adopted while B is still
-			// Pending. In production the client writes its own predicted ids into the bound list and
-			// promotes them on its next tick, so this window is about one move wide today (recorded as
-			// a design item in the pull request); this case tests the reap/revive mechanics, not the
-			// arrival of the verdict. The clock goes past the confirmation timeout (apply at 1.0 +
-			// 0.5 s) but short of A's deferred end at 2.0 so the reap fires while A is still due.
-			AbilityComp->BoundActiveEffectIDs_Remove(AppliedB->EffectData.EffectID);
-			AbilityComp->AdvanceConfirmClockForTest(0.75);   // confirm clock past apply + 0.5 s, while ActionTimer stays short of A's end
-			AbilityComp->SetActionTimerForTest(1.75);
-			AbilityComp->TickActiveEffects(0.f);
-
-			// B transits Pending -> Timeout -> cleanup within this one TickActiveEffects call, which
-			// drops its ProcessedEffectIDs entry; the reap is observable as B gone and ended.
-			TestTrue ("B reaped (ended)", AppliedB->bCompleted);
-			TestFalse("B gone from ActiveEffects",
-				AbilityComp->GetActiveEffects().Contains(AppliedB->EffectData.EffectID));
-			TestFalse("B gone from ProcessedEffectIDs",
-				AbilityComp->GetProcessedEffectIDsForTest().Contains(AppliedB->EffectData.EffectID));
-			TestFalse("A revived (bPendingDeathBySuccessor=false)",
-				AppliedA->bPendingDeathBySuccessor);
-			TestFalse("A still alive (not bCompleted)",
-				AppliedA->bCompleted);
-			TestEqual("A's deferred end still armed at 2.0", AppliedA->EndAtActionTimer, 2.0);
-
-			// The revived A ends on its own deferred end.
-			AbilityComp->SetActionTimerForTest(2.0);
-			AbilityComp->TickActiveEffects(0.f);
-			TestTrue("A ended at its deferred end", AppliedA->bCompleted);
-
-			EffectA->RemoveFromRoot(); EffectB->RemoveFromRoot();
 		});
 
 		It("Re-Apply allowed once the previous instance has been removed", [this]()
@@ -2363,6 +2420,46 @@ void FGMASBugFixSpec::Define()
 			TestFalse("pending consumed", AbilityComp->GetTeleportPendingForMoveForTest());
 			AbilityComp->GenPredictionTick(0.f);
 			TestFalse("flag cleared on the move after", AbilityComp->bJustTeleported);
+		});
+	});
+
+	// TaskData resend: the server dispatches each client sequence number once, whatever slot carries it.
+	Describe("TaskData resend sequence window", [this]()
+	{
+		It("A number is dispatched once, a copy of it is not", [this]()
+		{
+			TestFalse("Seq 1 is new", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			TestTrue("Copy of seq 1 is a duplicate", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			TestFalse("Seq 2 is new", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+		});
+
+		It("A lost number stays new after later numbers are dispatched", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(3);
+			TestFalse("Seq 2, skipped, is still new", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+			TestTrue("Seq 1 stays dispatched after the window moved", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(2);
+			TestTrue("Seq 2 dispatched late", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
+			TestTrue("Seq 3 still dispatched", AbilityComp->IsTaskDataSeqDispatchedForTest(3));
+		});
+
+		It("A large jump forward clears the window", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(5);
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(200);
+			TestTrue("Seq 200 dispatched", AbilityComp->IsTaskDataSeqDispatchedForTest(200));
+			TestFalse("Seq 199 new", AbilityComp->IsTaskDataSeqDispatchedForTest(199));
+		});
+
+		It("A restarted client sequence is accepted", [this]()
+		{
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(500);
+			TestFalse("Seq 1 far behind the window is new", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			AbilityComp->MarkTaskDataSeqDispatchedForTest(1);
+			TestTrue("Seq 1 dispatched after the restart", AbilityComp->IsTaskDataSeqDispatchedForTest(1));
+			TestFalse("Seq 2 new after the restart", AbilityComp->IsTaskDataSeqDispatchedForTest(2));
 		});
 	});
 }

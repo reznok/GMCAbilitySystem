@@ -158,13 +158,15 @@ void FGMASEffectLifecycleSpec::Define()
 	BeforeEach([this]() { SetupHarness();    });
 	AfterEach ([this]() { TeardownHarness(); });
 
-	// RemoveActiveAbilityEffect on a networked Ticking/Periodic effect arms EndAtActionTimer =
-	// ActionTimer + grace instead of ending the effect, so client and server fire the same number
-	// of applications before EndEffect. The grace is the per-effect ClientGraceTime when > 0, else
-	// the project default; 0 means no deferral.
+	// RemoveActiveAbilityEffect on a networked Ticking/Periodic effect defers the end instead of
+	// ending the effect, so client and server fire the same number of applications before EndEffect.
+	// A Remove made between moves (as here) only stores the grace in PendingEndGrace; the next live
+	// tick arms EndAtActionTimer = that tick's ActionTimer + grace, and the effect ends on the first
+	// tick strictly above it. The grace is the per-effect ClientGraceTime when > 0, else the project
+	// default; with 0 the effect still ticks on the arming move and ends on the move after it.
 	Describe("Grace deferral on removal", [this]()
 	{
-		It("networked Ticking removal arms EndAtActionTimer = ActionTimer + grace and ends when the clock reaches it", [this]()
+		It("networked Ticking removal between moves arms on the next tick at its time + grace and ends strictly after it", [this]()
 		{
 			AbilityComp->bForceNetworkedForTest = true;
 			GetMutableDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime = 0.5f;
@@ -175,11 +177,16 @@ void FGMASEffectLifecycleSpec::Define()
 			if (!TestNotNull("applied", Applied)) { Effect->RemoveFromRoot(); return; }
 			AbilityComp->RemoveActiveAbilityEffect(Applied);
 			TestFalse("not ended yet", Applied->bCompleted);
-			TestEqual("armed at 1.5", Applied->EndAtActionTimer, 1.5);
+			TestEqual("pending with the grace", Applied->PendingEndGrace, 0.5);
+			TestEqual("not armed before a tick", Applied->EndAtActionTimer, -1.0);
 			AbilityComp->SetActionTimerForTest(1.25); AbilityComp->TickActiveEffects(0.25f);
+			TestEqual("armed at 1.25 + 0.5", Applied->EndAtActionTimer, 1.75);
+			TestEqual("pending consumed", Applied->PendingEndGrace, -1.0);
 			TestFalse("still alive at 1.25", Applied->bCompleted);
-			AbilityComp->SetActionTimerForTest(1.5); AbilityComp->TickActiveEffects(0.25f);
-			TestTrue("ended at 1.5", Applied->bCompleted);
+			AbilityComp->SetActionTimerForTest(1.75); AbilityComp->TickActiveEffects(0.5f);
+			TestFalse("still alive at exactly 1.75", Applied->bCompleted);
+			AbilityComp->SetActionTimerForTest(2.0); AbilityComp->TickActiveEffects(0.25f);
+			TestTrue("ended at 2.0", Applied->bCompleted);
 			Effect->RemoveFromRoot();
 		});
 
@@ -194,7 +201,13 @@ void FGMASEffectLifecycleSpec::Define()
 			if (!TestNotNull("applied", Applied)) { Effect->RemoveFromRoot(); return; }
 			AbilityComp->RemoveActiveAbilityEffect(Applied);
 			TestFalse("not ended yet", Applied->bCompleted);
-			TestEqual("armed at 1.5", Applied->EndAtActionTimer, 1.5);
+			TestEqual("pending with the grace", Applied->PendingEndGrace, 0.5);
+			TestEqual("not armed before a tick", Applied->EndAtActionTimer, -1.0);
+			AbilityComp->SetActionTimerForTest(1.25); AbilityComp->TickActiveEffects(0.25f);
+			TestEqual("armed at 1.25 + 0.5", Applied->EndAtActionTimer, 1.75);
+			TestFalse("still alive at 1.25", Applied->bCompleted);
+			AbilityComp->SetActionTimerForTest(2.0); AbilityComp->TickActiveEffects(0.75f);
+			TestTrue("ended above 1.75", Applied->bCompleted);
 			Effect->RemoveFromRoot();
 		});
 
@@ -213,7 +226,7 @@ void FGMASEffectLifecycleSpec::Define()
 			Effect->RemoveFromRoot();
 		});
 
-		It("a project grace of 0 ends the effect at once", [this]()
+		It("a project grace of 0 arms at the next tick, which still ticks, and ends on the tick after it", [this]()
 		{
 			AbilityComp->bForceNetworkedForTest = true;
 			GetMutableDefault<UGMASNetworkTimingSettings>()->DefaultClientGraceTime = 0.f;
@@ -223,8 +236,14 @@ void FGMASEffectLifecycleSpec::Define()
 			UGMCAbilityEffect* Applied = AbilityComp->ApplyAbilityEffect(Effect, Data);
 			if (!TestNotNull("applied", Applied)) { Effect->RemoveFromRoot(); return; }
 			AbilityComp->RemoveActiveAbilityEffect(Applied);
-			TestTrue("ended at once", Applied->bCompleted);
-			TestEqual("not armed", Applied->EndAtActionTimer, -1.0);
+			TestFalse("not ended at the Remove", Applied->bCompleted);
+			TestEqual("pending with a zero grace", Applied->PendingEndGrace, 0.0);
+			TestEqual("not armed before a tick", Applied->EndAtActionTimer, -1.0);
+			AbilityComp->SetActionTimerForTest(1.25); AbilityComp->TickActiveEffects(0.25f);
+			TestEqual("armed at the tick time", Applied->EndAtActionTimer, 1.25);
+			TestFalse("the arming tick still ticks", Applied->bCompleted);
+			AbilityComp->SetActionTimerForTest(1.5); AbilityComp->TickActiveEffects(0.25f);
+			TestTrue("ended on the next tick", Applied->bCompleted);
 			Effect->RemoveFromRoot();
 		});
 
@@ -239,7 +258,14 @@ void FGMASEffectLifecycleSpec::Define()
 			if (!TestNotNull("applied", Applied)) { Effect->RemoveFromRoot(); return; }
 			AbilityComp->RemoveActiveAbilityEffect(Applied);
 			TestFalse("deferred", Applied->bCompleted);
-			TestEqual("armed at 1.25", Applied->EndAtActionTimer, 1.25);
+			TestEqual("pending with the per-effect grace", Applied->PendingEndGrace, 0.25);
+			TestEqual("not armed before a tick", Applied->EndAtActionTimer, -1.0);
+			AbilityComp->SetActionTimerForTest(1.25); AbilityComp->TickActiveEffects(0.25f);
+			TestEqual("armed at 1.25 + 0.25", Applied->EndAtActionTimer, 1.5);
+			AbilityComp->SetActionTimerForTest(1.5); AbilityComp->TickActiveEffects(0.25f);
+			TestFalse("still alive at exactly 1.5", Applied->bCompleted);
+			AbilityComp->SetActionTimerForTest(1.75); AbilityComp->TickActiveEffects(0.25f);
+			TestTrue("ended above 1.5", Applied->bCompleted);
 			Effect->RemoveFromRoot();
 		});
 

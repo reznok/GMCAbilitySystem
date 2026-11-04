@@ -94,6 +94,13 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// Used to purge "future modifiers" during replay
 	void PurgeTemporalModifier(double CurrentActionTimer);
+
+	// Client replay journal: copies the temporal entries of one effect, and puts one back when it is missing.
+	void GetTemporalModifiersOf(const UGMCAbilityEffect* InstigatorEffect, TArray<FAttributeTemporaryModifier>& OutModifiers) const;
+	void RestoreTemporalModifier(const FAttributeTemporaryModifier& Modifier) const;
+
+	// Forces the next CalculateValue. A replayed transition must recalculate even when its entry is already in place.
+	void MarkDirty() const { bIsDirty = true; }
 	
 
 	int32 BoundIndex = INDEX_NONE;
@@ -147,9 +154,9 @@ struct GMCABILITYSYSTEM_API FAttribute : public FFastArraySerializerItem
 
 	// This is the sum of permanent modification applied to this attribute.
 	// Replicated to Simulated Proxy
-	// Permanent writes (Instant effects, non-history modifiers) live here and are restored on replay
-	// only through the bound RawValue; an Instant effect that already ended is not re-applied by a
-	// replay, so one correction can follow such a write inside a replayed window.
+	// Permanent writes (Instant effects, non-history modifiers) live here and are rewound with the
+	// bound RawValue on a replay; the client replay journal then re-applies the start writes of an
+	// effect stamped inside the replayed window (an ended Instant effect included) at its own move.
 	UPROPERTY()
 	mutable float RawValue = 0.f;
 

@@ -9,17 +9,17 @@
 /**
  * Server-wise tunables for the network-timing safety windows used by GMAS effects.
  *
- * Three parameters live here:
+ * Six parameters live here:
  *  - `ClientEffectApplicationTimeout`: how long the client holds a Predicted effect
  *    waiting for server confirmation before rolling it back.
- *  - `DefaultClientGraceTime`: the bilateral defer window used at Remove time for
- *    Ticking/Periodic effects so client and server end on the same logical move tick
- *    (0 = off: a removed effect ends at once on each side). A per-effect
- *    `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default on a per-instance
- *    basis (designers can extend the window for slow drains, or defer one effect while the
- *    project default is 0).
+ *  - `DefaultClientGraceTime`: the extra bilateral defer used at Remove time for
+ *    Ticking/Periodic effects. With 0, the effect ends at the next move on both sides.
+ *    A per-effect `FGMCAbilityEffectData::ClientGraceTime > 0` overrides this default
+ *    on a per-instance basis (designers can extend the window for slow drains).
  *  - `ServerOperationGraceSeconds`: how long the server waits for the owning client to
  *    acknowledge a server operation before applying it on the server anyway.
+ *  - `AbilityReconcileMinAge`, `AbilityDigestInterval`, `AbilityAnswerHoldTime`: the
+ *    ability convergence windows (digest age and cadence, early answer hold).
  *
  * Defaults are sized for typical RTT (30-150 ms) + jitter + one server tick at 30 Hz
  * (≈33 ms). Raise above 0.5 s if shipping to high-latency regions (sat / 200+ ms RTT)
@@ -52,18 +52,17 @@ public:
 
 	/**
 	 * Default bilateral defer window (seconds) for Ticking/Periodic effect end. Both client
-	 * and server arm `EndAtActionTimer = ActionTimer + this` so each side fires the same
-	 * number of Tick / period-boundary applications before the effect actually ends.
+	 * and server arm `EndAtActionTimer = ActionTimer + this`, and the effect ends at the first
+	 * move strictly after it. So each side fires the same number of Tick / period-boundary
+	 * applications, whatever the phase of the Remove call in its move.
+	 *
+	 * 0 (default): the effect ends at the next move. The phase symmetry needs no longer window.
 	 *
 	 * Per-effect override: set `FGMCAbilityEffectData::ClientGraceTime > 0` on the effect
 	 * itself to use a different window for that effect only (sentinel 0 = use this default).
-	 *
-	 * 0 turns the deferral off project-wide: a removed Ticking/Periodic effect ends at once on
-	 * each side (instant visual removal, at the cost of up to ~RTT of client/server drift in the
-	 * applied amount). A per-effect ClientGraceTime > 0 still defers that effect.
 	 */
-	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0.0", UIMin="0.0", ForceUnits="s"))
-	float DefaultClientGraceTime = 0.5f;
+	UPROPERTY(Config, EditAnywhere, Category="Timing", meta=(ClampMin="0", UIMin="0", ForceUnits="s"))
+	float DefaultClientGraceTime = 0.f;
 
 	/**
 	 * Seconds the server waits for the owning client to acknowledge a server operation (effect
