@@ -2678,6 +2678,13 @@ bool UGMC_AbilitySystemComponent::ProcessOperation(FInstancedStruct OperationDat
 {
 	if (!BoundQueueV2.IsValidGMASOperation(OperationData)) return false;
 
+	// On a client, an acknowledgement in the slot means an earlier sub-step of this move applied the operation.
+	// A replay restarts from the move's saved input, which holds the operation, so it still applies once.
+	if (!HasAuthority() && OperationData.GetScriptStruct() == FGMASBoundQueueV2AcknowledgeOperation::StaticStruct())
+	{
+		return false;
+	}
+
 	// Batched dispatch: server broadcast N ops in the same client move payload.
 	// Recurse into each sub-op via a synthetic base wrapper carrying only the
 	// sub-op's OperationID; the inner ProcessOperation looks up the actual
