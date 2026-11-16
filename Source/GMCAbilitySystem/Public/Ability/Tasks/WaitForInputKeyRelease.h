@@ -58,6 +58,9 @@ private:
 	
 	UEnhancedInputComponent* GetEnhancedInputComponent() const;
 
+	// Live value of the ability's input action. Zero when the local player chain is not available.
+	FInputActionValue GetLiveActionValue() const;
+
 	int64 InputBindingHandle = -1;
 
 	float MaxDuration;
@@ -67,5 +70,8 @@ private:
 	double OldTime;
 
 	bool bTimedOut = false;
-	
+
+	// A release came in while the ASC deferred it. AncillaryTick checks the live key when the deferral ends.
+	bool bReleaseDeferred = false;
+
 };

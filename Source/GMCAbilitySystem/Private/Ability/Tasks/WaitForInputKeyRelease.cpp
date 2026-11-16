@@ -47,13 +47,7 @@ void UGMCAbilityTask_WaitForInputKeyRelease::Activate()
 		if (bShouldCheckForReleaseDuringActivation && IsClientOrRemoteListenServerPawn()
 			&& !AbilitySystemComponent->IsReplayingForGMASLogic())
 		{
-			FInputActionValue ActionValue = FInputActionValue();
-			// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
-			// guard the chain instead of dereferencing blindly.
-			APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
-			if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
-				ActionValue = InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
-			}
+			const FInputActionValue ActionValue = GetLiveActionValue();
 
 			if (ActionValue.GetMagnitude() == 0)
 			{
@@ -75,7 +69,20 @@ void UGMCAbilityTask_WaitForInputKeyRelease::AncillaryTick(float DeltaTime)
 {
 	Super::AncillaryTick(DeltaTime);
 	if (bTaskCompleted) return;
-	
+
+	// Same replay-safety as Activate: the live key state is only valid on the owning client, outside a replay.
+	if (bReleaseDeferred && IsClientOrRemoteListenServerPawn() && !AbilitySystemComponent->IsReplayingForGMASLogic()
+		&& !AbilitySystemComponent->IsInputReleaseDeferred(Ability))
+	{
+		bReleaseDeferred = false;
+		// Key held again: keep the binding, the next release ends the task.
+		if (GetLiveActionValue().GetMagnitude() == 0)
+		{
+			ClientProgressTask();
+			InputBindingHandle = -1;
+		}
+	}
+
 	Duration = AbilitySystemComponent->ActionTimer - StartTime;
 	OnTick.Broadcast(Duration);
 
@@ -96,6 +103,13 @@ void UGMCAbilityTask_WaitForInputKeyRelease::AncillaryTick(float DeltaTime)
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnKeyReleased(const FInputActionValue& InputActionValue)
 {
+	// Keep the binding: AncillaryTick ends the task when the deferral ends and the key is up.
+	if (AbilitySystemComponent->IsInputReleaseDeferred(Ability))
+	{
+		bReleaseDeferred = true;
+		return;
+	}
+
 	// Unbind since we're done now.
 	ClientProgressTask();
 	InputBindingHandle = -1;
@@ -112,6 +126,17 @@ UEnhancedInputComponent* UGMCAbilityTask_WaitForInputKeyRelease::GetEnhancedInpu
 		}
 	}
 	return nullptr;
+}
+
+FInputActionValue UGMCAbilityTask_WaitForInputKeyRelease::GetLiveActionValue() const
+{
+	// PC can be null during possession transitions (and GetLocalPlayer on a remote PC) —
+	// guard the chain instead of dereferencing blindly.
+	const APlayerController* PC = AbilitySystemComponent->GetOwner()->GetInstigatorController<APlayerController>();
+	if (UEnhancedInputLocalPlayerSubsystem* InputSubSystem = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr) {
+		return InputSubSystem->GetPlayerInput() ? InputSubSystem->GetPlayerInput()->GetActionValue(Ability->AbilityInputAction) : FInputActionValue();
+	}
+	return FInputActionValue();
 }
 
 void UGMCAbilityTask_WaitForInputKeyRelease::OnTaskCompleted()

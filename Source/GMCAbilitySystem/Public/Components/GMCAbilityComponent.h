@@ -1415,6 +1415,9 @@ public:
 	// CL_IsReplaying(); test builds layer a per-component override on top.
 	bool IsReplayingForGMASLogic() const;
 
+	// return true to hold the input release of the ability until it returns false. Polled on the owning client only.
+	virtual bool IsInputReleaseDeferred(const UGMCAbility* Ability) const { return false; }
+
 	// The replay journal runs only on a predicting, locally controlled client: the only side that replays.
 	bool IsReplayJournalActive() const;
 
